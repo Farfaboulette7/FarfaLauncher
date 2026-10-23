@@ -1,0 +1,318 @@
+/*
+ * Thème NieR / YoRHa de FarfaLauncher, adapté de NieRDeck pour un écran PC.
+ *
+ * - Palette : valeurs de couleurs relevées dans les thèmes YoRHA-UI-BetterDiscord
+ *   et yorha (une palette de couleurs n'est pas une œuvre protégée ; aucun fichier
+ *   de ces projets n'est copié ici).
+ * - Fond quadrillé et remplissage « balayage » des boutons : techniques reprises de
+ *   yorha (c) 2017 Ethan Chan, licence MIT — voir third_party/yorha-LICENSE.txt.
+ * - Pictogrammes (curseur, frise) : dessins originaux de ce projet.
+ * - Police : Be Vietnam Pro, SIL OFL 1.1 — voir src/theme/fonts/OFL.txt.
+ */
+
+@font-face {
+  font-family: "nier-ui-sans";
+  font-weight: 300;
+  font-display: swap;
+  src: url("./fonts/BeVietnamPro-Light.woff2") format("woff2");
+}
+@font-face {
+  font-family: "nier-ui-sans";
+  font-weight: 400;
+  font-display: swap;
+  src: url("./fonts/BeVietnamPro-Regular.woff2") format("woff2");
+}
+
+:root {
+  --nier-high: #dad4bb;
+  --nier-high-mid: #b7b19c;
+  --nier-mid: #979381;
+  --nier-low: #57544a;
+  --nier-ink: #48463d;
+  --nier-alert: #cd664d;
+  --nier-ok: #6f7d5a;
+
+  --nier-high-trans: rgba(218, 212, 187, 0.82);
+  --nier-low-trans: rgba(87, 84, 74, 0.6);
+
+  --nier-bg: #d1cdb7;
+  --nier-grid-line: #ccc8b1;
+  --nier-grid-size: 5px;
+  --nier-surface: #dcd8c0;
+  --nier-shadow: #bab5a1;
+  --nier-text: #454138;
+  --nier-vignette: rgba(78, 75, 66, 0.35);
+
+  --nier-font: "nier-ui-sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --nier-weight: 300;
+  --nier-tracking: 0.03rem;
+  --nier-tracking-wide: 0.1rem;
+  --nier-tracking-title: 0.4rem;
+
+  --nier-drop: 3px;
+  --nier-line: 1px;
+  --nier-fast: 0.12s;
+  --nier-normal: 0.2s;
+  --nier-ease: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Échelle typographique fluide : lisible en 1280x800 comme en 4K. */
+  --fs-xs: clamp(12px, 0.75vw + 4px, 15px);
+  --fs-sm: clamp(14px, 0.8vw + 5px, 17px);
+  --fs-md: clamp(15px, 0.9vw + 6px, 20px);
+  --fs-lg: clamp(18px, 1.2vw + 6px, 26px);
+  --fs-xl: clamp(26px, 2.2vw + 8px, 48px);
+  --gutter: clamp(20px, 2.5vw, 56px);
+
+  /* Pictogrammes originaux, utilisés en masque (couleur = --nier-ink). */
+  --pict-cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 24'%3E%3Cpath d='M0 0h6l14 12L6 24H0l14-12z'/%3E%3Cpath d='M18 0h4l14 12-14 12h-4l14-12z' opacity='.55'/%3E%3C/svg%3E");
+  --pict-rule: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 14'%3E%3Cpath d='M0 1h80' stroke='%23000' stroke-width='1'/%3E%3Crect x='6' y='4' width='5' height='5'/%3E%3Crect x='14' y='4' width='2' height='5'/%3E%3Crect x='19' y='4' width='2' height='5'/%3E%3C/svg%3E");
+
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background-color: var(--nier-bg);
+  background-image:
+    linear-gradient(to right, var(--nier-grid-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--nier-grid-line) 1px, transparent 1px);
+  background-size: var(--nier-grid-size) var(--nier-grid-size);
+  color: var(--nier-text);
+  font-family: var(--nier-font);
+  font-weight: var(--nier-weight);
+  font-size: var(--fs-md);
+  letter-spacing: var(--nier-tracking);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* Vignettage des bords */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 100;
+  background:
+    linear-gradient(to right, rgba(78, 75, 66, 0.15), transparent 25%, transparent 85%, var(--nier-vignette)),
+    radial-gradient(transparent 60%, var(--nier-vignette));
+}
+
+::selection { background: var(--nier-low); color: var(--nier-high); }
+
+/* ---------- Titres et ornements ---------- */
+.n-title {
+  margin: 0;
+  font-size: var(--fs-xl);
+  font-weight: 400;
+  line-height: 1.05;
+  text-transform: uppercase;
+  letter-spacing: var(--nier-tracking-title);
+  text-shadow: 4px 4px 0 var(--nier-shadow);
+}
+.n-subtitle {
+  margin: 0;
+  font-size: var(--fs-sm);
+  letter-spacing: var(--nier-tracking-wide);
+  color: var(--nier-mid);
+  text-transform: uppercase;
+}
+.n-rule {
+  height: 14px;
+  background-color: var(--nier-ink);
+  -webkit-mask: var(--pict-rule) repeat-x left top / auto 14px;
+  mask: var(--pict-rule) repeat-x left top / auto 14px;
+  opacity: 0.75;
+}
+.n-section-title {
+  margin: 0 0 12px;
+  padding: 4px 12px;
+  font-size: var(--fs-md);
+  font-weight: var(--nier-weight);
+  letter-spacing: var(--nier-tracking-wide);
+  border: solid var(--nier-low);
+  border-width: var(--nier-line) 0;
+}
+
+/* ---------- Panneaux ---------- */
+.n-panel {
+  background-color: var(--nier-high-trans);
+  box-shadow: var(--nier-drop) var(--nier-drop) 0 var(--nier-shadow);
+}
+.n-panel-header {
+  padding: 8px 16px;
+  font-size: var(--fs-md);
+  letter-spacing: var(--nier-tracking-wide);
+  background-color: var(--nier-low);
+  color: var(--nier-high);
+}
+.n-panel-body { padding: 20px; }
+
+/* ---------- Boutons (remplissage qui balaie de gauche à droite) ---------- */
+.n-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 20px;
+  font: inherit;
+  font-size: var(--fs-md);
+  letter-spacing: inherit;
+  text-align: left;
+  color: var(--nier-low);
+  background-color: var(--nier-high-mid);
+  background-image: linear-gradient(var(--nier-low), var(--nier-low));
+  background-repeat: no-repeat;
+  background-size: 0% 100%;
+  border: 0;
+  border-radius: 0;
+  cursor: pointer;
+  transition:
+    background-size var(--nier-normal) var(--nier-ease),
+    color var(--nier-fast) linear,
+    box-shadow var(--nier-fast) linear;
+}
+.n-btn::before {
+  content: "";
+  flex: none;
+  width: 10px;
+  height: 10px;
+  background-color: currentColor;
+}
+.n-btn::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: solid var(--nier-low);
+  border-width: 0;
+  pointer-events: none;
+  transition: inset var(--nier-normal) var(--nier-ease);
+}
+.n-btn:hover:not(:disabled),
+.n-btn:focus-visible,
+.n-btn[aria-pressed="true"] {
+  outline: none;
+  background-size: 100% 100%;
+  color: var(--nier-high);
+  box-shadow: var(--nier-drop) var(--nier-drop) 0 var(--nier-shadow);
+}
+.n-btn:hover:not(:disabled)::after,
+.n-btn:focus-visible::after {
+  inset: -4px 0;
+  border-width: var(--nier-line) 0;
+}
+.n-btn:disabled { opacity: 0.5; cursor: default; }
+.n-btn--primary { font-size: var(--fs-lg); padding: 12px 28px; }
+.n-btn--block { width: 100%; }
+
+/* Lien discret (actions secondaires) */
+.n-link {
+  font: inherit;
+  font-size: var(--fs-sm);
+  color: var(--nier-low);
+  background: none;
+  border: 0;
+  padding: 2px 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--nier-mid);
+}
+.n-link:hover, .n-link:focus-visible { outline: none; text-decoration-color: var(--nier-low); }
+
+/* ---------- Champs ---------- */
+.n-field { display: flex; flex-direction: column; gap: 6px; }
+.n-label { font-size: var(--fs-sm); letter-spacing: var(--nier-tracking-wide); }
+.n-input {
+  width: 100%;
+  padding: 10px 12px;
+  font: inherit;
+  font-size: var(--fs-md);
+  letter-spacing: inherit;
+  color: var(--nier-text);
+  background: var(--nier-surface);
+  border: var(--nier-line) solid var(--nier-mid);
+  border-radius: 0;
+  outline: none;
+  transition: border-color var(--nier-fast), box-shadow var(--nier-fast);
+}
+.n-input:focus {
+  border-color: var(--nier-low);
+  box-shadow: var(--nier-drop) var(--nier-drop) 0 var(--nier-shadow);
+}
+.n-hint { font-size: var(--fs-xs); color: var(--nier-mid); }
+
+/* ---------- Messages ---------- */
+.n-alert {
+  padding: 10px 14px;
+  font-size: var(--fs-sm);
+  border-left: 4px solid var(--nier-alert);
+  background: rgba(205, 102, 77, 0.12);
+}
+.n-notice {
+  padding: 10px 14px;
+  font-size: var(--fs-sm);
+  border-left: 4px solid var(--nier-low);
+  background: rgba(87, 84, 74, 0.08);
+}
+
+/* ---------- Curseur YoRHa devant l'élément actif ---------- */
+.n-cursor { position: relative; }
+.n-cursor::before {
+  content: "";
+  position: absolute;
+  left: -40px;
+  top: 50%;
+  width: 28px;
+  height: 17px;
+  background-color: var(--nier-ink);
+  -webkit-mask: var(--pict-cursor) no-repeat center / contain;
+  mask: var(--pict-cursor) no-repeat center / contain;
+  animation: n-cursor 1.4s ease-in-out infinite;
+}
+
+/* ---------- Code d'appairage ---------- */
+.n-code {
+  display: inline-block;
+  padding: 10px 24px;
+  font-size: clamp(32px, 3.5vw, 64px);
+  font-weight: 400;
+  letter-spacing: 0.6rem;
+  color: var(--nier-high);
+  background: var(--nier-low);
+  box-shadow: var(--nier-drop) var(--nier-drop) 0 var(--nier-shadow);
+  user-select: all;
+}
+
+/* ---------- Chargement ---------- */
+.n-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  background: var(--nier-low);
+  animation: n-blink 1s steps(2, start) infinite;
+}
+
+/* Barres de défilement fines */
+* { scrollbar-width: thin; scrollbar-color: var(--nier-low) transparent; }
+
+@keyframes n-cursor {
+  0%, 100% { transform: translate(0, -50%); }
+  50% { transform: translate(5px, -50%); }
+}
+@keyframes n-blink { to { visibility: hidden; } }
+@keyframes n-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.n-appear { animation: n-in var(--nier-normal) var(--nier-ease); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

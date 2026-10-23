@@ -1,0 +1,63 @@
+.login {
+  height: 100%;
+  overflow-y: auto;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  justify-items: center;
+  padding: clamp(24px, 6vh, 80px) var(--gutter) 40px;
+}
+.login-header {
+  width: min(720px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.login-rule { margin-top: 8px; }
+.login-main {
+  width: min(720px, 100%);
+  margin-top: clamp(20px, 4vh, 48px);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.login-form p { margin: 0; }
+.login-actions {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding-left: 40px; /* place du curseur YoRHa */
+}
+.login-server { font-size: var(--fs-sm); word-break: break-all; }
+.login-steps {
+  margin: 0;
+  padding-left: 1.4em;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: var(--fs-sm);
+}
+.login-code-row {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.login-code-input {
+  max-width: 260px;
+  font-size: var(--fs-lg);
+  letter-spacing: 0.3rem;
+  text-transform: uppercase;
+}
+.login-alt {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding-top: 12px;
+  border-top: var(--nier-line) solid var(--nier-mid);
+}
