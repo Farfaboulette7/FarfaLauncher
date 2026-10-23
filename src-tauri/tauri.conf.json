@@ -23,7 +23,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src ipc: http://ipc.localhost; frame-src 'self' asset: http://asset.localhost blob:; object-src 'none'",
+      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src ipc: http://ipc.localhost asset: http://asset.localhost; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; frame-src 'self' asset: http://asset.localhost blob:; object-src 'none'",
       "assetProtocol": {
         "enable": true,
         "scope": ["$APPCACHE/**"]

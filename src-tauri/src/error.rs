@@ -33,6 +33,12 @@ pub enum AppError {
     TokenRejected,
     #[error("Impossible d'accéder au trousseau sécurisé du système.")]
     Keychain,
+    #[error("La plateforme « farfa-portage » est introuvable sur ce serveur RomM.")]
+    PlatformMissing,
+    #[error("Impossible de lire ou d'écrire le cache local.")]
+    Cache,
+    #[error("Téléchargement impossible. Vérifiez votre connexion et réessayez.")]
+    Download,
     #[error("Le serveur a renvoyé une erreur inattendue. Réessayez plus tard.")]
     Server,
     #[error("Une erreur inattendue est survenue. Les détails sont dans les logs.")]
@@ -54,6 +60,9 @@ impl AppError {
             AppError::TokenFormat => "token_format",
             AppError::TokenRejected => "token_rejected",
             AppError::Keychain => "keychain",
+            AppError::PlatformMissing => "platform_missing",
+            AppError::Cache => "cache",
+            AppError::Download => "download",
             AppError::Server => "server",
             AppError::Internal => "internal",
         }

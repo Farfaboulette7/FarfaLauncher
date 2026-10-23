@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { backend, errorMessage, SessionInfo } from "./api/backend";
 import { Login } from "./screens/Login";
-import { Home } from "./screens/Home";
+import { Library } from "./screens/Library";
 
 export default function App() {
   const [session, setSession] = useState<SessionInfo | null>(null);
@@ -44,5 +44,5 @@ export default function App() {
     return <Login initialServerUrl={session.serverUrl} notice={session.notice} onLoggedIn={setSession} />;
   }
 
-  return <Home session={session} onLogout={backToLogin} />;
+  return <Library session={session} onLogout={backToLogin} />;
 }

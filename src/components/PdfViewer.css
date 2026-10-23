@@ -1,0 +1,31 @@
+.pdf {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  height: 100%;
+}
+.pdf-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.pdf-toolbar .n-btn { padding: 4px 14px; }
+.pdf-toolbar .n-btn::before { display: none; }
+.pdf-zoom { min-width: 60px; text-align: center; font-size: var(--fs-sm); }
+.pdf-pages {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  background: var(--nier-low-trans);
+}
+.pdf-page {
+  flex: none;
+  background: #fff;
+  box-shadow: var(--nier-drop) var(--nier-drop) 0 rgba(0, 0, 0, 0.3);
+}

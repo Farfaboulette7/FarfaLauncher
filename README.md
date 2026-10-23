@@ -41,6 +41,16 @@ roms/farfa-portage/<Nom du jeu>/
                     Plateforme ∈ Windows, Linux, SteamOS, macOS_ARM, macOS_Intel
 ```
 
+Les noms des releases d'origine sont aussi reconnus : le launcher repère le système et
+l'architecture dans le nom (`windows`/`win32`/`win64`, `linux`, `mac`/`macos` +
+`x86_64`/`x64`/`arm64`/`aarch64`/`universal`) et accepte `.zip`, `.AppImage` et `.tar.gz`.
+Les archives Android, iOS, consoles, etc. sont ignorées. Si plusieurs archives conviennent,
+la convention `_<Plateforme>` gagne, puis (Linux) AppImage > tar.gz > zip.
+
+À éviter : des archives **déjà extraites** dans `RECOMP/`. Seuls les fichiers posés
+directement dans `RECOMP/` sont pris en compte, et des milliers de fichiers dans un jeu
+ralentissent fortement RomM.
+
 Après chaque modification des fichiers, un scan RomM doit être lancé pour que l'API
 expose les nouveaux fichiers (le script de mise à jour le fait).
 

@@ -1,0 +1,170 @@
+.gd {
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+.gd-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 18px var(--gutter) 8px;
+  min-width: 0;
+}
+.gd-back { align-self: flex-start; }
+.gd-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-bottom: 4px;
+}
+.gd-rule { margin: 0 var(--gutter); }
+.gd-body {
+  display: grid;
+  grid-template-columns: clamp(240px, 22vw, 380px) minmax(0, 1fr);
+  gap: clamp(20px, 2vw, 40px);
+  min-height: 0;
+  padding: 20px var(--gutter) 28px;
+}
+.gd-side {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 6px 6px 0;
+}
+.gd-cover {
+  aspect-ratio: 3 / 4;
+  background: var(--nier-mid);
+  box-shadow: var(--nier-drop) var(--nier-drop) 0 var(--nier-shadow);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--nier-high);
+  text-transform: uppercase;
+  text-align: center;
+  padding: 0;
+  flex: none;
+}
+.gd-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.gd-actions-body { display: flex; flex-direction: column; gap: 16px; }
+.gd-actions-body p { margin: 0; }
+.gd-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 16px;
+  margin: 0;
+  font-size: var(--fs-sm);
+}
+.gd-facts dt { color: var(--nier-mid); }
+.gd-facts dd { margin: 0; overflow-wrap: anywhere; }
+.gd-facts--wide { margin-top: 24px; font-size: var(--fs-md); gap: 10px 32px; }
+.gd-platforms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-xs);
+}
+.gd-platforms li {
+  padding: 3px 10px;
+  border: var(--nier-line) solid var(--nier-low);
+}
+.gd-platforms li.is-mine { background: var(--nier-low); color: var(--nier-high); }
+
+.gd-main {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+}
+.gd-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 14px 16px 0;
+}
+.gd-tab { font-size: var(--fs-sm); padding: 6px 16px; }
+.gd-tab-count {
+  font-size: var(--fs-xs);
+  opacity: 0.7;
+}
+.gd-content {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px 24px 24px;
+}
+.gd-summary {
+  margin: 0;
+  max-width: 75ch;
+  line-height: 1.6;
+  white-space: pre-line;
+}
+
+.gd-shots {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(clamp(220px, 18vw, 360px), 1fr));
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.gd-shot {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  padding: 0;
+  border: 0;
+  cursor: zoom-in;
+  background: var(--nier-mid);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--nier-drop) var(--nier-drop) 0 var(--nier-shadow);
+  transition: transform var(--nier-normal) var(--nier-ease);
+}
+.gd-shot:hover, .gd-shot:focus-visible { transform: translateY(-3px); outline: none; }
+.gd-shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 40px;
+  background: rgba(40, 38, 33, 0.92);
+  cursor: zoom-out;
+  animation: n-in var(--nier-normal) var(--nier-ease);
+}
+.lightbox img {
+  max-width: 100%;
+  max-height: calc(100% - 40px);
+  object-fit: contain;
+  cursor: default;
+  box-shadow: 0 0 0 1px var(--nier-high-mid);
+}
+.lightbox-count { color: var(--nier-high); font-size: var(--fs-sm); }
+
+.gd-manual { display: flex; flex-direction: column; gap: 12px; height: 100%; }
+.gd-manual-choice { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.gd-mods {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.gd-mods li {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 14px;
+  background: var(--nier-high-mid);
+}
+.gd-mod-name { overflow-wrap: anywhere; }

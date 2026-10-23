@@ -1,8 +1,10 @@
 //! État partagé entre les commandes Tauri.
 
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
 
+use crate::cache::LibrarySnapshot;
 use crate::error::{AppError, AppResult};
 use crate::romm::client::RommClient;
 use crate::settings::{self, Settings};
@@ -15,14 +17,19 @@ pub struct PendingDevice {
 pub struct AppState {
     pub config_dir: PathBuf,
     pub log_dir: PathBuf,
+    pub cache_dir: PathBuf,
     pub settings: Mutex<Settings>,
     /// Client authentifié ; `None` tant que l'utilisateur n'est pas connecté.
     pub client: Mutex<Option<RommClient>>,
     pub pending_device: Mutex<Option<PendingDevice>>,
+    /// Bibliothèque courante (cache puis serveur).
+    pub library: Mutex<Option<LibrarySnapshot>>,
+    /// Un seul rafraîchissement à la fois : pas de requêtes en double.
+    pub refreshing: AtomicBool,
 }
 
 impl AppState {
-    pub fn new(config_dir: PathBuf, log_dir: PathBuf) -> Self {
+    pub fn new(config_dir: PathBuf, log_dir: PathBuf, cache_dir: PathBuf) -> Self {
         let settings = settings::load(&config_dir);
         // Persiste immédiatement le device_id généré au premier lancement.
         if let Err(e) = settings::save(&config_dir, &settings) {
@@ -31,9 +38,12 @@ impl AppState {
         Self {
             config_dir,
             log_dir,
+            cache_dir,
             settings: Mutex::new(settings),
             client: Mutex::new(None),
             pending_device: Mutex::new(None),
+            library: Mutex::new(None),
+            refreshing: AtomicBool::new(false),
         }
     }
 

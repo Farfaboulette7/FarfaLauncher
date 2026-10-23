@@ -1,3 +1,4 @@
+pub mod library;
 pub mod session;
 
 use tauri::State;

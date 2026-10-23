@@ -11,6 +11,7 @@ use url::Url;
 use crate::error::{log_err, AppError, AppResult};
 
 const USER_AGENT: &str = concat!("FarfaLauncher/", env!("CARGO_PKG_VERSION"));
+const API_TIMEOUT: Duration = Duration::from_secs(45);
 
 /// Normalise l'adresse saisie par l'utilisateur.
 /// - ajoute `https://` si aucun schéma n'est donné ;
@@ -66,7 +67,6 @@ impl RommClient {
         let http = reqwest::Client::builder()
             .user_agent(USER_AGENT)
             .connect_timeout(Duration::from_secs(10))
-            .read_timeout(Duration::from_secs(60))
             .build()
             .map_err(|e| log_err(AppError::Internal, "création du client HTTP", e))?;
         Ok(Self { base: base.to_string(), token, http })
@@ -87,16 +87,23 @@ impl RommClient {
         }
     }
 
+    /// Requête GET avec délai par défaut (`API_TIMEOUT`) ; à surcharger avec
+    /// `.timeout()` pour les appels longs. Les téléchargements de fichiers
+    /// utilisent `get_stream` (pas de délai global).
     pub fn get(&self, path: &str) -> RequestBuilder {
+        self.authed(self.http.get(self.url(path)).timeout(API_TIMEOUT))
+    }
+
+    pub fn get_stream(&self, path: &str) -> RequestBuilder {
         self.authed(self.http.get(self.url(path)))
     }
 
     pub fn post<B: Serialize + ?Sized>(&self, path: &str, body: &B) -> RequestBuilder {
-        self.authed(self.http.post(self.url(path)).json(body))
+        self.authed(self.http.post(self.url(path)).json(body).timeout(API_TIMEOUT))
     }
 
     pub async fn send(&self, req: RequestBuilder) -> AppResult<Response> {
-        let resp = req.send().await.map_err(|e| log_err(AppError::ServerUnreachable, "requête HTTP", e))?;
+        let resp = req.send().await.map_err(|e| log_err(AppError::ServerUnreachable, "requête HTTP", error_chain(&e)))?;
         check_status(resp).await
     }
 
@@ -128,6 +135,42 @@ pub async fn parse_json<T: DeserializeOwned>(resp: Response) -> AppResult<T> {
     resp.json::<T>()
         .await
         .map_err(|e| log_err(AppError::Server, &format!("réponse JSON invalide ({url})"), e))
+}
+
+/// Message d'erreur avec toutes ses causes (timeout, TLS, DNS…), sans l'URL
+/// complète (qui contient l'adresse du serveur).
+pub fn error_chain(e: &reqwest::Error) -> String {
+    let mut out = String::new();
+    if e.is_timeout() {
+        out.push_str("[timeout] ");
+    }
+    if let Some(u) = e.url() {
+        out.push_str(u.path());
+        out.push_str(": ");
+    }
+    let mut src: Option<&dyn std::error::Error> = std::error::Error::source(e);
+    out.push_str(&e.without_url_ref());
+    while let Some(s) = src {
+        out.push_str(" <- ");
+        out.push_str(&s.to_string());
+        src = s.source();
+    }
+    out
+}
+
+trait WithoutUrl {
+    fn without_url_ref(&self) -> String;
+}
+
+impl WithoutUrl for reqwest::Error {
+    fn without_url_ref(&self) -> String {
+        let s = self.to_string();
+        // « error sending request for url (…) » → on retire la parenthèse.
+        match s.find(" for url (") {
+            Some(i) => s[..i].to_string(),
+            None => s,
+        }
+    }
 }
 
 pub fn truncate(s: &str, max: usize) -> &str {
