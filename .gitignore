@@ -1,0 +1,34 @@
+# Dépendances et builds
+node_modules/
+dist/
+dist-ssr/
+src-tauri/target/
+src-tauri/gen/schemas/
+*.tsbuildinfo
+
+# Secrets — ne jamais commiter
+.env
+.env.*
+!.env.example
+*.key
+*.key.pub
+*.pem
+*.p12
+tauri-signing*
+
+# Logs et caches
+*.log
+logs/
+.cache/
+coverage/
+
+# Éditeurs / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Claude Code (local)
+.claude/settings.local.json
