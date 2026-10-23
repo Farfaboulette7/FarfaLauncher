@@ -168,3 +168,40 @@
   background: var(--nier-high-mid);
 }
 .gd-mod-name { overflow-wrap: anywhere; }
+
+/* ---------- Installation ---------- */
+.gd-update { justify-content: center; }
+.gd-inst-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+}
+.gd-progress { display: flex; flex-direction: column; gap: 8px; }
+.gd-progress-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: var(--fs-sm);
+}
+.gd-progress-bar {
+  height: 12px;
+  background: var(--nier-high-mid);
+  box-shadow: inset 0 0 0 1px var(--nier-low);
+  overflow: hidden;
+}
+.gd-progress-bar > div {
+  height: 100%;
+  background: var(--nier-low);
+  transition: width 0.25s linear;
+}
+.gd-progress-bar > .is-indeterminate {
+  width: 30%;
+  animation: gd-indeterminate 1.2s ease-in-out infinite;
+}
+.gd-progress .n-link { align-self: flex-start; }
+@keyframes gd-indeterminate {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(340%); }
+}
+.gd-side { overflow-x: hidden; }
+.gd-actions-body .n-hint { overflow-wrap: anywhere; }

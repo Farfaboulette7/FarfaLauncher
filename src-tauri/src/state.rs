@@ -1,8 +1,11 @@
 //! État partagé entre les commandes Tauri.
 
 use std::path::PathBuf;
+use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
+
+use tokio_util::sync::CancellationToken;
 
 use crate::cache::LibrarySnapshot;
 use crate::error::{AppError, AppResult};
@@ -26,10 +29,14 @@ pub struct AppState {
     pub library: Mutex<Option<LibrarySnapshot>>,
     /// Un seul rafraîchissement à la fois : pas de requêtes en double.
     pub refreshing: AtomicBool,
+    /// Installations en cours (jeu → jeton d'annulation).
+    pub installs: Mutex<HashMap<i64, CancellationToken>>,
+    /// Dossier d'installation par défaut (`~/FarfaLauncher/Jeux`).
+    pub default_install_root: PathBuf,
 }
 
 impl AppState {
-    pub fn new(config_dir: PathBuf, log_dir: PathBuf, cache_dir: PathBuf) -> Self {
+    pub fn new(config_dir: PathBuf, log_dir: PathBuf, cache_dir: PathBuf, default_install_root: PathBuf) -> Self {
         let settings = settings::load(&config_dir);
         // Persiste immédiatement le device_id généré au premier lancement.
         if let Err(e) = settings::save(&config_dir, &settings) {
@@ -44,7 +51,13 @@ impl AppState {
             pending_device: Mutex::new(None),
             library: Mutex::new(None),
             refreshing: AtomicBool::new(false),
+            installs: Mutex::new(HashMap::new()),
+            default_install_root,
         }
+    }
+
+    pub fn install_root(&self) -> PathBuf {
+        self.settings().install_dir.unwrap_or_else(|| self.default_install_root.clone())
     }
 
     pub fn settings(&self) -> Settings {

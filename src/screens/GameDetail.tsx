@@ -1,5 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from "react";
-import { backend, formatPlaytime, formatSize, Game, Manual, Target, TARGET_LABELS } from "../api/backend";
+import { backend, formatPlaytime, formatSize, Game, Manual, Target } from "../api/backend";
+import { InstallsState } from "../hooks/useInstalls";
+import { InstallPanel } from "./InstallPanel";
 import { useCachedImage } from "../hooks/useCachedImage";
 import "./GameDetail.css";
 
@@ -11,17 +13,18 @@ type Tab = "infos" | "medias" | "livret" | "mods";
 interface Props {
   game: Game;
   target: Target | null;
+  installs: InstallsState;
   onBack: () => void;
   onError: (e: unknown) => Promise<string>;
 }
 
-export function GameDetail({ game, target, onBack, onError }: Props) {
+export function GameDetail({ game, target, installs, onBack, onError }: Props) {
   const [tab, setTab] = useState<Tab>("infos");
   const cover = useCachedImage(game.coverUrl);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !document.querySelector(".lightbox")) onBack();
+      if (e.key === "Escape" && !document.querySelector(".lightbox, .dialog-backdrop")) onBack();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -49,7 +52,7 @@ export function GameDetail({ game, target, onBack, onError }: Props) {
       <div className="gd-body">
         <aside className="gd-side">
           <div className="gd-cover">{cover.src ? <img src={cover.src} alt="" /> : <span>{game.name}</span>}</div>
-          <ActionPanel game={game} target={target} />
+          <InstallPanel game={game} target={target} installs={installs} onError={onError} />
         </aside>
 
         <section className="gd-main n-panel">
@@ -75,50 +78,6 @@ export function GameDetail({ game, target, onBack, onError }: Props) {
             {tab === "mods" && <ModsTab game={game} />}
           </div>
         </section>
-      </div>
-    </div>
-  );
-}
-
-function ActionPanel({ game, target }: { game: Game; target: Target | null }) {
-  return (
-    <div className="n-panel gd-actions">
-      <div className="n-panel-header">Installation</div>
-      <div className="n-panel-body gd-actions-body">
-        {!game.myArchive && !game.detailsLoaded ? (
-          <p>
-            <span className="n-spinner" /> Lecture des fichiers sur le serveur…
-          </p>
-        ) : game.myArchive ? (
-          <button className="n-btn n-btn--primary n-btn--block" disabled title="Disponible à la prochaine version">
-            Installer
-          </button>
-        ) : (
-          <p className="n-alert">Non disponible pour votre système{target ? ` (${TARGET_LABELS[target]})` : ""}.</p>
-        )}
-        <dl className="gd-facts">
-          <dt>Version serveur</dt>
-          <dd>{game.serverVersion ?? "inconnue"}</dd>
-          <dt>Version installée</dt>
-          <dd>Non installé</dd>
-          {game.myArchive && (
-            <>
-              <dt>Téléchargement</dt>
-              <dd>{formatSize(game.myArchive.file.size + game.romFiles.reduce((s, f) => s + f.size, 0))}</dd>
-            </>
-          )}
-        </dl>
-        <div>
-          <p className="n-label">Plateformes disponibles</p>
-          <ul className="gd-platforms">
-            {game.archives.length === 0 && <li className="n-hint">aucune</li>}
-            {game.archives.map((a) => (
-              <li key={a.target} className={a.target === game.myArchive?.target ? "is-mine" : undefined}>
-                {TARGET_LABELS[a.target]}
-              </li>
-            ))}
-          </ul>
-        </div>
       </div>
     </div>
   );
@@ -165,7 +124,7 @@ function InfoTab({ game, onError }: { game: Game; onError: (e: unknown) => Promi
         )}
         <dt>Temps de jeu</dt>
         <dd>
-          {playtime === undefined ? <span className="n-spinner" /> : playtime === null ? "indisponible" : formatPlaytime(playtime)}
+          {playtime === undefined ? <span className="n-spinner" /> : playtime === null ? "indisponible" : playtime === 0 ? "jamais joué" : formatPlaytime(playtime)}
         </dd>
       </dl>
     </div>

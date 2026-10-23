@@ -14,6 +14,8 @@ import {
   Target,
 } from "../api/backend";
 import { useCachedImage } from "../hooks/useCachedImage";
+import { InstallsState, useInstalls } from "../hooks/useInstalls";
+import { hasUpdate } from "./InstallPanel";
 import { GameDetail } from "./GameDetail";
 import "./Library.css";
 
@@ -43,6 +45,7 @@ export function Library({ session, onLogout }: Props) {
     },
     [onLogout],
   );
+  const installs = useInstalls(handleError);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -112,7 +115,9 @@ export function Library({ session, onLogout }: Props) {
 
   const selected = snapshot?.games.find((g) => g.id === selectedId) ?? null;
   if (selected) {
-    return <GameDetail game={selected} target={target} onBack={() => setSelectedId(null)} onError={handleError} />;
+    return (
+      <GameDetail game={selected} target={target} installs={installs} onBack={() => setSelectedId(null)} onError={handleError} />
+    );
   }
 
   return (
@@ -167,7 +172,7 @@ export function Library({ session, onLogout }: Props) {
         <ul className="lib-grid">
           {games.map((g) => (
             <li key={g.id}>
-              <GameCard game={g} onOpen={() => setSelectedId(g.id)} />
+              <GameCard game={g} installs={installs} onOpen={() => setSelectedId(g.id)} />
             </li>
           ))}
         </ul>
@@ -176,13 +181,24 @@ export function Library({ session, onLogout }: Props) {
   );
 }
 
-function GameCard({ game, onOpen }: { game: Game; onOpen: () => void }) {
+function GameCard({ game, installs, onOpen }: { game: Game; installs: InstallsState; onOpen: () => void }) {
+  const inst = installs.installed.get(game.id);
+  const busy = installs.progress.has(game.id);
+  const badge = busy
+    ? { label: "Installation…", cls: "" }
+    : hasUpdate(game, inst)
+      ? { label: "Mise à jour disponible", cls: "" }
+      : inst?.executable
+        ? { label: "Installé", cls: "card-badge--ok" }
+        : !game.myArchive && game.detailsLoaded
+          ? { label: "Non disponible", cls: "card-badge--muted" }
+          : null;
   const { src } = useCachedImage(game.coverUrl);
   return (
     <button className="card" onClick={onOpen} title={game.name}>
       <div className="card-cover">
         {src ? <img src={src} alt="" draggable={false} /> : <span className="card-placeholder">{game.name}</span>}
-        {!game.myArchive && game.detailsLoaded && <span className="card-badge card-badge--muted">Non disponible</span>}
+        {badge && <span className={`card-badge ${badge.cls}`}>{badge.label}</span>}
       </div>
       <span className="card-name">{game.name}</span>
     </button>

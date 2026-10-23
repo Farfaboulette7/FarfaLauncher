@@ -26,6 +26,12 @@ tokio = { version = "1", features = ["full"] }
 futures-util = "0.3"
 url = "2"
 sha1 = "0.10"
+md-5 = "0.10"
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs", "deflate64", "bzip2", "lzma", "xz", "zstd", "time"] }
+tar = "0.4"
+flate2 = "1"
+fs4 = "1"
+tokio-util = "0.7"
 uuid = { version = "1", features = ["v4"] }
 thiserror = "2"
 tracing = "0.1"
@@ -39,3 +45,7 @@ lto = true
 opt-level = 3
 panic = "abort"
 strip = true
+
+# Bibliothèques optimisées même en développement (hachage, décompression).
+[profile.dev.package."*"]
+opt-level = 3

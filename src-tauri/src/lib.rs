@@ -1,6 +1,7 @@
 mod cache;
 mod commands;
 mod error;
+mod install;
 mod logging;
 mod platform;
 mod romm;
@@ -20,11 +21,12 @@ pub fn run() {
             let config_dir = paths.app_config_dir()?;
             let log_dir = paths.app_log_dir()?;
             let cache_dir = paths.app_cache_dir()?;
+            let default_install_root = paths.home_dir()?.join("FarfaLauncher").join("Jeux");
             if let Some(guard) = logging::init(&log_dir) {
                 // Garde le writer de logs vivant pendant toute l'exécution.
                 app.manage(guard);
             }
-            app.manage(state::AppState::new(config_dir, log_dir, cache_dir));
+            app.manage(state::AppState::new(config_dir, log_dir, cache_dir, default_install_root));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -45,6 +47,14 @@ pub fn run() {
             commands::library::manual_path,
             commands::library::game_playtime,
             commands::library::clear_cache,
+            commands::install::install_info,
+            commands::install::install_game,
+            commands::install::cancel_install,
+            commands::install::executable_candidates,
+            commands::install::choose_executable,
+            commands::install::uninstall_game,
+            commands::install::open_game_folder,
+            commands::install::set_install_dir,
         ])
         .run(tauri::generate_context!())
         .expect("erreur au lancement de FarfaLauncher");

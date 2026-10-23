@@ -1,3 +1,4 @@
+pub mod install;
 pub mod library;
 pub mod session;
 

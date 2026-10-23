@@ -123,3 +123,4 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.card-badge--ok { background: var(--nier-ok); }

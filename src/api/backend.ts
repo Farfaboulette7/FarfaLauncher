@@ -90,6 +90,8 @@ export interface Game {
   mods: RemoteFile[];
   versionFile: RemoteFile | null;
   serverVersion: string | null;
+  /** Contenu complet de VERSION.txt (comparé pour les mises à jour). */
+  serverVersionRaw: string | null;
   /** false tant que les fichiers du jeu n'ont pas été relus sur le serveur. */
   detailsLoaded: boolean;
   updatedAt: string;
@@ -107,6 +109,48 @@ export interface LibrarySnapshot {
   fetchedAt: number;
   games: Game[];
 }
+
+export interface InstalledGame {
+  romId: number;
+  name: string;
+  version: string | null;
+  versionRaw: string | null;
+  target: Target;
+  archiveName: string;
+  executable: string | null;
+  pendingCandidates: string[];
+  roms: string[];
+  modsDownloaded: string[];
+  installedAt: number;
+  updatedAt: number;
+  gameDir: string;
+}
+
+export interface InstallInfo {
+  installRoot: string;
+  games: InstalledGame[];
+  active: number[];
+}
+
+export type InstallPhase = "prepare" | "download" | "verify" | "backup" | "extract" | "finalize";
+
+export interface InstallProgress {
+  romId: number;
+  phase: InstallPhase;
+  done: number;
+  total: number;
+}
+
+export type InstallOutcome = { status: "installed"; game: InstalledGame } | { status: "needsChoice"; game: InstalledGame };
+
+export interface InstallFinished {
+  romId: number;
+  outcome: InstallOutcome | null;
+  error: AppError | null;
+}
+
+export const INSTALL_PROGRESS_EVENT = "install-progress";
+export const INSTALL_FINISHED_EVENT = "install-finished";
 
 export const backend = {
   sessionStatus: () => invoke<SessionInfo>("session_status"),
@@ -126,6 +170,14 @@ export const backend = {
   manualPath: (romId: number, manual: Manual) => invoke<string>("manual_path", { romId, manual }),
   gamePlaytime: (romId: number) => invoke<number | null>("game_playtime", { romId }),
   clearCache: () => invoke<void>("clear_cache"),
+  installInfo: () => invoke<InstallInfo>("install_info"),
+  installGame: (romId: number) => invoke<void>("install_game", { romId }),
+  cancelInstall: (romId: number) => invoke<void>("cancel_install", { romId }),
+  executableCandidates: (romId: number) => invoke<string[]>("executable_candidates", { romId }),
+  chooseExecutable: (romId: number, executable: string) => invoke<InstalledGame>("choose_executable", { romId, executable }),
+  uninstallGame: (romId: number, keepSaves: boolean) => invoke<void>("uninstall_game", { romId, keepSaves }),
+  openGameFolder: (romId: number, sub?: "mods_downloads") => invoke<void>("open_game_folder", { romId, sub: sub ?? null }),
+  setInstallDir: (path: string | null) => invoke<string>("set_install_dir", { path }),
 };
 
 export function formatSize(bytes: number): string {

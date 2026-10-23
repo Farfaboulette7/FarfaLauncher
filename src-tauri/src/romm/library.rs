@@ -132,6 +132,9 @@ pub struct Game {
     pub version_file: Option<RemoteFile>,
     /// Contenu de VERSION.txt côté serveur.
     pub server_version: Option<String>,
+    /// Contenu complet (normalisé) de VERSION.txt, comparé pour les mises à jour.
+    #[serde(default)]
+    pub server_version_raw: Option<String>,
     /// `false` tant que les fichiers du jeu n'ont pas été lus sur le serveur
     /// (les champs ci-dessus peuvent alors venir du cache précédent).
     #[serde(default)]
@@ -189,6 +192,7 @@ impl Game {
         self.mods = old.mods.clone();
         self.version_file = old.version_file.clone();
         self.server_version = old.server_version.clone();
+        self.server_version_raw = old.server_version_raw.clone();
         self.details_loaded = false;
     }
 }
@@ -202,19 +206,52 @@ pub async fn fetch_game_details(client: &RommClient, rom_id: i64, me: Target) ->
     tracing::info!("détails de « {} » ({} fichiers) reçus en {:?}", game.name, game.rom_files.len(), started.elapsed());
     if let Some(f) = game.version_file.clone() {
         match read_text_file(client, &f).await {
-            Ok(v) => game.server_version = Some(v),
+            Ok(text) => {
+                game.server_version = Some(display_version(&text));
+                game.server_version_raw = Some(text);
+            }
             Err(e) => tracing::warn!("VERSION.txt illisible pour {}: {}", game.name, e.code()),
         }
     }
     Ok(game)
 }
 
-/// Télécharge un petit fichier texte (VERSION.txt) et renvoie son contenu nettoyé.
+/// Télécharge VERSION.txt et renvoie son contenu normalisé (BOM, fins de
+/// ligne et espaces de fin retirés) : c'est ce texte entier qui est comparé
+/// pour détecter une mise à jour.
 pub async fn read_text_file(client: &RommClient, file: &RemoteFile) -> AppResult<String> {
     let resp = client.send(client.get(&file_content_path(file))).await?;
     let bytes = resp.bytes().await.map_err(|e| log_err(AppError::ServerUnreachable, "lecture VERSION.txt", e))?;
-    let text = String::from_utf8_lossy(&bytes[..bytes.len().min(256)]);
-    Ok(text.trim().trim_start_matches('\u{feff}').lines().next().unwrap_or("").trim().to_string())
+    let text = String::from_utf8_lossy(&bytes[..bytes.len().min(16 * 1024)]);
+    Ok(normalize_version_text(&text))
+}
+
+pub fn normalize_version_text(text: &str) -> String {
+    text.trim_start_matches('\u{feff}').lines().map(str::trim_end).collect::<Vec<_>>().join("\n").trim().to_string()
+}
+
+/// Version lisible : la ligne « Version : … » de la section RECOMP
+/// (« v0.4.2 (publiée le …) » → « v0.4.2 »), sinon la première ligne.
+pub fn display_version(text: &str) -> String {
+    let mut in_recomp = false;
+    let mut first_version = None;
+    for line in text.lines() {
+        let t = line.trim();
+        if !line.starts_with([' ', '\t']) && !t.is_empty() {
+            in_recomp = t.eq_ignore_ascii_case("RECOMP");
+        }
+        if let Some((key, value)) = t.split_once(':') {
+            if key.trim().eq_ignore_ascii_case("version") {
+                let v = value.trim();
+                let v = v.split(" (").next().unwrap_or(v).trim().to_string();
+                if in_recomp {
+                    return v;
+                }
+                first_version.get_or_insert(v);
+            }
+        }
+    }
+    first_version.unwrap_or_else(|| text.lines().next().unwrap_or("").trim().to_string())
 }
 
 /// Chemin de téléchargement d'un fichier précis (le `{id}` est celui du fichier).
@@ -351,6 +388,7 @@ fn to_game(r: RawRom, base: &str, me: Target, details_loaded: bool) -> Game {
         mods,
         version_file,
         server_version: None,
+        server_version_raw: None,
         details_loaded,
         updated_at: r.updated_at,
     }
@@ -405,5 +443,27 @@ mod tests {
         assert_eq!(release_year(835_833_600), Some(1996)); // 1996-06-27
         assert_eq!(release_year(835_833_600_000), Some(1996));
         assert_eq!(release_year(0), None);
+    }
+}
+
+#[cfg(test)]
+mod version_tests {
+    use super::*;
+
+    const SAMPLE: &str = "\u{feff}Super Smash Bros. Melee\r\n=======================\r\nMis à jour le 23/10/2026 à 21:29\r\n\r\nRECOMP\r\n  Version : v0.4.2 (publiée le 21/10/2026)\r\n  Source  : https://example.org/x\r\n";
+
+    #[test]
+    fn display_reads_recomp_version() {
+        let n = normalize_version_text(SAMPLE);
+        assert!(n.starts_with("Super Smash Bros. Melee\n"));
+        assert!(!n.contains('\r'));
+        assert_eq!(display_version(&n), "v0.4.2");
+    }
+
+    #[test]
+    fn display_falls_back() {
+        assert_eq!(display_version("1.2.3"), "1.2.3");
+        assert_eq!(display_version("ROM\n  Version : r1\nRECOMP\n  Version : v9"), "v9");
+        assert_eq!(display_version("Jeu\nVersion: 2.0"), "2.0");
     }
 }

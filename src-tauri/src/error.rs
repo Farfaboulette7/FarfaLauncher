@@ -7,7 +7,7 @@
 
 use serde::Serialize;
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum AppError {
     #[error("Adresse du serveur invalide.")]
     InvalidServerUrl,
@@ -39,6 +39,26 @@ pub enum AppError {
     Cache,
     #[error("Téléchargement impossible. Vérifiez votre connexion et réessayez.")]
     Download,
+    #[error("Le fichier téléchargé est corrompu. Réessayez l'installation.")]
+    Integrity,
+    #[error("Impossible d'écrire dans le dossier d'installation. Vérifiez qu'il existe et que vous y avez accès.")]
+    Disk,
+    #[error("Le disque est plein. Libérez de l'espace puis réessayez.")]
+    DiskFull,
+    #[error("Espace disque insuffisant : il faut {needed}, il reste {available}.")]
+    NotEnoughSpace { needed: String, available: String },
+    #[error("L'archive du jeu est illisible ou endommagée.")]
+    Extract,
+    #[error("Aucun exécutable n'a été trouvé dans ce jeu.")]
+    NoExecutable,
+    #[error("Ce jeu n'est pas disponible pour votre système.")]
+    NotAvailable,
+    #[error("Une installation de ce jeu est déjà en cours.")]
+    Busy,
+    #[error("Ce jeu n'est pas installé.")]
+    NotInstalled,
+    #[error("Opération annulée.")]
+    Cancelled,
     #[error("Le serveur a renvoyé une erreur inattendue. Réessayez plus tard.")]
     Server,
     #[error("Une erreur inattendue est survenue. Les détails sont dans les logs.")]
@@ -63,6 +83,16 @@ impl AppError {
             AppError::PlatformMissing => "platform_missing",
             AppError::Cache => "cache",
             AppError::Download => "download",
+            AppError::Integrity => "integrity",
+            AppError::Disk => "disk",
+            AppError::DiskFull => "disk_full",
+            AppError::NotEnoughSpace { .. } => "not_enough_space",
+            AppError::Extract => "extract",
+            AppError::NoExecutable => "no_executable",
+            AppError::NotAvailable => "not_available",
+            AppError::Busy => "busy",
+            AppError::NotInstalled => "not_installed",
+            AppError::Cancelled => "cancelled",
             AppError::Server => "server",
             AppError::Internal => "internal",
         }
