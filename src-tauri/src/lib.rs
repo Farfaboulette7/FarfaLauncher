@@ -21,7 +21,11 @@ pub fn run() {
             let paths = app.path();
             let config_dir = paths.app_config_dir()?;
             let log_dir = paths.app_log_dir()?;
-            let cache_dir = paths.app_cache_dir()?;
+            // Sous-dossier dédié : le dossier de cache de l'application contient
+            // aussi les logs et les données du WebView (Windows), à ne pas vider.
+            let app_cache = paths.app_cache_dir()?;
+            let cache_dir = app_cache.join("cache");
+            cache::remove_legacy_entries(&app_cache);
             let default_install_root = paths.home_dir()?.join("FarfaLauncher").join("Jeux");
             if let Some(guard) = logging::init(&log_dir) {
                 // Garde le writer de logs vivant pendant toute l'exécution.

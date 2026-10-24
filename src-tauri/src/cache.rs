@@ -51,6 +51,16 @@ pub fn clear(cache_dir: &Path) -> AppResult<()> {
     }
 }
 
+/// Anciennes versions : cache rangé directement dans le dossier de cache de
+/// l'application. On n'efface que nos propres entrées, jamais le reste
+/// (logs, données du WebView).
+pub fn remove_legacy_entries(app_cache: &Path) {
+    for dir in ["images", "manuals"] {
+        let _ = std::fs::remove_dir_all(app_cache.join(dir));
+    }
+    let _ = std::fs::remove_file(app_cache.join("library.json"));
+}
+
 pub fn hash_name(key: &str) -> String {
     let digest = Sha1::digest(key.as_bytes());
     digest.iter().map(|b| format!("{b:02x}")).collect()
@@ -97,6 +107,19 @@ pub async fn cached_download(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clear_only_touches_our_cache() {
+        let root = std::env::temp_dir().join(format!("farfa-cache-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("logs")).unwrap();
+        std::fs::create_dir_all(root.join("EBWebView")).unwrap();
+        std::fs::create_dir_all(root.join("cache/images")).unwrap();
+        std::fs::write(root.join("library.json"), "{}").unwrap();
+        clear(&root.join("cache")).unwrap();
+        remove_legacy_entries(&root);
+        assert!(root.join("logs").exists() && root.join("EBWebView").exists());
+        assert!(!root.join("cache").exists() && !root.join("library.json").exists());
+    }
 
     #[test]
     fn extensions() {
