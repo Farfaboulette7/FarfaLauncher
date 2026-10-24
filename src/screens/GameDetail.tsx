@@ -1,7 +1,8 @@
 import { lazy, Suspense, useEffect, useState } from "react";
-import { backend, formatPlaytime, formatSize, Game, Manual, Target } from "../api/backend";
+import { backend, formatPlaytime, Game, Manual, Target } from "../api/backend";
 import { InstallsState } from "../hooks/useInstalls";
 import { InstallPanel } from "./InstallPanel";
+import { ModsTab } from "./ModsTab";
 import { useCachedImage } from "../hooks/useCachedImage";
 import "./GameDetail.css";
 
@@ -75,7 +76,7 @@ export function GameDetail({ game, target, installs, onBack, onError }: Props) {
             {tab === "infos" && <InfoTab game={game} onError={onError} refreshKey={installs.lastSession.get(game.id)} />}
             {tab === "medias" && <MediaTab game={game} />}
             {tab === "livret" && <ManualTab game={game} onError={onError} />}
-            {tab === "mods" && <ModsTab game={game} />}
+            {tab === "mods" && <ModsTab game={game} installs={installs} onError={onError} />}
           </div>
         </section>
       </div>
@@ -226,27 +227,5 @@ function ManualTab({ game, onError }: { game: Game; onError: (e: unknown) => Pro
         </Suspense>
       )}
     </div>
-  );
-}
-
-function ModsTab({ game }: { game: Game }) {
-  if (game.mods.length === 0) {
-    return game.detailsLoaded ? (
-      <p className="n-hint">Aucun mod disponible.</p>
-    ) : (
-      <p>
-        <span className="n-spinner" /> Lecture des fichiers sur le serveur…
-      </p>
-    );
-  }
-  return (
-    <ul className="gd-mods">
-      {game.mods.map((m) => (
-        <li key={m.id}>
-          <span className="gd-mod-name">{m.fileName}</span>
-          <span className="n-hint">{formatSize(m.size)}</span>
-        </li>
-      ))}
-    </ul>
   );
 }

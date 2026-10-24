@@ -33,6 +33,8 @@ pub struct AppState {
     pub installs: Mutex<HashMap<i64, CancellationToken>>,
     /// Jeux en cours d'exécution.
     pub running: Mutex<HashSet<i64>>,
+    /// Téléchargements de mods en cours (jeu, fichier).
+    pub mod_downloads: Mutex<HashSet<(i64, i64)>>,
     /// Dossier d'installation par défaut (`~/FarfaLauncher/Jeux`).
     pub default_install_root: PathBuf,
 }
@@ -55,6 +57,7 @@ impl AppState {
             refreshing: AtomicBool::new(false),
             installs: Mutex::new(HashMap::new()),
             running: Mutex::new(HashSet::new()),
+            mod_downloads: Mutex::new(HashSet::new()),
             default_install_root,
         }
     }

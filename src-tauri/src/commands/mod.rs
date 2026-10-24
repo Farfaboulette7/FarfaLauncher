@@ -1,5 +1,6 @@
 pub mod install;
 pub mod launch;
+pub mod mods;
 pub mod library;
 pub mod session;
 

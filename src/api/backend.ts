@@ -158,6 +158,21 @@ export interface GameStopped {
   pending: number;
 }
 
+export const MOD_PROGRESS_EVENT = "mod-progress";
+export const MOD_FINISHED_EVENT = "mod-finished";
+export interface ModProgress {
+  romId: number;
+  fileId: number;
+  done: number;
+  total: number;
+}
+export interface ModFinished {
+  romId: number;
+  fileId: number;
+  fileName: string;
+  error: AppError | null;
+}
+
 export const INSTALL_PROGRESS_EVENT = "install-progress";
 export const INSTALL_FINISHED_EVENT = "install-finished";
 
@@ -190,6 +205,8 @@ export const backend = {
   playGame: (romId: number) => invoke<void>("play_game", { romId }),
   runningGames: () => invoke<number[]>("running_games"),
   flushPlaySessions: () => invoke<number>("flush_play_sessions"),
+  downloadedMods: (romId: number) => invoke<string[]>("downloaded_mods", { romId }),
+  downloadMod: (romId: number, fileId: number) => invoke<void>("download_mod", { romId, fileId }),
 };
 
 export function formatSize(bytes: number): string {

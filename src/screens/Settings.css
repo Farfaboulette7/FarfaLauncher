@@ -1,0 +1,17 @@
+.settings {
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+.settings-body {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 24px var(--gutter) 40px;
+  max-width: 980px;
+}
+.settings-body > p { margin: 0; }
+.settings-section { display: flex; flex-direction: column; gap: 14px; }
+.settings-section p { margin: 0; }
+.settings-actions { display: flex; flex-wrap: wrap; gap: 12px; }

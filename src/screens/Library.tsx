@@ -17,6 +17,7 @@ import { useCachedImage } from "../hooks/useCachedImage";
 import { InstallsState, useInstalls } from "../hooks/useInstalls";
 import { hasUpdate } from "../api/backend";
 import { GameDetail } from "./GameDetail";
+import { Settings } from "./Settings";
 import "./Library.css";
 
 interface Props {
@@ -33,6 +34,7 @@ export function Library({ session, onLogout }: Props) {
   const [warning, setWarning] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
 
   /** Erreur d'appel : déconnexion propre si l'accès a été retiré. */
   const handleError = useCallback(
@@ -102,20 +104,26 @@ export function Library({ session, onLogout }: Props) {
       });
   }, [refresh, handleError, session.offline]);
 
-  async function logout() {
-    try {
-      await backend.logout();
-      onLogout(null);
-    } catch (e) {
-      setError(errorMessage(e));
-    }
-  }
-
   const games = useMemo(() => {
     const all = snapshot?.games ?? [];
     const q = query.trim().toLocaleLowerCase("fr");
     return q ? all.filter((g) => g.name.toLocaleLowerCase("fr").includes(q)) : all;
   }, [snapshot, query]);
+
+  if (showSettings) {
+    return (
+      <Settings
+        session={session}
+        installs={installs}
+        onBack={() => setShowSettings(false)}
+        onLogout={onLogout}
+        onCacheCleared={() => {
+          setSnapshot(null);
+          if (!session.offline) refresh();
+        }}
+      />
+    );
+  }
 
   const selected = snapshot?.games.find((g) => g.id === selectedId) ?? null;
   if (selected) {
@@ -138,11 +146,8 @@ export function Library({ session, onLogout }: Props) {
           <button className="n-btn" onClick={refresh} disabled={loading || session.offline}>
             {loading ? "Chargement…" : "Rafraîchir"}
           </button>
-          <button className="n-btn" onClick={() => backend.openLogs()}>
-            Logs
-          </button>
-          <button className="n-btn" onClick={logout}>
-            Se déconnecter
+          <button className="n-btn" onClick={() => setShowSettings(true)}>
+            Paramètres
           </button>
         </div>
       </header>

@@ -60,6 +60,8 @@ pub fn run() {
             commands::launch::running_games,
             commands::launch::play_game,
             commands::launch::flush_play_sessions,
+            commands::mods::downloaded_mods,
+            commands::mods::download_mod,
         ])
         .run(tauri::generate_context!())
         .expect("erreur au lancement de FarfaLauncher");
