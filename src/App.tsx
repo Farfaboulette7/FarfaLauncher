@@ -1,13 +1,17 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { backend, errorMessage, SessionInfo } from "./api/backend";
 import { Login } from "./screens/Login";
 import { Library } from "./screens/Library";
+import { Intro } from "./components/Intro";
+import { NowPlaying } from "./components/NowPlaying";
 import { UpdateDialog } from "./components/UpdateDialog";
 import { useUpdater } from "./hooks/useUpdater";
 
 export default function App() {
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [fatal, setFatal] = useState<string | null>(null);
+  const [intro, setIntro] = useState(true);
+  const endIntro = useCallback(() => setIntro(false), []);
   const updater = useUpdater();
 
   useEffect(() => {
@@ -49,6 +53,8 @@ export default function App() {
   return (
     <>
       {screen}
+      {session?.connected && <NowPlaying />}
+      {intro && <Intro onDone={endIntro} />}
       {updater.available && <UpdateDialog update={updater.available} onClose={updater.dismiss} />}
     </>
   );

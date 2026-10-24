@@ -16,6 +16,7 @@ const SETTINGS_KEY = "farfa.music";
 const LAST_TRACK_KEY = "farfa.music.last";
 const CROSSFADE = 0.8; // secondes
 const MUTE_FADE = 1.5;
+const TRACK_FADE = 1.5;
 
 interface MusicSettings {
   enabled: boolean;
@@ -34,9 +35,9 @@ interface Playing {
 function readSettings(): MusicSettings {
   try {
     const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "{}");
-    return { enabled: s.enabled !== false, volume: typeof s.volume === "number" ? s.volume : 0.35 };
+    return { enabled: s.enabled !== false, volume: typeof s.volume === "number" ? s.volume : 0.25 };
   } catch {
-    return { enabled: true, volume: 0.35 };
+    return { enabled: true, volume: 0.25 };
   }
 }
 
@@ -65,6 +66,7 @@ export function setMusicSettings(next: Partial<MusicSettings>) {
     // préférence non mémorisée : sans gravité
   }
   applyVolume(0.2);
+  setState({ enabled: settings.enabled });
   if (settings.enabled) void loadMusic();
 }
 
@@ -146,33 +148,50 @@ export function setMusicMuted(value: boolean) {
   applyVolume(MUTE_FADE);
 }
 
-/** Morceau tiré pour toute la session : une reconnexion ne retélécharge rien. */
+/** Morceau en cours pour toute la session : une reconnexion ne retélécharge rien. */
 let sessionTrackId: string | null = null;
 
-function pickTrack(tracks: MusicTrack[]): MusicTrack {
-  const kept = tracks.find((t) => t.id === sessionTrackId);
-  if (kept) return kept;
-  let last: string | null = null;
-  try {
-    last = localStorage.getItem(LAST_TRACK_KEY);
-  } catch {
-    // sans mémoire du dernier morceau : tirage libre
-  }
-  const pool = tracks.length > 1 ? tracks.filter((t) => t.id !== last) : tracks;
+/** Tire un morceau, sauf `exclude` (et sauf le dernier joué au lancement précédent). */
+function pickTrack(tracks: MusicTrack[], exclude: string | null): MusicTrack {
+  const pool = tracks.length > 1 ? tracks.filter((t) => t.id !== exclude) : tracks;
   const chosen = pool[Math.floor(Math.random() * pool.length)];
-  sessionTrackId = chosen.id;
-  try {
-    localStorage.setItem(LAST_TRACK_KEY, chosen.id);
-  } catch {
-    // idem
-  }
+  rememberTrack(chosen);
   return chosen;
+}
+
+function rememberTrack(t: MusicTrack) {
+  sessionTrackId = t.id;
+  try {
+    localStorage.setItem(LAST_TRACK_KEY, t.id);
+  } catch {
+    // sans mémoire du dernier morceau : tirage libre au prochain lancement
+  }
+}
+
+function lastTrackId(): string | null {
+  try {
+    return localStorage.getItem(LAST_TRACK_KEY);
+  } catch {
+    return null;
+  }
 }
 
 async function decode(c: AudioContext, path: string): Promise<AudioBuffer> {
   const resp = await fetch(convertFileSrc(path));
   if (!resp.ok) throw new Error(`lecture du fichier local impossible (${resp.status})`);
   return c.decodeAudioData(await resp.arrayBuffer());
+}
+
+/** Télécharge et décode les deux versions d'un morceau. */
+async function loadPair(c: AudioContext, t: MusicTrack): Promise<Record<MusicVersion, AudioBuffer>> {
+  const files = await backend.musicFiles(t);
+  const [normal, eightBit] = await Promise.all([decode(c, files.normal), decode(c, files.eightBit)]);
+  return { normal, eightBit };
+}
+
+function logFailure(e: unknown) {
+  console.warn("musique indisponible", e);
+  logToFile("warn", `musique indisponible: ${e instanceof Error ? e.message : JSON.stringify(e)}`);
 }
 
 /** Le WebView peut démarrer l'audio en pause : reprise au premier geste. */
@@ -187,6 +206,36 @@ function resumeOnGesture(c: AudioContext) {
   window.addEventListener("keydown", resume, true);
 }
 
+// --- État lisible par l'interface (useSyncExternalStore) ---------------------
+
+export interface MusicState {
+  /** Titre du morceau en cours ; null si aucune musique. */
+  title: string | null;
+  /** Musique activée dans les paramètres. */
+  enabled: boolean;
+  /** Changement de morceau en cours (téléchargement, décodage). */
+  switching: boolean;
+}
+
+let state: MusicState = { title: null, switching: false, enabled: settings.enabled };
+const listeners = new Set<() => void>();
+
+function setState(next: Partial<MusicState>) {
+  state = { ...state, ...next };
+  listeners.forEach((l) => l());
+}
+
+export function subscribeMusic(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+export function musicState(): MusicState {
+  return state;
+}
+
+// --- Chargement, changement de morceau, arrêt --------------------------------
+
 /** Choisit un morceau, le télécharge et le lance (une fois connecté). */
 export function loadMusic(): Promise<void> {
   if (!settings.enabled) return Promise.resolve();
@@ -194,11 +243,9 @@ export function loadMusic(): Promise<void> {
   loading ??= (async () => {
     const tracks = await backend.musicTracks();
     if (tracks.length === 0) return;
-    const chosen = pickTrack(tracks);
-    const files = await backend.musicFiles(chosen);
-    if (gen !== generation) return;
+    const chosen = tracks.find((t) => t.id === sessionTrackId) ?? pickTrack(tracks, lastTrackId());
     const c = new AudioContext();
-    const [normal, eightBit] = await Promise.all([decode(c, files.normal), decode(c, files.eightBit)]);
+    const pair = await loadPair(c, chosen);
     if (gen !== generation) {
       c.close().catch(() => undefined);
       return;
@@ -208,17 +255,45 @@ export function loadMusic(): Promise<void> {
     master.gain.setValueAtTime(0, c.currentTime);
     master.connect(c.destination);
     track = chosen;
-    buffers = { normal, eightBit };
+    buffers = pair;
     playing = startVersion(wanted, 0, 0);
     applyVolume(1.5);
+    setState({ title: chosen.title });
     logToFile("info", `musique : « ${chosen.title} » (audio ${c.state})`);
     resumeOnGesture(c);
   })().catch((e) => {
     loading = null;
-    console.warn("musique indisponible", e);
-    logToFile("warn", `musique indisponible: ${e instanceof Error ? e.message : JSON.stringify(e)}`);
+    logFailure(e);
   });
   return loading;
+}
+
+/**
+ * Passe à un autre morceau tiré au sort : l'ancien s'efface pendant que le
+ * nouveau monte, dans la version du moment (8-bit sur la fiche d'un jeu).
+ */
+export async function nextTrack(): Promise<void> {
+  if (!ctx || !track || state.switching) return;
+  const gen = generation;
+  const c = ctx;
+  setState({ switching: true });
+  try {
+    const tracks = await backend.musicTracks();
+    if (tracks.length < 2) return;
+    const chosen = pickTrack(tracks, track.id);
+    const pair = await loadPair(c, chosen);
+    if (gen !== generation || ctx !== c) return;
+    if (playing) fadeOutAndStop(playing, TRACK_FADE);
+    track = chosen;
+    buffers = pair;
+    playing = startVersion(wanted, 0, TRACK_FADE);
+    setState({ title: chosen.title });
+    logToFile("info", `musique : « ${chosen.title} »`);
+  } catch (e) {
+    logFailure(e);
+  } finally {
+    setState({ switching: false });
+  }
 }
 
 /** Arrête tout (déconnexion, changement d'adresse des assets). */
@@ -231,6 +306,7 @@ export function stopMusic() {
   master = null;
   ctx?.close().catch(() => undefined);
   ctx = null;
+  setState({ title: null, switching: false });
 }
 
 export function reloadMusic(): Promise<void> {

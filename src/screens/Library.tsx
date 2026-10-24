@@ -1,5 +1,5 @@
-import logo from "../assets/logo.png";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Emblem } from "../components/Emblem";
+import { CSSProperties, ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
   AUTH_ERROR_CODES,
@@ -25,8 +25,21 @@ import { InstallsState, useInstalls } from "../hooks/useInstalls";
 import { GameDetail } from "./GameDetail";
 import { Settings } from "./Settings";
 import "./Library.css";
+import "./Hack.css";
 
 type Tab = "recent" | "library" | "favorites";
+
+/** Durées du passage vers la fiche d'un jeu (doivent suivre Hack.css). */
+const HACK_OUT_MS = 380;
+const HACK_IN_MS = 420;
+
+interface Hack {
+  /** Centre de la jaquette cliquée. */
+  x: number;
+  y: number;
+  /** Aller : out puis in ; retour : back-out puis back-in. */
+  phase: "out" | "in" | "back-out" | "back-in";
+}
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "recent", label: "Récent" },
@@ -55,6 +68,11 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
   const [platformId, setPlatformId] = useState<number | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [hack, setHack] = useState<Hack | null>(null);
+  /** Centre de la jaquette d'où l'on est parti (point de retour du zoom). */
+  const openedFrom = useRef({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+  /** Dernier jeu ouvert : sa jaquette sert de cible au zoom arrière. */
+  const lastSelected = useRef<number | null>(null);
 
   /** Erreur d'appel : déconnexion propre si l'accès a été retiré. */
   const handleError = useCallback(
@@ -173,6 +191,59 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
     setQuery("");
   }
 
+  /** Joue une transition en deux temps ; `swap` change d'écran entre les deux. */
+  function transition(at: { x: number; y: number }, out: Hack["phase"], into: Hack["phase"], swap: () => void) {
+    setHack({ ...at, phase: out });
+    setTimeout(() => {
+      swap();
+      setHack({ ...at, phase: into });
+    }, HACK_OUT_MS);
+    setTimeout(() => setHack(null), HACK_OUT_MS + HACK_IN_MS);
+  }
+
+  /** Ouvre la fiche d'un jeu en zoomant vers sa jaquette. */
+  function openGame(id: number, from: HTMLElement) {
+    if (hack) return;
+    const r = from.getBoundingClientRect();
+    openedFrom.current = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    lastSelected.current = id;
+    setMusicVersion("eightBit"); // le fondu musical part avec le zoom
+    transition(openedFrom.current, "out", "in", () => setSelectedId(id));
+  }
+
+  /** Retour à la bibliothèque : le même zoom, à l'envers. */
+  function closeGame() {
+    if (hack) return;
+    playSound("retourSelection");
+    setMusicVersion("normal");
+    transition(openedFrom.current, "back-out", "back-in", () => setSelectedId(null));
+  }
+
+  // La bibliothèque vient d'être recréée : on ramène la jaquette du jeu quitté à
+  // l'écran et on recentre le zoom arrière sur elle, avant le premier affichage.
+  const returningTo = hack?.phase === "back-in" ? lastSelected.current : null;
+  useLayoutEffect(() => {
+    if (returningTo === null) return;
+    const card = document.querySelector<HTMLElement>(`[data-game-id="${returningTo}"]`);
+    if (!card) return;
+    card.scrollIntoView({ block: "nearest" });
+    const r = card.getBoundingClientRect();
+    setHack((h) => h && { ...h, x: r.left + r.width / 2, y: r.top + r.height / 2 });
+  }, [returningTo]);
+
+  /**
+   * Écran courant, animé pendant le passage vers une fiche. L'enveloppe est
+   * toujours là : l'ajouter en cours de route remonterait l'écran (défilement perdu).
+   */
+  function stage(node: ReactNode) {
+    const vars = hack ? ({ "--hx": `${hack.x}px`, "--hy": `${hack.y}px` } as CSSProperties) : undefined;
+    return (
+      <div className={hack ? `hack-stage hack-stage--${hack.phase}` : "hack-stage"} style={vars}>
+        {node}
+      </div>
+    );
+  }
+
   if (showSettings) {
     return (
       <Settings
@@ -191,7 +262,7 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
 
   const selected = allGames.find((g) => g.id === selectedId) ?? null;
   if (selected) {
-    return (
+    return stage(
       <GameDetail
         game={selected}
         platform={snapshot?.platforms.find((p) => p.id === selected.platformId) ?? null}
@@ -200,23 +271,20 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
         favorite={favorites.ids.has(selected.id)}
         onToggleFavorite={favorites.offline || favorites.needsRelogin ? null : () => favorites.toggle(selected.id)}
         favoriteError={favorites.error}
-        onBack={() => {
-          playSound("retourSelection");
-          setSelectedId(null);
-        }}
+        onBack={closeGame}
         onError={handleError}
-      />
+      />,
     );
   }
 
   const fetched = snapshot && new Date(snapshot.fetchedAt * 1000).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
 
-  return (
+  return stage(
     <div className="lib">
       <header className="lib-header">
         <div className="lib-brand">
           <p className="n-subtitle lib-brand-name">
-            <img className="brand-logo" src={logo} alt="" />
+            <Emblem className="brand-logo" />
             FaRFa project
           </p>
           <nav className="lib-tabs" role="tablist">
@@ -318,14 +386,14 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
                   installs={installs}
                   favorite={favorites.ids.has(g.id)}
                   caption={tab === "recent" ? addedOn(g) : undefined}
-                  onOpen={() => setSelectedId(g.id)}
+                  onOpen={(el) => openGame(g.id, el)}
                 />
               </li>
             ))}
           </ul>
         )}
       </main>
-    </div>
+    </div>,
   );
 }
 
@@ -370,7 +438,7 @@ function GameCard({
   installs: InstallsState;
   favorite: boolean;
   caption?: string;
-  onOpen: () => void;
+  onOpen: (el: HTMLElement) => void;
 }) {
   const inst = installs.installed.get(game.id);
   const busy = installs.progress.has(game.id);
@@ -385,7 +453,7 @@ function GameCard({
           : null;
   const [kind, setKind] = useState<"box" | "flat" | null>(null);
   return (
-    <button className={`card${kind === "box" ? " card--box3d" : ""}`} data-sound-hover="game" onClick={onOpen} title={game.name}>
+    <button className={`card${kind === "box" ? " card--box3d" : ""}`} data-sound-hover="game" data-game-id={game.id} onClick={(e) => onOpen(e.currentTarget)} title={game.name}>
       <div className="card-cover">
         <BoxArt game={game} onKind={setKind} />
         {kind === null && !game.boxFaces && <span className="card-placeholder">{game.name}</span>}

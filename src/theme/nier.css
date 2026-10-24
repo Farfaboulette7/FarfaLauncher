@@ -313,17 +313,35 @@ body::after {
 }
 .n-appear { animation: n-in var(--nier-normal) var(--nier-ease); }
 
+/* Animations réduites (souvent coupées par Windows, ex. AtlasOS) : sauf l'ouverture
+   et le passage vers une fiche, courts et demandés explicitement. */
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation: none !important; transition: none !important; }
+  :where(*:not(.intro, .intro *, .hack-stage)),
+  :where(*:not(.intro, .intro *))::before,
+  :where(*:not(.intro, .intro *))::after {
+    animation: none !important;
+    transition: none !important;
+  }
 }
 
-/* Logo Farfaboulette (pixel art : agrandi sans lissage). */
+.emblem {
+  display: inline-block;
+  background-color: currentColor;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+}
+
+/* Emblème YoRHa devant le titre. */
 .brand-logo {
   height: 1.6em;
-  width: auto;
-  image-rendering: pixelated;
+  width: 1.4em;
   vertical-align: middle;
-  margin-right: 0.4em;
+  margin-right: 0.45em;
+  color: var(--nier-ink);
   filter: drop-shadow(1px 1px 0 var(--nier-shadow));
 }
 .lib-brand-name { display: flex; align-items: center; margin: 0; }

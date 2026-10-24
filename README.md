@@ -1,6 +1,6 @@
 # FaRFa project
 
-<img src="src/assets/logo.png" width="76" alt="Farfaboulette" style="image-rendering: pixelated">
+<img src="src-tauri/app-icon.png" width="76" alt="FaRFa project">
 
 Launcher desktop pour installer, mettre à jour et lancer en un clic les jeux recomp /
 portages PC natifs hébergés sur un serveur [RomM](https://romm.app) (plateformes

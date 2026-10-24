@@ -1,4 +1,4 @@
-import logo from "../assets/logo.png";
+import { Emblem } from "../components/Emblem";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { backend, DeviceAuthStart, errorMessage, SessionInfo } from "../api/backend";
 import "./Login.css";
@@ -20,7 +20,7 @@ export function Login({ initialServerUrl, notice, onLoggedIn }: Props) {
       <header className="login-header">
         <p className="n-subtitle">Unité de lancement</p>
         <h1 className="n-title login-brand">
-          <img className="brand-logo" src={logo} alt="" />
+          <Emblem className="brand-logo" />
           FaRFa project
         </h1>
         <div className="n-rule login-rule" />

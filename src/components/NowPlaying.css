@@ -1,0 +1,30 @@
+/* Morceau en cours, posé en haut à droite au-dessus de chaque écran. */
+.now-playing {
+  position: fixed;
+  top: 10px;
+  right: var(--gutter);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(46vw, 560px);
+  font-size: var(--fs-xs);
+  letter-spacing: var(--nier-tracking-wide);
+  color: var(--nier-low);
+}
+.now-playing-title {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.n-btn.now-playing-next {
+  flex: none;
+  gap: 8px;
+  padding: 4px 12px;
+  font-size: var(--fs-xs);
+}
+.n-btn.now-playing-next::before {
+  width: 7px;
+  height: 7px;
+}

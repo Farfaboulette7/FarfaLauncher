@@ -28,9 +28,9 @@ interface SoundSettings {
 function readSettings(): SoundSettings {
   try {
     const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "{}");
-    return { enabled: s.enabled !== false, volume: typeof s.volume === "number" ? s.volume : 0.6 };
+    return { enabled: s.enabled !== false, volume: typeof s.volume === "number" ? s.volume : 0.4 };
   } catch {
-    return { enabled: true, volume: 0.6 };
+    return { enabled: true, volume: 0.4 };
   }
 }
 

@@ -1,0 +1,36 @@
+/*
+ * Passage bibliothèque ⇄ fiche d'un jeu : un zoom net centré sur la jaquette
+ * (--hx / --hy), avec flou et fondu. Aller : la bibliothèque plonge vers le jeu,
+ * puis la fiche se pose. Retour : l'inverse exact.
+ * Durées : HACK_OUT_MS et HACK_IN_MS dans Library.tsx.
+ */
+.hack-stage { height: 100%; }
+.hack-stage[class*="hack-stage--"] {
+  transform-origin: var(--hx) var(--hy);
+  pointer-events: none;
+}
+.hack-stage--out      { animation: hack-dive 380ms cubic-bezier(0.5, 0, 0.9, 0.5) both; }
+.hack-stage--in       { animation: hack-settle 420ms cubic-bezier(0.1, 0.7, 0.2, 1) both; }
+.hack-stage--back-out { animation: hack-unsettle 380ms cubic-bezier(0.5, 0, 0.9, 0.5) both; }
+.hack-stage--back-in  { animation: hack-undive 420ms cubic-bezier(0.1, 0.7, 0.2, 1) both; }
+
+/* L'écran de départ plonge vers la jaquette. */
+@keyframes hack-dive {
+  from { transform: scale(1); filter: blur(0); opacity: 1; }
+  to   { transform: scale(2.6); filter: blur(10px); opacity: 0; }
+}
+/* L'écran d'arrivée se pose en se dézoomant légèrement. */
+@keyframes hack-settle {
+  from { transform: scale(1.18); filter: blur(8px); opacity: 0; }
+  to   { transform: scale(1); filter: blur(0); opacity: 1; }
+}
+/* Retour : mêmes images à l'envers, mais avec la même dynamique que l'aller
+   (sortie qui accélère, arrivée qui ralentit) ; `reverse` inverserait aussi l'easing. */
+@keyframes hack-unsettle {
+  from { transform: scale(1); filter: blur(0); opacity: 1; }
+  to   { transform: scale(1.18); filter: blur(8px); opacity: 0; }
+}
+@keyframes hack-undive {
+  from { transform: scale(2.6); filter: blur(10px); opacity: 0; }
+  to   { transform: scale(1); filter: blur(0); opacity: 1; }
+}
