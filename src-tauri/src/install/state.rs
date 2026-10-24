@@ -120,6 +120,36 @@ pub fn find(config_dir: &Path, rom_id: i64) -> Option<InstalledGame> {
     read_state(&entry.game_dir).filter(|s| s.rom_id == rom_id)
 }
 
+/// Jeux déplacés sur le serveur (ex. de `farfa-portage` vers `portage-n64`) :
+/// RomM leur donne un nouvel identifiant. Une installation dont l'identifiant
+/// a disparu est rattachée au jeu qui a le même nom de dossier.
+/// `games` : (identifiant, nom de dossier) des jeux du serveur.
+pub fn rekey_moved(config_dir: &Path, games: &[(i64, String)]) -> usize {
+    let installed = list_installed(config_dir);
+    let mut moved = 0;
+    for mut st in installed.iter().cloned() {
+        if games.iter().any(|(id, _)| *id == st.rom_id) {
+            continue;
+        }
+        let dir_name = st.game_dir.file_name().map(|n| n.to_string_lossy().into_owned());
+        let Some((new_id, _)) = games.iter().find(|(id, folder)| {
+            dir_name.as_deref() == Some(safe_folder_name(folder, *id).as_str()) && !installed.iter().any(|i| i.rom_id == *id)
+        }) else {
+            continue;
+        };
+        let old_id = st.rom_id;
+        st.rom_id = *new_id;
+        match write_state(config_dir, &st).and_then(|_| forget(config_dir, old_id)) {
+            Ok(()) => {
+                tracing::info!("« {} » déplacé sur le serveur : jeu {old_id} → {new_id}", st.name);
+                moved += 1;
+            }
+            Err(e) => tracing::error!("rattachement de « {} » impossible: {}", st.name, e.code()),
+        }
+    }
+    moved
+}
+
 /// Nom de dossier sûr sur tous les systèmes.
 pub fn safe_folder_name(name: &str, rom_id: i64) -> String {
     let cleaned: String = name
@@ -150,5 +180,37 @@ mod tests {
         assert_eq!(safe_folder_name("  ..  ", 7), "jeu-7");
         assert_eq!(safe_folder_name("CON", 3), "jeu-3");
         assert_eq!(safe_folder_name("Jeu.", 3), "Jeu");
+    }
+
+    #[test]
+    fn moved_games_keep_their_install() {
+        let root = std::env::temp_dir().join(format!("farfa-rekey-{}", uuid::Uuid::new_v4()));
+        let config = root.join("config");
+        let game_dir = root.join("Jeux").join("Super Mario 64");
+        std::fs::create_dir_all(&game_dir).unwrap();
+        let st = InstalledGame {
+            rom_id: 3,
+            name: "Super Mario 64".into(),
+            version: None,
+            version_raw: None,
+            target: Target::Windows,
+            archive_name: "a.zip".into(),
+            executable: Some("game.exe".into()),
+            pending_candidates: vec![],
+            roms: vec![],
+            mods_downloaded: vec![],
+            installed_at: 1,
+            updated_at: 1,
+            game_dir: game_dir.clone(),
+        };
+        write_state(&config, &st).unwrap();
+
+        let games = vec![(40, "Super Mario 64".to_string()), (41, "Autre".to_string())];
+        assert_eq!(rekey_moved(&config, &games), 1);
+        assert!(find(&config, 3).is_none());
+        assert_eq!(find(&config, 40).unwrap().executable.as_deref(), Some("game.exe"));
+        // Déjà rattaché : plus rien à faire.
+        assert_eq!(rekey_moved(&config, &games), 0);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

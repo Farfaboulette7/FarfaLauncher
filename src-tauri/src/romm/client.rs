@@ -102,6 +102,15 @@ impl RommClient {
         self.authed(self.http.post(self.url(path)).json(body).timeout(API_TIMEOUT))
     }
 
+    pub fn delete<B: Serialize + ?Sized>(&self, path: &str, body: &B) -> RequestBuilder {
+        self.authed(self.http.delete(self.url(path)).json(body).timeout(API_TIMEOUT))
+    }
+
+    /// POST de formulaire (`application/x-www-form-urlencoded`).
+    pub fn post_form<B: Serialize + ?Sized>(&self, path: &str, form: &B) -> RequestBuilder {
+        self.authed(self.http.post(self.url(path)).form(form).timeout(API_TIMEOUT))
+    }
+
     pub async fn send(&self, req: RequestBuilder) -> AppResult<Response> {
         let resp = req.send().await.map_err(|e| log_err(AppError::ServerUnreachable, "requête HTTP", error_chain(&e)))?;
         check_status(resp).await

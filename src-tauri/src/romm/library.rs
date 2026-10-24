@@ -1,4 +1,4 @@
-//! Lecture de la plateforme `farfa-portage` et de ses jeux (docs/romm-api.md §2-4).
+//! Lecture des plateformes `portage-*` et de leurs jeux (docs/romm-api.md §2-4).
 
 use serde::{Deserialize, Serialize};
 
@@ -6,7 +6,9 @@ use super::client::{parse_json, RommClient};
 use crate::error::{log_err, AppError, AppResult};
 use crate::platform::{self, ArchiveKind, Target};
 
-pub const PLATFORM_SLUG: &str = "farfa-portage";
+/// Plateformes gérées : dossiers dont le nom commence par ce préfixe
+/// (`portage-n64`, `portage-ngc`…).
+pub const PLATFORM_PREFIX: &str = "portage";
 const VERSION_FILE: &str = "VERSION.txt";
 const PAGE_SIZE: usize = 100;
 /// RomM peut mettre longtemps à décrire un jeu aux nombreux fichiers.
@@ -19,6 +21,11 @@ struct RawPlatform {
     id: i64,
     slug: String,
     fs_slug: String,
+    name: String,
+    #[serde(default)]
+    custom_name: Option<String>,
+    #[serde(default)]
+    rom_count: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -29,6 +36,7 @@ struct RawPage {
 #[derive(Debug, Deserialize)]
 pub struct RawRom {
     id: i64,
+    platform_id: i64,
     name: Option<String>,
     fs_name: String,
     full_path: String,
@@ -45,9 +53,29 @@ pub struct RawRom {
     path_manual: Option<String>,
     #[serde(default)]
     metadatum: Option<RawMetadatum>,
+    #[serde(default)]
+    ss_metadata: Option<RawMedia>,
+    #[serde(default)]
+    gamelist_metadata: Option<RawMedia>,
+    #[serde(default)]
+    created_at: String,
     updated_at: String,
     #[serde(default)]
     files: Vec<RawFile>,
+}
+
+/// Médias stockés par RomM (ScreenScraper ou gamelist.xml), chemins relatifs
+/// à `/assets/romm/resources/`.
+#[derive(Debug, Default, Deserialize)]
+struct RawMedia {
+    #[serde(default)]
+    box3d_path: Option<String>,
+    #[serde(default)]
+    box2d_path: Option<String>,
+    #[serde(default)]
+    box2d_back_path: Option<String>,
+    #[serde(default)]
+    box2d_side_path: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -111,12 +139,42 @@ pub enum Manual {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct Platform {
+    pub id: i64,
+    pub slug: String,
+    pub fs_slug: String,
+    pub name: String,
+    pub rom_count: u32,
+    /// Icônes servies par RomM, à essayer dans l'ordre (comme son interface web).
+    pub icon_urls: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BoxFaces {
+    pub front: String,
+    /// Tranche (côté gauche de la boîte).
+    pub side: String,
+    pub back: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Game {
     pub id: i64,
+    #[serde(default)]
+    pub platform_id: i64,
     pub name: String,
     pub folder_name: String,
     pub summary: Option<String>,
     pub cover_url: Option<String>,
+    /// Image de boîte 3D détourée (média `box3d` de RomM), si le serveur l'a.
+    #[serde(default)]
+    pub box3d_url: Option<String>,
+    /// Faces de la boîte (médias `box2d`, `box2d_side`, `box2d_back`) pour
+    /// construire la boîte 3D interactive, comme l'interface web de RomM.
+    #[serde(default)]
+    pub box_faces: Option<BoxFaces>,
     pub screenshot_urls: Vec<String>,
     pub video_url: Option<String>,
     pub genres: Vec<String>,
@@ -139,46 +197,80 @@ pub struct Game {
     /// (les champs ci-dessus peuvent alors venir du cache précédent).
     #[serde(default)]
     pub details_loaded: bool,
+    /// Date d'ajout sur le serveur (RFC 3339), pour l'onglet « Récent ».
+    #[serde(default)]
+    pub created_at: String,
     pub updated_at: String,
 }
 
-pub async fn find_platform_id(client: &RommClient) -> AppResult<i64> {
-    let platforms: Vec<RawPlatform> = client.get_json("api/platforms").await?;
-    platforms
-        .iter()
-        .find(|p| p.fs_slug.eq_ignore_ascii_case(PLATFORM_SLUG))
-        .or_else(|| platforms.iter().find(|p| p.slug.eq_ignore_ascii_case(PLATFORM_SLUG)))
-        .map(|p| p.id)
-        .ok_or_else(|| {
-            tracing::error!("plateforme {PLATFORM_SLUG} introuvable parmi {} plateformes", platforms.len());
-            AppError::PlatformMissing
+/// Plateformes `portage-*` du serveur, triées par nom.
+pub async fn list_platforms(client: &RommClient) -> AppResult<Vec<Platform>> {
+    let raws: Vec<RawPlatform> = client.get_json("api/platforms").await?;
+    let total = raws.len();
+    let base = client.base();
+    let mut platforms: Vec<Platform> = raws
+        .into_iter()
+        .filter(|p| is_portage(&p.fs_slug))
+        .map(|p| {
+            let icon_urls = [&p.fs_slug, &p.slug]
+                .iter()
+                .flat_map(|s| ["svg", "ico"].map(|ext| format!("{base}/assets/platforms/{}.{ext}", s.to_lowercase())))
+                .collect();
+            Platform {
+                id: p.id,
+                name: p.custom_name.filter(|n| !n.trim().is_empty()).unwrap_or(p.name),
+                slug: p.slug,
+                fs_slug: p.fs_slug,
+                rom_count: p.rom_count,
+                icon_urls,
+            }
         })
+        .collect();
+    if platforms.is_empty() {
+        tracing::error!("aucune plateforme {PLATFORM_PREFIX}-* parmi {total} plateformes");
+        return Err(AppError::PlatformMissing);
+    }
+    platforms.sort_by_key(|p| p.name.to_lowercase());
+    Ok(platforms)
+}
+
+fn is_portage(fs_slug: &str) -> bool {
+    fs_slug.to_ascii_lowercase().starts_with(PLATFORM_PREFIX)
 }
 
 /// Liste légère des jeux (sans leurs fichiers) : rapide même sur un serveur lent.
 /// Les fichiers sont chargés ensuite jeu par jeu (`fetch_game_details`), pour
 /// qu'un jeu lent à décrire par RomM ne bloque pas toute la bibliothèque.
-pub async fn list_games(client: &RommClient, platform_id: i64, me: Target) -> AppResult<Vec<Game>> {
+pub async fn list_games(client: &RommClient, platforms: &[Platform], me: Target) -> AppResult<Vec<Game>> {
     let mut raws: Vec<RawRom> = Vec::new();
-    loop {
-        let path = format!(
-            "api/roms?platform_ids={platform_id}&with_char_index=false&with_filter_values=false\
-             &with_rom_id_index=false&with_total=false&limit={PAGE_SIZE}&offset={}",
-            raws.len()
-        );
-        let started = std::time::Instant::now();
-        let page: RawPage = client.get_json(&path).await?;
-        let n = page.items.len();
-        tracing::info!("liste: {n} jeux reçus en {:?}", started.elapsed());
-        raws.extend(page.items);
-        if n < PAGE_SIZE {
-            break;
-        }
+    for p in platforms {
+        list_platform_games(client, p.id, &mut raws).await?;
     }
     let base = client.base().to_string();
     let mut games: Vec<Game> = raws.into_iter().map(|r| to_game(r, &base, me, false)).collect();
     games.sort_by_key(|g| g.name.to_lowercase());
+    let with_box = games.iter().filter(|g| g.box_faces.is_some() || g.box3d_url.is_some()).count();
+    tracing::info!("{} jeux sur {} plateformes, {with_box} avec une boîte 3D", games.len(), platforms.len());
     Ok(games)
+}
+
+async fn list_platform_games(client: &RommClient, platform_id: i64, raws: &mut Vec<RawRom>) -> AppResult<()> {
+    let first = raws.len();
+    loop {
+        let path = format!(
+            "api/roms?platform_ids={platform_id}&with_char_index=false&with_filter_values=false\
+             &with_rom_id_index=false&with_total=false&limit={PAGE_SIZE}&offset={}",
+            raws.len() - first
+        );
+        let started = std::time::Instant::now();
+        let page: RawPage = client.get_json(&path).await?;
+        let n = page.items.len();
+        tracing::info!("plateforme {platform_id}: {n} jeux reçus en {:?}", started.elapsed());
+        raws.extend(page.items);
+        if n < PAGE_SIZE {
+            return Ok(());
+        }
+    }
 }
 
 impl Game {
@@ -261,6 +353,12 @@ pub fn file_content_path(file: &RemoteFile) -> String {
 
 fn urlencode(s: &str) -> String {
     url::form_urlencoded::byte_serialize(s.as_bytes()).collect::<String>().replace('+', "%20")
+}
+
+/// Ressource statique de RomM (`/assets/romm/resources/…`), avec la date de
+/// mise à jour du jeu pour renouveler le cache local quand elle change.
+fn resource_url(base: &str, path: &str, updated_at: &str) -> String {
+    format!("{base}/assets/romm/resources/{}?v={}", path.trim_start_matches('/'), urlencode(updated_at))
 }
 
 fn absolute(base: &str, path: &str) -> String {
@@ -353,8 +451,7 @@ fn to_game(r: RawRom, base: &str, me: Target, details_loaded: bool) -> Game {
     }
     if r.has_manual {
         if let Some(p) = r.path_manual.as_deref().filter(|p| !p.is_empty()) {
-            let url = format!("{base}/assets/romm/resources/{}?v={}", p.trim_start_matches('/'), urlencode(&r.updated_at));
-            manuals.insert(0, Manual::Resource { url });
+            manuals.insert(0, Manual::Resource { url: resource_url(base, p, &r.updated_at) });
         }
     }
     archives.sort_by_key(|a| crate::platform::ALL_TARGETS.iter().position(|t| *t == a.target));
@@ -364,6 +461,21 @@ fn to_game(r: RawRom, base: &str, me: Target, details_loaded: bool) -> Game {
         .find_map(|t| archives.iter().find(|a| a.target == *t))
         .cloned();
 
+    let media: Vec<&RawMedia> = [&r.ss_metadata, &r.gamelist_metadata].into_iter().flatten().collect();
+    let media_url = |pick: fn(&RawMedia) -> &Option<String>| {
+        media
+            .iter()
+            .find_map(|m| pick(m).as_deref().filter(|p| !p.is_empty()))
+            .map(|p| resource_url(base, p, &r.updated_at))
+    };
+    let box3d_url = media_url(|m| &m.box3d_path);
+    let cover_url = r.path_cover_large.clone().filter(|p| !p.is_empty()).map(|p| absolute(base, &p));
+    // Sans tranche, pas de boîte 3D : la jaquette s'affiche à plat.
+    let box_faces = media_url(|m| &m.box2d_side_path).and_then(|side| {
+        let front = media_url(|m| &m.box2d_path).or_else(|| cover_url.clone())?;
+        Some(BoxFaces { front, side, back: media_url(|m| &m.box2d_back_path) })
+    });
+
     let meta = r.metadatum.unwrap_or_default();
     let mut developers = meta.developers;
     if developers.is_empty() {
@@ -372,10 +484,13 @@ fn to_game(r: RawRom, base: &str, me: Target, details_loaded: bool) -> Game {
 
     Game {
         id: r.id,
+        platform_id: r.platform_id,
         name: r.name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| r.fs_name.clone()),
         folder_name: r.fs_name,
         summary: r.summary.filter(|s| !s.trim().is_empty()),
-        cover_url: r.path_cover_large.filter(|p| !p.is_empty()).map(|p| absolute(base, &p)),
+        cover_url,
+        box3d_url,
+        box_faces,
         screenshot_urls: r.merged_screenshots.iter().map(|p| absolute(base, p)).collect(),
         video_url: r.path_video.filter(|p| !p.is_empty()).map(|p| absolute(base, &p)),
         genres: meta.genres,
@@ -390,6 +505,7 @@ fn to_game(r: RawRom, base: &str, me: Target, details_loaded: bool) -> Game {
         server_version: None,
         server_version_raw: None,
         details_loaded,
+        created_at: r.created_at,
         updated_at: r.updated_at,
     }
 }
@@ -430,6 +546,14 @@ mod tests {
             relative_path("farfa-portage/roms/Super Mario 64", "Super Mario 64", "library/farfa-portage/roms/Super Mario 64/ROM/a.z64"),
             "ROM/a.z64"
         );
+    }
+
+    #[test]
+    fn portage_platforms() {
+        assert!(is_portage("portage-ngc"));
+        assert!(is_portage("Portage-N64"));
+        assert!(!is_portage("farfa-portage"));
+        assert!(!is_portage("ngc"));
     }
 
     #[test]

@@ -33,8 +33,10 @@ pub enum AppError {
     TokenRejected,
     #[error("Impossible d'accéder au trousseau sécurisé du système.")]
     Keychain,
-    #[error("La plateforme « farfa-portage » est introuvable sur ce serveur RomM.")]
+    #[error("Aucune plateforme « portage-… » n'a été trouvée sur ce serveur RomM.")]
     PlatformMissing,
+    #[error("Les favoris demandent une autorisation de plus : déconnectez-vous puis reconnectez-vous une fois.")]
+    FavoritesScope,
     #[error("Impossible de lire ou d'écrire le cache local.")]
     Cache,
     #[error("Téléchargement impossible. Vérifiez votre connexion et réessayez.")]
@@ -85,6 +87,7 @@ impl AppError {
             AppError::TokenRejected => "token_rejected",
             AppError::Keychain => "keychain",
             AppError::PlatformMissing => "platform_missing",
+            AppError::FavoritesScope => "favorites_scope",
             AppError::Cache => "cache",
             AppError::Download => "download",
             AppError::Integrity => "integrity",

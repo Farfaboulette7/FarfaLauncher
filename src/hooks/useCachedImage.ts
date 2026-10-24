@@ -34,6 +34,41 @@ export function useCachedImage(url: string | null | undefined): { src: string | 
   return state;
 }
 
+/** Première image disponible parmi `urls` (les suivantes servent de repli). */
+export function useFirstImage(urls: (string | null | undefined)[]): { src: string | null; index: number } {
+  const list = urls.filter((u): u is string => !!u);
+  const key = list.join("\n");
+  const [state, setState] = useState<{ src: string | null; index: number }>({ src: null, index: -1 });
+
+  useEffect(() => {
+    let alive = true;
+    setState({ src: null, index: -1 });
+    (async () => {
+      for (let i = 0; i < list.length; i++) {
+        try {
+          const src = await load(list[i]);
+          if (alive) setState({ src, index: i });
+          return;
+        } catch {
+          // image absente : on essaie la suivante
+        }
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
+  return state;
+}
+
+/** Visuel d'un jeu : la boîte en 3D si elle existe, sinon la jaquette. */
+export function useBoxArt(game: { box3dUrl: string | null; coverUrl: string | null }): { src: string | null; is3d: boolean } {
+  const { src, index } = useFirstImage([game.box3dUrl, game.coverUrl]);
+  return { src, is3d: !!game.box3dUrl && index === 0 };
+}
+
 export function clearImageMemo() {
   memo.clear();
 }

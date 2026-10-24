@@ -1,21 +1,120 @@
 .lib {
   height: 100%;
-  display: grid;
-  grid-template-rows: auto auto auto auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
 }
+.lib > * { flex: none; }
+.lib > .lib-grid-wrap { flex: 1 1 auto; min-height: 0; }
+
+/* ---------- Onglets principaux ---------- */
+.lib-brand { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.lib-tabs { display: flex; gap: clamp(14px, 1.8vw, 40px); }
+.lib-tab {
+  position: relative;
+  padding: 0 0 6px;
+  font: inherit;
+  font-size: clamp(22px, 1.7vw + 8px, 44px);
+  font-weight: var(--nier-weight);
+  letter-spacing: clamp(0.12rem, 0.25vw, 0.4rem);
+  white-space: nowrap;
+  text-transform: uppercase;
+  color: var(--nier-mid);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  transition: color var(--nier-fast) linear;
+}
+.lib-tab::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 3px;
+  background: var(--nier-low);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform var(--nier-normal) var(--nier-ease);
+}
+.lib-tab:hover,
+.lib-tab:focus-visible { color: var(--nier-low); outline: none; }
+.lib-tab[aria-selected="true"] { color: var(--nier-text); }
+.lib-tab[aria-selected="true"]::after,
+.lib-tab:focus-visible::after { transform: scaleX(1); }
+.lib-view-title { margin: 0; }
+.lib-msg--row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+
+/* ---------- Plateformes ---------- */
+.lib-platforms {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(clamp(170px, 14vw, 260px), 1fr));
+  gap: clamp(16px, 1.6vw, 32px);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.lib-platforms > li { display: flex; }
+.pcard {
+  width: 100%;
+  min-height: clamp(200px, 15vw, 280px);
+  justify-content: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 28px 16px 20px;
+  font: inherit;
+  letter-spacing: inherit;
+  color: var(--nier-low);
+  background-color: var(--nier-high-mid);
+  background-image: linear-gradient(var(--nier-low), var(--nier-low));
+  background-repeat: no-repeat;
+  background-position: left bottom;
+  background-size: 0% 100%;
+  border: 0;
+  cursor: pointer;
+  box-shadow: var(--nier-drop) var(--nier-drop) 0 var(--nier-shadow);
+  transition:
+    background-size var(--nier-normal) var(--nier-ease),
+    color var(--nier-fast) linear,
+    transform var(--nier-normal) var(--nier-ease);
+}
+.pcard:hover,
+.pcard:focus-visible {
+  outline: none;
+  background-size: 100% 100%;
+  color: var(--nier-high);
+  transform: translateY(-3px);
+}
+.pcard-icon {
+  width: clamp(64px, 5vw, 96px);
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pcard-icon img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.pcard-glyph { font-size: 40px; }
+.pcard-name {
+  font-size: var(--fs-md);
+  text-transform: uppercase;
+  letter-spacing: var(--nier-tracking-wide);
+  text-align: center;
+}
+.pcard-count { font-size: var(--fs-xs); opacity: 0.8; }
 .lib-header {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
   gap: 24px;
-  flex-wrap: wrap;
   padding: 24px var(--gutter) 8px;
 }
 .lib-status {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 12px;
-  flex-wrap: wrap;
+  padding-bottom: 8px;
 }
 .lib-user {
   font-size: var(--fs-sm);
@@ -83,15 +182,11 @@
   overflow: hidden;
   background: var(--nier-mid);
 }
-.card-cover img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
+.card-cover .boxart-flat {
   filter: sepia(0.15) saturate(0.9);
   transition: filter var(--nier-normal);
 }
-.card:hover .card-cover img { filter: none; }
+.card:hover .card-cover .boxart-flat { filter: none; }
 .card-placeholder {
   position: absolute;
   inset: 0;
@@ -124,3 +219,22 @@
   text-overflow: ellipsis;
 }
 .card-badge--ok { background: var(--nier-ok); }
+.card-caption {
+  padding: 0 10px 10px;
+  margin-top: -6px;
+  font-size: var(--fs-xs);
+  opacity: 0.8;
+}
+.card-fav {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  font-size: var(--fs-lg);
+  color: var(--nier-high);
+  text-shadow: 0 0 3px var(--nier-ink), 1px 1px 0 var(--nier-ink);
+}
+
+/* Boîte 3D : posée sur la carte, sans fond ni recadrage. */
+.card--box3d .card-cover { background: transparent; overflow: visible; }
+.card-badge,
+.card-fav { z-index: 1; }

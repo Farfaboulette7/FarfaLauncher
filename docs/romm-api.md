@@ -105,6 +105,7 @@ dans RomM). Les scopes accordés = demandés ∩ droits du compte (l'ami peut en
 | `roms.user.write` | `POST /api/play-sessions` : enregistrer le temps de jeu | oui (temps de jeu) |
 | `roms.user.read` | `GET /api/play-sessions` : relire le temps de jeu | oui (temps de jeu) |
 | `devices.read` | lire les sessions de **tous** les appareils de l'ami (PC + Steam Deck…). Sans lui, le launcher ne voit que les sessions de son propre appareil | recommandé |
+| `collections.read` / `collections.write` | favoris = collection « favoris » de l'ami (§5). Un token créé avant les favoris reçoit 403 : le launcher propose de se reconnecter | oui (favoris) |
 
 Pas besoin de `assets.read` : les jaquettes, captures et livrets scrapés sont des fichiers
 statiques servis sans authentification (voir §4).
@@ -120,9 +121,12 @@ tous partie du rôle « Viewer » par défaut de RomM
 ## 2. Trouver la plateforme et lister ses jeux
 
 1. `GET /api/platforms` (`platforms.read`) → `list[PlatformSchema]`
-   (`backend/endpoints/platform.py`). Chercher l'élément dont `fs_slug == "farfa-portage"`
-   (nom du dossier sur disque ; repli sur `slug`). On garde son `id`.
-2. `GET /api/roms?platform_ids=<id>&with_files=true&limit=500`
+   (`backend/endpoints/platform.py`). On garde toutes les plateformes dont le `fs_slug`
+   (nom du dossier sur disque) commence par `portage` : `portage-n64`, `portage-ngc`…
+   Nom affiché : `custom_name` sinon `name` ; nombre de jeux : `rom_count`. Icône : les
+   fichiers statiques `/assets/platforms/<fs_slug|slug>.svg|.ico`, essayés dans cet ordre
+   comme le fait l'interface web (`PlatformIcon.vue`).
+2. Pour chaque plateforme, `GET /api/roms?platform_ids=<id>&with_files=true&limit=500`
    `&with_char_index=false&with_filter_values=false&with_rom_id_index=false&with_total=false`
    (`roms.read`, `backend/endpoints/roms/__init__.py` `get_roms`) →
    `{items: list[SimpleRomSchema], total, limit, offset}`.
@@ -184,10 +188,36 @@ Tous ces chemins sont relatifs à l'origine du serveur et pointent vers
 | Résumé | `summary` ; autres infos : `name`, `metadatum.genres`, `metadatum.developers`, `metadatum.first_release_date`… |
 | Livret (scrapé/uploadé) | si `has_manual` : `/assets/romm/resources/` + `path_manual` (non préfixé ; ajouter `?v=<updated_at>`) — PDF |
 | Livret (fichier dans le dossier du jeu) | fichiers dont `category == "manual"` (dossier `manual/` ou `manuals/`) → endpoint de téléchargement du §3 (servi `inline`) |
+| Faces de la boîte | `ss_metadata` (ou `gamelist_metadata`) : `box2d_path` (avant), `box2d_side_path` (tranche), `box2d_back_path` (dos) — relatifs à `/assets/romm/resources/` |
+| Boîte 3D détourée | `ss_metadata.box3d_path`, seulement si `box3d` est dans `scan.media` du `config.yml` |
+| Date d'ajout (onglet Récent) | `created_at` |
+
+**Boîte 3D** : RomM ne télécharge que les médias listés dans `scan.media` de son
+`config.yml` ; pour les autres, seul le lien ScreenScraper (`box3d_url`…) est stocké, et
+il contient des identifiants : le launcher ne l'utilise jamais. Comme l'interface web
+(« `box2d_side` enables the interactive 3D box »), le launcher construit la boîte en CSS 3D
+à partir de l'avant, de la tranche et du dos. Certaines tranches (N64) sont stockées
+couchées (plus larges que hautes) : elles sont redressées d'un quart de tour.
 
 ---
 
-## 5. Temps de jeu — ✅ disponible, on l'implémente
+## 5. Favoris
+
+Les favoris sont la collection de l'utilisateur marquée `is_favorite` — le cœur de
+l'interface web, donc partagés entre tous ses appareils
+(`backend/endpoints/collections.py`, `frontend/src/composables/useFavoriteToggle.ts`).
+
+- Lire : `GET /api/collections` (`collections.read`) → garder celle où
+  `is_favorite == true` **et** `user_id ==` l'id de `GET /api/users/me` (une collection
+  favoris publique d'un autre utilisateur apparaît aussi dans la liste). Jeux : `rom_ids`.
+- Créer si absente : `POST /api/collections?is_favorite=true&is_public=false`, formulaire
+  `name=Favorites` (`collections.write`).
+- Ajouter / retirer : `POST` / `DELETE /api/collections/{id}/roms` avec
+  `{"rom_ids": [42]}` → la collection mise à jour.
+
+---
+
+## 6. Temps de jeu — ✅ disponible, on l'implémente
 
 RomM 5.4.0 a des **sessions de jeu par utilisateur**
 (`backend/endpoints/play_sessions.py`, `backend/models/play_session.py`).

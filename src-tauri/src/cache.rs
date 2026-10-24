@@ -10,7 +10,7 @@ use tokio::io::AsyncWriteExt;
 
 use crate::error::{log_err, AppError, AppResult};
 use crate::romm::client::RommClient;
-use crate::romm::library::Game;
+use crate::romm::library::{Game, Platform};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -18,6 +18,8 @@ pub struct LibrarySnapshot {
     pub server_url: String,
     /// Horodatage Unix (secondes) du dernier rafraîchissement.
     pub fetched_at: u64,
+    #[serde(default)]
+    pub platforms: Vec<Platform>,
     pub games: Vec<Game>,
 }
 
@@ -30,7 +32,35 @@ pub fn load_library(cache_dir: &Path, server_url: &str) -> Option<LibrarySnapsho
     let snap: LibrarySnapshot = serde_json::from_str(&text)
         .map_err(|e| tracing::warn!("cache bibliothèque illisible: {e}"))
         .ok()?;
-    (snap.server_url == server_url).then_some(snap)
+    // Cache d'avant les plateformes `portage-*` : ignoré, la liste est rechargée.
+    (snap.server_url == server_url && !snap.platforms.is_empty()).then_some(snap)
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FavoritesCache {
+    server_url: String,
+    rom_ids: Vec<i64>,
+}
+
+fn favorites_file(cache_dir: &Path) -> PathBuf {
+    cache_dir.join("favorites.json")
+}
+
+/// Derniers favoris connus (affichage hors ligne).
+pub fn load_favorites(cache_dir: &Path, server_url: &str) -> Option<Vec<i64>> {
+    let text = std::fs::read_to_string(favorites_file(cache_dir)).ok()?;
+    let c: FavoritesCache = serde_json::from_str(&text).ok()?;
+    (c.server_url == server_url).then_some(c.rom_ids)
+}
+
+pub fn save_favorites(cache_dir: &Path, server_url: &str, rom_ids: &[i64]) {
+    let c = FavoritesCache { server_url: server_url.to_string(), rom_ids: rom_ids.to_vec() };
+    let res = std::fs::create_dir_all(cache_dir)
+        .and_then(|_| std::fs::write(favorites_file(cache_dir), serde_json::to_string(&c).unwrap_or_default()));
+    if let Err(e) = res {
+        tracing::warn!("favoris non mis en cache: {e}");
+    }
 }
 
 pub fn save_library(cache_dir: &Path, snap: &LibrarySnapshot) -> AppResult<()> {
@@ -91,7 +121,8 @@ pub async fn cached_download(
     }
     tokio::fs::create_dir_all(dir).await.map_err(|e| log_err(AppError::Cache, "création du cache", e))?;
     let resp = client.send(client.get_stream(url_path)).await?;
-    let tmp = path.with_extension(format!("{ext}.part{}", std::process::id()));
+    // Nom temporaire unique : deux demandes simultanées du même fichier ne se marchent pas dessus.
+    let tmp = path.with_extension(format!("{ext}.part-{}", uuid::Uuid::new_v4().simple()));
     let mut out = tokio::fs::File::create(&tmp).await.map_err(|e| log_err(AppError::Cache, "fichier de cache", e))?;
     let mut body = resp.bytes_stream();
     while let Some(chunk) = body.next().await {
@@ -100,7 +131,13 @@ pub async fn cached_download(
     }
     out.flush().await.map_err(|e| log_err(AppError::Cache, "écriture du cache", e))?;
     drop(out);
-    tokio::fs::rename(&tmp, &path).await.map_err(|e| log_err(AppError::Cache, "finalisation du cache", e))?;
+    if let Err(e) = tokio::fs::rename(&tmp, &path).await {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        // Une autre demande l'a déjà posé : c'est le même fichier.
+        if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
+            return Err(log_err(AppError::Cache, "finalisation du cache", e));
+        }
+    }
     Ok(path)
 }
 

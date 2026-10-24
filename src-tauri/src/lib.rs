@@ -55,6 +55,8 @@ pub fn run() {
             commands::library::manual_path,
             commands::library::game_playtime,
             commands::library::clear_cache,
+            commands::library::favorites_list,
+            commands::library::favorite_set,
             commands::install::install_info,
             commands::install::install_game,
             commands::install::cancel_install,

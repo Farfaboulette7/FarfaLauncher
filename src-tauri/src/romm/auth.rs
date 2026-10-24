@@ -16,6 +16,8 @@ pub const REQUIRED_SCOPES: &[&str] = &[
     "roms.user.read",
     "roms.user.write",
     "devices.read",
+    "collections.read",
+    "collections.write",
 ];
 
 pub const TOKEN_PREFIX: &str = "rmm_";

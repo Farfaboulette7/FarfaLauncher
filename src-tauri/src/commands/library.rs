@@ -14,7 +14,9 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::cache::{self, LibrarySnapshot};
 use crate::error::{AppError, AppResult};
+use crate::install::state as install_state;
 use crate::platform::{self, Target};
+use crate::romm::favorites;
 use crate::romm::library::{self, Manual};
 use crate::romm::playtime;
 use crate::state::AppState;
@@ -31,15 +33,22 @@ pub fn system_target() -> Target {
 #[tauri::command]
 pub fn library_cached(state: State<'_, AppState>) -> AppResult<Option<LibrarySnapshot>> {
     let server = state.server_url()?;
+    let mut current = state.library.lock().unwrap();
+    // Déjà en mémoire (rafraîchissement en cours ou terminé) : ne pas l'écraser
+    // avec un cache plus ancien, ou vide.
+    if current.as_ref().is_some_and(|s| s.server_url == server) {
+        return Ok(current.clone());
+    }
     let snap = cache::load_library(&state.cache_dir, &server);
-    *state.library.lock().unwrap() = snap.clone();
+    *current = snap.clone();
     Ok(snap)
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RefreshStarted {
-    pub snapshot: LibrarySnapshot,
+    /// `None` si un rafraîchissement déjà en cours n'a pas encore reçu la liste.
+    pub snapshot: Option<LibrarySnapshot>,
     /// `false` si un rafraîchissement était déjà en cours (aucune requête relancée).
     pub started: bool,
 }
@@ -54,11 +63,11 @@ struct RefreshDone {
 #[tauri::command]
 pub async fn library_refresh(app: AppHandle, state: State<'_, AppState>) -> AppResult<RefreshStarted> {
     if state.refreshing.swap(true, Ordering::SeqCst) {
-        let snapshot = state.library.lock().unwrap().clone().ok_or(AppError::Internal)?;
+        let snapshot = state.library.lock().unwrap().clone();
         return Ok(RefreshStarted { snapshot, started: false });
     }
     match start_refresh(&app, &state).await {
-        Ok(snapshot) => Ok(RefreshStarted { snapshot, started: true }),
+        Ok(snapshot) => Ok(RefreshStarted { snapshot: Some(snapshot), started: true }),
         Err(e) => {
             state.refreshing.store(false, Ordering::SeqCst);
             Err(e)
@@ -69,8 +78,10 @@ pub async fn library_refresh(app: AppHandle, state: State<'_, AppState>) -> AppR
 async fn start_refresh(app: &AppHandle, state: &AppState) -> AppResult<LibrarySnapshot> {
     let client = state.client()?;
     let target = platform::detect();
-    let platform_id = library::find_platform_id(&client).await?;
-    let mut games = library::list_games(&client, platform_id, target).await?;
+    let platforms = library::list_platforms(&client).await?;
+    let mut games = library::list_games(&client, &platforms, target).await?;
+    let ids: Vec<(i64, String)> = games.iter().map(|g| (g.id, g.folder_name.clone())).collect();
+    install_state::rekey_moved(&state.config_dir, &ids);
 
     // En attendant les détails, on garde ceux du cache pour chaque jeu.
     if let Some(old) = state.library.lock().unwrap().as_ref() {
@@ -83,6 +94,7 @@ async fn start_refresh(app: &AppHandle, state: &AppState) -> AppResult<LibrarySn
     let snapshot = LibrarySnapshot {
         server_url: client.base().to_string(),
         fetched_at: SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
+        platforms,
         games,
     };
     *state.library.lock().unwrap() = Some(snapshot.clone());
@@ -170,6 +182,40 @@ pub async fn manual_path(state: State<'_, AppState>, rom_id: i64, manual: Manual
 #[tauri::command]
 pub async fn game_playtime(state: State<'_, AppState>, rom_id: i64) -> AppResult<Option<u64>> {
     playtime::total_ms(&state.client()?, rom_id).await
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FavoritesInfo {
+    pub rom_ids: Vec<i64>,
+    /// Liste du cache : serveur injoignable.
+    pub offline: bool,
+}
+
+/// Favoris de l'utilisateur (collection RomM), ou les derniers connus si le
+/// serveur ne répond pas.
+#[tauri::command]
+pub async fn favorites_list(state: State<'_, AppState>) -> AppResult<FavoritesInfo> {
+    let client = state.client()?;
+    match favorites::list(&client).await {
+        Ok(rom_ids) => {
+            cache::save_favorites(&state.cache_dir, client.base(), &rom_ids);
+            Ok(FavoritesInfo { rom_ids, offline: false })
+        }
+        Err(e @ (AppError::ServerUnreachable | AppError::Server)) => match cache::load_favorites(&state.cache_dir, client.base()) {
+            Some(rom_ids) => Ok(FavoritesInfo { rom_ids, offline: true }),
+            None => Err(e),
+        },
+        Err(e) => Err(e),
+    }
+}
+
+#[tauri::command]
+pub async fn favorite_set(state: State<'_, AppState>, rom_id: i64, favorite: bool) -> AppResult<Vec<i64>> {
+    let client = state.client()?;
+    let rom_ids = favorites::set(&client, rom_id, favorite).await?;
+    cache::save_favorites(&state.cache_dir, client.base(), &rom_ids);
+    Ok(rom_ids)
 }
 
 #[tauri::command]

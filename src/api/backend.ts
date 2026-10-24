@@ -72,12 +72,27 @@ export interface PlatformArchive {
 
 export type Manual = { kind: "resource"; url: string } | { kind: "file"; file: RemoteFile };
 
+export interface Platform {
+  id: number;
+  slug: string;
+  fsSlug: string;
+  name: string;
+  romCount: number;
+  /** Icônes servies par RomM, à essayer dans l'ordre. */
+  iconUrls: string[];
+}
+
 export interface Game {
   id: number;
+  platformId: number;
   name: string;
   folderName: string;
   summary: string | null;
   coverUrl: string | null;
+  /** Boîte en 3D détourée (ScreenScraper / gamelist), si RomM en a une. */
+  box3dUrl: string | null;
+  /** Faces de la boîte (avant, tranche, dos) pour la boîte 3D interactive. */
+  boxFaces: { front: string; side: string; back: string | null } | null;
   screenshotUrls: string[];
   videoUrl: string | null;
   genres: string[];
@@ -94,6 +109,8 @@ export interface Game {
   serverVersionRaw: string | null;
   /** false tant que les fichiers du jeu n'ont pas été relus sur le serveur. */
   detailsLoaded: boolean;
+  /** Date d'ajout sur le serveur (RFC 3339). */
+  createdAt: string;
   updatedAt: string;
 }
 
@@ -107,7 +124,14 @@ export interface LibraryDone {
 export interface LibrarySnapshot {
   serverUrl: string;
   fetchedAt: number;
+  platforms: Platform[];
   games: Game[];
+}
+
+export interface FavoritesInfo {
+  romIds: number[];
+  /** Liste du cache : serveur injoignable. */
+  offline: boolean;
 }
 
 export interface InstalledGame {
@@ -189,11 +213,13 @@ export const backend = {
   openUrl: (url: string) => invoke<void>("open_url", { url }),
   systemTarget: () => invoke<Target>("system_target"),
   libraryCached: () => invoke<LibrarySnapshot | null>("library_cached"),
-  libraryRefresh: () => invoke<{ snapshot: LibrarySnapshot; started: boolean }>("library_refresh"),
+  libraryRefresh: () => invoke<{ snapshot: LibrarySnapshot | null; started: boolean }>("library_refresh"),
   imagePath: (url: string) => invoke<string>("image_path", { url }),
   manualPath: (romId: number, manual: Manual) => invoke<string>("manual_path", { romId, manual }),
   gamePlaytime: (romId: number) => invoke<number | null>("game_playtime", { romId }),
   clearCache: () => invoke<void>("clear_cache"),
+  favoritesList: () => invoke<FavoritesInfo>("favorites_list"),
+  favoriteSet: (romId: number, favorite: boolean) => invoke<number[]>("favorite_set", { romId, favorite }),
   installInfo: () => invoke<InstallInfo>("install_info"),
   installGame: (romId: number) => invoke<void>("install_game", { romId }),
   cancelInstall: (romId: number) => invoke<void>("cancel_install", { romId }),

@@ -1,8 +1,12 @@
 # FarfaLauncher
 
 Launcher desktop pour installer, mettre à jour et lancer en un clic les jeux recomp /
-portages PC natifs hébergés sur un serveur [RomM](https://romm.app) (plateforme
-`farfa-portage`), avec l'identité visuelle YoRHa de *NieR:Automata*.
+portages PC natifs hébergés sur un serveur [RomM](https://romm.app) (plateformes
+`portage-*`), avec l'identité visuelle YoRHa de *NieR:Automata*.
+
+Trois onglets : **Récent** (derniers jeux ajoutés), **Bibliothèque** (par console) et
+**Favoris** (le cœur de RomM, partagé entre vos appareils). Les jeux s'affichent dans
+leur boîte en 3D, que l'on fait tourner à la souris sur la fiche du jeu.
 
 ## Pour mes amis : installation
 
@@ -79,13 +83,18 @@ Tokens*, créez un token avec les droits ci-dessous, puis soit cliquez « Pair d
 tapez le code de 8 caractères (valable 60 s), soit copiez le token et collez-le.
 
 Droits (scopes) demandés : `me.read`, `platforms.read`, `roms.read`, `roms.user.read`,
-`roms.user.write` (temps de jeu), `devices.read` (temps de jeu sur tous vos appareils).
+`roms.user.write` (temps de jeu), `devices.read` (temps de jeu sur tous vos appareils),
+`collections.read` et `collections.write` (favoris). Si vous vous êtes connecté avant
+l'arrivée des favoris, l'onglet *Favoris* propose de vous reconnecter une fois.
 Détails : [docs/romm-api.md](docs/romm-api.md).
 
 ## Pour l'admin : convention côté serveur
 
+Une plateforme RomM par console, dans un dossier qui commence par `portage` :
+`portage-n64`, `portage-ngc`, `portage-gbc`… (les plateformes vides sont masquées).
+
 ```
-roms/farfa-portage/<Nom du jeu>/
+roms/portage-<console>/<Nom du jeu>/
 ├── VERSION.txt   → version du jeu ; le launcher la compare à la version installée
 ├── ROM/          → ROM(s) copiées à côté de l'exécutable
 ├── MODS/         → une archive par mod (optionnel)
@@ -102,6 +111,10 @@ la convention `_<Plateforme>` gagne, puis (Linux) AppImage > tar.gz > zip.
 À éviter : des archives **déjà extraites** dans `RECOMP/`. Seuls les fichiers posés
 directement dans `RECOMP/` sont pris en compte, et des milliers de fichiers dans un jeu
 ralentissent fortement RomM.
+
+**Boîtes 3D** : le launcher construit la boîte à partir de la face avant, de la tranche et
+du dos scrapés par ScreenScraper. Il faut donc `box2d_side` (et idéalement `box2d_back`)
+dans `scan.media` du `config.yml` de RomM ; sans tranche, la jaquette s'affiche à plat.
 
 Après chaque modification des fichiers, un scan RomM doit être lancé pour que l'API
 expose les nouveaux fichiers (le script de mise à jour le fait).

@@ -1,9 +1,10 @@
 import { lazy, Suspense, useEffect, useState } from "react";
-import { backend, formatPlaytime, Game, Manual, Target } from "../api/backend";
+import { backend, formatPlaytime, Game, Manual, Platform, Target } from "../api/backend";
 import { InstallsState } from "../hooks/useInstalls";
 import { InstallPanel } from "./InstallPanel";
 import { ModsTab } from "./ModsTab";
 import { useCachedImage } from "../hooks/useCachedImage";
+import { BoxArt } from "../components/BoxArt";
 import "./GameDetail.css";
 
 // pdf.js est lourd : chargé seulement à l'ouverture d'un livret.
@@ -13,15 +14,20 @@ type Tab = "infos" | "medias" | "livret" | "mods";
 
 interface Props {
   game: Game;
+  platform: Platform | null;
   target: Target | null;
   installs: InstallsState;
+  favorite: boolean;
+  /** `null` : favoris non modifiables (hors ligne, droits manquants). */
+  onToggleFavorite: (() => void) | null;
+  favoriteError: string | null;
   onBack: () => void;
   onError: (e: unknown) => Promise<string>;
 }
 
-export function GameDetail({ game, target, installs, onBack, onError }: Props) {
+export function GameDetail({ game, platform, target, installs, favorite, onToggleFavorite, favoriteError, onBack, onError }: Props) {
   const [tab, setTab] = useState<Tab>("infos");
-  const cover = useCachedImage(game.coverUrl);
+  const [coverKind, setCoverKind] = useState<"box" | "flat" | null>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -42,17 +48,34 @@ export function GameDetail({ game, target, installs, onBack, onError }: Props) {
     <div className="gd">
       <header className="gd-header">
         <button className="n-link gd-back" onClick={onBack}>
-          ← Bibliothèque
+          ← Retour
         </button>
-        <h1 className="n-title gd-title" title={game.name}>
-          {game.name}
-        </h1>
+        <div className="gd-title-row">
+          <div className="gd-title-block">
+            <h1 className="n-title gd-title" title={game.name}>
+              {game.name}
+            </h1>
+            {platform && <p className="n-subtitle gd-platform">{platform.name}</p>}
+          </div>
+          <button
+            className="n-btn gd-fav"
+            aria-pressed={favorite}
+            disabled={!onToggleFavorite}
+            title={onToggleFavorite ? undefined : (favoriteError ?? "Favoris indisponibles hors ligne")}
+            onClick={() => onToggleFavorite?.()}
+          >
+            {favorite ? "★ Favori" : "☆ Favori"}
+          </button>
+        </div>
       </header>
       <div className="n-rule gd-rule" />
 
       <div className="gd-body">
         <aside className="gd-side">
-          <div className="gd-cover">{cover.src ? <img src={cover.src} alt="" /> : <span>{game.name}</span>}</div>
+          <div className={`gd-cover${coverKind === "box" ? " gd-cover--box3d" : ""}`}>
+            <BoxArt game={game} interactive onKind={setCoverKind} />
+            {coverKind === null && !game.boxFaces && <span>{game.name}</span>}
+          </div>
           <InstallPanel game={game} target={target} installs={installs} onError={onError} />
         </aside>
 
