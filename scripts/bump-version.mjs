@@ -14,7 +14,7 @@ if (!/^\d+\.\d+\.\d+$/.test(version ?? "")) {
 function update(path, transform) {
   const before = readFileSync(path, "utf8");
   const after = transform(before);
-  if (after === before) throw new Error(`Version introuvable dans ${path}`);
+  if (after === before && !before.includes(version)) throw new Error(`Version introuvable dans ${path}`);
   writeFileSync(path, after);
   console.log(`${path} → ${version}`);
 }
@@ -23,5 +23,15 @@ const jsonVersion = (text) => text.replace(/("version"\s*:\s*")[^"]+(")/, `$1${v
 update("package.json", jsonVersion);
 update("src-tauri/tauri.conf.json", jsonVersion);
 update("src-tauri/Cargo.toml", (text) => text.replace(/^(version\s*=\s*")[^"]+(")/m, `$1${version}$2`));
+// Fichiers de verrouillage : version du paquet racine uniquement.
+update("package-lock.json", (text) => {
+  const lock = JSON.parse(text);
+  lock.version = version;
+  if (lock.packages?.[""]) lock.packages[""].version = version;
+  return JSON.stringify(lock, null, 2) + "\n";
+});
+update("src-tauri/Cargo.lock", (text) =>
+  text.replace(/(\[\[package\]\]\r?\nname = "farfalauncher"\r?\nversion = ")[^"]+(")/, `$1${version}$2`),
+);
 
 console.log(`\nEnsuite :\n  git commit -am "chore: version ${version}"\n  git tag v${version}\n  git push && git push origin v${version}`);
