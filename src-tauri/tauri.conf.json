@@ -53,7 +53,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "CLE_PUBLIQUE_A_RENSEIGNER",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDdERUYyMURDNTFGQkRDRDQKUldUVTNQdFIzQ0h2ZmNFUlRodnp3QldkdnFPUmlZZ1pLdHF1TmU0T1dvWFBYVUdPeGpPSlJHM3MK",
       "endpoints": ["https://github.com/Farfaboulette7/FarfaLauncher/releases/latest/download/latest.json"],
       "windows": {
         "installMode": "passive"
