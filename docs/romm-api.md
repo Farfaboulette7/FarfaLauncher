@@ -227,3 +227,26 @@ RomM 5.4.0 a des **sessions de jeu par utilisateur**
 2. Forme exacte de `rom.full_path` / `file.full_path` pour un jeu (préfixe `roms/…`).
 3. Présence ou non des hashes sur les fichiers (option de hash au scan).
 4. Que le reverse proxy du NAS laisse bien passer l'en-tête `Range` et les gros fichiers.
+
+---
+
+## Constats sur un serveur réel (tests d'octobre 2026)
+
+- **Hash des archives** : pour un fichier compressé (`.zip`, `.tar`, `.gz`, `.7z`, `.bz2`),
+  RomM stocke un hash **du contenu décompressé**, pas du fichier
+  (`_calculate_rom_hashes`). FarfaLauncher ne compare donc le SHA-1/MD5 que pour les
+  fichiers non compressés (ROM, AppImage) ; pour une archive, il vérifie la taille puis
+  les CRC à l'extraction.
+- **Jeux à très nombreux fichiers** : un dossier `RECOMP/` contenant des archives déjà
+  extraites (135 000 fichiers) fait mettre ~40 s à RomM pour décrire le jeu, et bloque
+  `GET /api/roms?with_files=true` sur une page entière. Le launcher charge donc la liste
+  sans fichiers, puis le détail (`GET /api/roms/{id}`) jeu par jeu, deux à la fois.
+- **VERSION.txt** : rapport multi-lignes écrit par le script de mise à jour ; la version
+  affichée est la ligne `Version :` de la section `RECOMP`, et la détection de mise à jour
+  compare le fichier entier (normalisé).
+- **Erreurs 500 intermittentes** sur `GET /api/play-sessions` et `GET /api/users/me`,
+  surtout quand deux requêtes identiques partent en même temps : les lectures sont
+  retentées une fois.
+- **Sessions de jeu** : `POST /api/play-sessions` sans `device_id` fonctionne avec un
+  token issu du flux device (RomM prend l'appareil lié) ; réponse `created` puis
+  `duplicate` en cas de renvoi.
