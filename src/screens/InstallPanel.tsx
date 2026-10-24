@@ -49,7 +49,6 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<string[]>([]);
 
-  const downloadSize = game.myArchive ? game.myArchive.file.size + game.romFiles.reduce((s, f) => s + f.size, 0) : 0;
   const update = hasUpdate(game, inst);
   const pendingChoice = !!inst && !inst.executable && !progress;
   const runningSince = installs.running.get(game.id);
@@ -154,7 +153,10 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
             <button className="n-btn n-btn--primary n-btn--block" onClick={() => installs.start(game.id)}>
               Installer
             </button>
-            {installs.installRoot && <p className="n-hint">Dans {installs.installRoot}</p>}
+            <p className="n-hint">
+              {formatSize(downloadSize(game))}
+              {installs.installRoot && ` · dans ${installs.installRoot}`}
+            </p>
           </>
         ) : (
           <p className="n-alert" data-sound="none">Non disponible pour votre système{target ? ` (${TARGET_LABELS[target]})` : ""}.</p>
@@ -163,29 +165,6 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
         {error && <p className="n-alert">{error.message}</p>}
         {message && <p className="n-alert">{message}</p>}
         {saveNotice && <p className="n-notice">{saveNotice}</p>}
-
-        <dl className="gd-facts">
-          <dt>Version serveur</dt>
-          <dd>{game.serverVersion ?? "inconnue"}</dd>
-          <dt>Version installée</dt>
-          <dd>{inst?.executable ? inst.version ?? "inconnue" : "Non installé"}</dd>
-          {inst?.executable && (
-            <>
-              <dt>Exécutable</dt>
-              <dd>{inst.executable}</dd>
-              <dt>Sauvegardes</dt>
-              <dd className="gd-savedir" title={inst.saves.dir ?? undefined}>
-                {inst.saves.off ? "non synchronisées" : inst.saves.dir ? shortPath(inst.saves.dir) : "dossier inconnu (demandé au lancement)"}
-              </dd>
-            </>
-          )}
-          {!inst && game.myArchive && (
-            <>
-              <dt>Téléchargement</dt>
-              <dd>{formatSize(downloadSize)}</dd>
-            </>
-          )}
-        </dl>
 
         {inst && !progress && runningSince === undefined && (
           <div className="gd-inst-actions">
@@ -212,18 +191,6 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
             </button>
           </div>
         )}
-
-        <div>
-          <p className="n-label">Plateformes disponibles</p>
-          <ul className="gd-platforms">
-            {game.archives.length === 0 && <li className="n-hint">aucune</li>}
-            {game.archives.map((a) => (
-              <li key={a.target} className={a.target === game.myArchive?.target ? "is-mine" : undefined}>
-                {TARGET_LABELS[a.target]}
-              </li>
-            ))}
-          </ul>
-        </div>
       </div>
 
       {dialog === "exe" && inst && (
@@ -270,6 +237,50 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
         />
       )}
     </div>
+  );
+}
+
+function downloadSize(game: Game): number {
+  return game.myArchive ? game.myArchive.file.size + game.romFiles.reduce((s, f) => s + f.size, 0) : 0;
+}
+
+/** Détails de l'installation, affichés dans l'onglet « Informations ». */
+export function InstallFacts({ game, installs }: { game: Game; installs: InstallsState }) {
+  const inst = installs.installed.get(game.id);
+  return (
+    <>
+      <dt>Version serveur</dt>
+      <dd>{game.serverVersion ?? "inconnue"}</dd>
+      <dt>Version installée</dt>
+      <dd>{inst?.executable ? inst.version ?? "inconnue" : "non installé"}</dd>
+      {inst?.executable && (
+        <>
+          <dt>Exécutable</dt>
+          <dd>{inst.executable}</dd>
+          <dt>Sauvegardes</dt>
+          <dd className="gd-savedir" title={inst.saves.dir ?? undefined}>
+            {inst.saves.off ? "non synchronisées" : inst.saves.dir ? shortPath(inst.saves.dir) : "dossier inconnu (demandé au lancement)"}
+          </dd>
+        </>
+      )}
+      {!inst && game.myArchive && (
+        <>
+          <dt>Téléchargement</dt>
+          <dd>{formatSize(downloadSize(game))}</dd>
+        </>
+      )}
+      <dt>Plateformes</dt>
+      <dd>
+        <ul className="gd-platforms">
+          {game.archives.length === 0 && <li className="n-hint">aucune</li>}
+          {game.archives.map((a) => (
+            <li key={a.target} className={a.target === game.myArchive?.target ? "is-mine" : undefined}>
+              {TARGET_LABELS[a.target]}
+            </li>
+          ))}
+        </ul>
+      </dd>
+    </>
   );
 }
 

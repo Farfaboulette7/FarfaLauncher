@@ -75,8 +75,8 @@
   cursor: pointer;
   box-shadow: var(--nier-drop) var(--nier-drop) 0 var(--nier-shadow);
   transition:
-    background-size var(--nier-normal) var(--nier-ease),
-    color var(--nier-fast) linear,
+    background-size var(--nier-sweep) var(--nier-ease),
+    color var(--nier-fast) linear calc(var(--nier-sweep) / 3),
     transform var(--nier-normal) var(--nier-ease);
 }
 .pcard:hover,
@@ -122,13 +122,16 @@
   margin-right: 8px;
 }
 .lib-rule { margin: 0 var(--gutter); }
+/* Titre à gauche, recherche au centre, compteur à droite. */
 .lib-toolbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 420px) minmax(0, 1fr);
   align-items: center;
   gap: 20px;
   padding: 16px var(--gutter) 8px;
 }
-.lib-search { max-width: 360px; }
+.lib-toolbar-start { display: flex; align-items: center; gap: 20px; min-width: 0; }
+.lib-count { justify-self: end; text-align: right; }
 .lib-msg { margin: 8px var(--gutter) 0; }
 .lib-grid-wrap {
   overflow-y: auto;
@@ -164,8 +167,8 @@
   cursor: pointer;
   box-shadow: var(--nier-drop) var(--nier-drop) 0 var(--nier-shadow);
   transition:
-    background-size var(--nier-normal) var(--nier-ease),
-    color var(--nier-fast) linear,
+    background-size var(--nier-sweep) var(--nier-ease),
+    color var(--nier-fast) linear calc(var(--nier-sweep) / 3),
     transform var(--nier-normal) var(--nier-ease);
 }
 .card:hover,
@@ -212,11 +215,9 @@
 }
 .card-badge--muted { background: var(--nier-low); }
 .card-name {
+  max-width: 100%;
   padding: 8px 10px 10px;
   font-size: var(--fs-sm);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .card-badge--ok { background: var(--nier-ok); }
 .card-caption {

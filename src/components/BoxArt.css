@@ -63,7 +63,7 @@
 .boxart-wait { position: absolute; left: 50%; top: 50%; margin: -8px 0 0 -8px; }
 
 /* Ombre portée au sol (un filtre sur la scène aplatirait la 3D). */
-.b3 { isolation: isolate; }
+.b3 { isolation: isolate; user-select: none; -webkit-user-select: none; }
 .b3::after {
   content: "";
   position: absolute;

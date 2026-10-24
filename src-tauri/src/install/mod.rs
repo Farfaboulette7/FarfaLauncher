@@ -296,8 +296,9 @@ fn remove_all_but_saves(root: &Path, dir: &Path) -> AppResult<bool> {
         let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
         if is_dir && (name == "save" || name == "saves") {
             kept_any = true;
-        } else if is_dir && name != INTERNAL_DIR && remove_all_but_saves(root, &path)? {
-            kept_any = true;
+        } else if is_dir && name != INTERNAL_DIR {
+            // Le sous-dossier se supprime lui-même s'il ne garde rien.
+            kept_any |= remove_all_but_saves(root, &path)?;
         } else if is_dir {
             std::fs::remove_dir_all(&path).map_err(|e| log_err(AppError::Disk, "suppression d'un dossier", e))?;
         } else {
@@ -394,4 +395,26 @@ fn remove_quarantine(game_dir: &Path) {
 
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> AppResult<T> + Send + 'static) -> AppResult<T> {
     tokio::task::spawn_blocking(f).await.map_err(|e| log_err(AppError::Internal, "tâche interrompue", e))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uninstall_keeps_only_saves() {
+        let root = std::env::temp_dir().join(format!("farfa-uninstall-{}", uuid::Uuid::new_v4()));
+        for dir in ["res/rml", "sdk", "data/saves", INTERNAL_DIR] {
+            std::fs::create_dir_all(root.join(dir)).unwrap();
+        }
+        for file in ["game.exe", "res/rml/a.rcss", "sdk/x.lib", "data/saves/slot1.sav", "data/config.ini"] {
+            std::fs::write(root.join(file), b"x").unwrap();
+        }
+        assert!(remove_all_but_saves(&root, &root).unwrap());
+        assert!(root.join("data/saves/slot1.sav").exists());
+        for gone in ["game.exe", "res", "sdk", "data/config.ini", INTERNAL_DIR] {
+            assert!(!root.join(gone).exists(), "{gone} aurait dû être supprimé");
+        }
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 }

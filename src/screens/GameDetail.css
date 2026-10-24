@@ -11,31 +11,29 @@
   min-width: 0;
 }
 .gd-back { align-self: flex-start; }
-.gd-title {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  padding-bottom: 4px;
-}
+.gd-title { padding-bottom: 4px; }
 .gd-rule { margin: 0 var(--gutter); }
 .gd-body {
   display: grid;
-  grid-template-columns: clamp(280px, 26vw, 420px) minmax(0, 1fr);
+  grid-template-columns: clamp(300px, 27vw, 460px) minmax(0, 1fr);
   gap: clamp(20px, 2vw, 40px);
   min-height: 0;
-  padding: 20px var(--gutter) 28px;
+  padding: 16px var(--gutter) 24px;
 }
+/* Colonne gauche sans défilement : la boîte prend la hauteur restante. */
 .gd-side {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 16px;
   min-height: 0;
-  overflow-y: auto;
   padding: 0 6px 6px 0;
 }
 .gd-cover {
-  aspect-ratio: 3 / 4;
+  flex: 1 1 0;
+  min-height: 140px;
   background: var(--nier-mid);
+  user-select: none;
+  -webkit-user-select: none;
   box-shadow: var(--nier-drop) var(--nier-drop) 0 var(--nier-shadow);
   display: flex;
   align-items: center;
@@ -44,15 +42,77 @@
   text-transform: uppercase;
   text-align: center;
   padding: 0;
-  flex: none;
 }
 .gd-cover { position: relative; }
-.gd-cover--box3d { background: transparent; box-shadow: none; }
+/* Jaquette à plat : l'image seule, à sa taille, sans fond autour. */
+.gd-cover--flat { background: transparent; box-shadow: none; }
+.gd-cover--flat .boxart-flat,
+.gd-boxzoom--flat .boxart-flat {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  box-shadow: var(--nier-drop) var(--nier-drop) 0 var(--nier-shadow);
+}
+/* Bouton d'agrandissement : petit, dans le coin. */
+.gd-zoom {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 2;
+  width: 30px;
+  height: 30px;
+  padding: 7px;
+  border: 0;
+  background: var(--nier-high-mid);
+  color: var(--nier-low);
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity var(--nier-fast) linear, background-color var(--nier-fast) linear, color var(--nier-fast) linear;
+}
+.gd-zoom svg { display: block; width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.6; }
+.gd-cover:hover .gd-zoom { opacity: 1; }
+.gd-zoom:hover, .gd-zoom:focus-visible { opacity: 1; outline: none; background: var(--nier-low); color: var(--nier-high); }
+.gd-boxzoom {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 40px;
+  background: rgba(40, 38, 33, 0.92);
+  cursor: zoom-out;
+  user-select: none;
+  -webkit-user-select: none;
+  animation: gd-fade var(--nier-normal) var(--nier-ease);
+}
+@keyframes gd-fade { from { opacity: 0; } }
+.gd-boxzoom-art {
+  position: relative;
+  width: min(92vw, 1100px);
+  height: calc(100% - 40px);
+}
+.gd-boxzoom--box .gd-boxzoom-art { cursor: default; }
+/* Panneau d'installation compact. */
+.gd-actions { flex: none; }
+.gd-actions .n-panel-header { font-size: var(--fs-sm); padding-block: 6px; }
+.gd-actions .n-panel-body { padding: 14px 16px; }
+.gd-actions .n-btn--primary { font-size: var(--fs-md); padding: 9px 24px; }
+.gd-actions-body { max-height: 52vh; overflow-y: auto; }
+.gd-cover--box { background: transparent; box-shadow: none; }
 .gd-title-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; min-width: 0; }
 .gd-title-block { min-width: 0; }
 .gd-platform { margin: 0; }
 .gd-fav { flex: none; }
-.gd-actions-body { display: flex; flex-direction: column; gap: 16px; }
+.gd-fav::before { display: none; }
+.gd-actions-body { display: flex; flex-direction: column; gap: 10px; }
 .gd-actions-body p { margin: 0; }
 .gd-facts {
   display: grid;
@@ -68,7 +128,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin: 8px 0 0;
+  margin: 0;
   padding: 0;
   list-style: none;
   font-size: var(--fs-xs);
@@ -179,8 +239,9 @@
 .gd-inst-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 18px;
+  gap: 4px 16px;
 }
+.gd-actions .gd-inst-actions .n-link { font-size: var(--fs-xs); }
 .gd-progress { display: flex; flex-direction: column; gap: 8px; }
 .gd-progress-label {
   display: flex;
@@ -226,3 +287,11 @@
 .gd-mod-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .gd-mod-progress { font-size: var(--fs-sm); min-width: 60px; text-align: right; }
 .gd-savedir { overflow-wrap: anywhere; }
+.gd-facts-cols {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px clamp(28px, 4vw, 72px);
+  margin-top: 22px;
+}
+.gd-facts-cols > section { flex: 1 1 280px; min-width: 0; max-width: 560px; }
+.gd-facts-cols .gd-facts--wide { margin: 0; padding: 0 12px; font-size: var(--fs-sm); gap: 8px 28px; }

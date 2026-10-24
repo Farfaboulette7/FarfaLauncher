@@ -12,12 +12,7 @@
   letter-spacing: var(--nier-tracking-wide);
   color: var(--nier-low);
 }
-.now-playing-title {
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
+.now-playing-title { min-width: 0; }
 .n-btn.now-playing-next {
   flex: none;
   gap: 8px;

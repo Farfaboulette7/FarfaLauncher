@@ -53,6 +53,8 @@
   --nier-line: 1px;
   --nier-fast: 0.12s;
   --nier-normal: 0.2s;
+  /* Remplissage des boutons de gauche à droite ; le texte s'inverse à mi-course. */
+  --nier-sweep: 0.32s;
   --nier-ease: cubic-bezier(0.2, 0, 0, 1);
 
   /* Échelle typographique fluide : lisible en 1280x800 comme en 4K. */
@@ -65,7 +67,8 @@
 
   /* Pictogrammes originaux, utilisés en masque (couleur = --nier-ink). */
   --pict-cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 24'%3E%3Cpath d='M0 0h6l14 12L6 24H0l14-12z'/%3E%3Cpath d='M18 0h4l14 12-14 12h-4l14-12z' opacity='.55'/%3E%3C/svg%3E");
-  --pict-rule: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 14'%3E%3Cpath d='M0 1h80' stroke='%23000' stroke-width='1'/%3E%3Crect x='6' y='4' width='5' height='5'/%3E%3Crect x='14' y='4' width='2' height='5'/%3E%3Crect x='19' y='4' width='2' height='5'/%3E%3C/svg%3E");
+  /* Frise : un trait, un tiret posé dessus et trois points en triangle. */
+  --pict-rule: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 16'%3E%3Cpath d='M0 .75h64' stroke='%23000' stroke-width='1.5'/%3E%3Crect x='50' y='0' width='10' height='3.6'/%3E%3Ccircle cx='20' cy='6.6' r='2'/%3E%3Ccircle cx='28' cy='6.6' r='2'/%3E%3Ccircle cx='24' cy='13.4' r='2'/%3E%3C/svg%3E");
 
   color-scheme: light;
 }
@@ -124,11 +127,11 @@ body::after {
   text-transform: uppercase;
 }
 .n-rule {
-  height: 14px;
+  height: 16px;
   background-color: var(--nier-ink);
-  -webkit-mask: var(--pict-rule) repeat-x left top / auto 14px;
-  mask: var(--pict-rule) repeat-x left top / auto 14px;
-  opacity: 0.75;
+  -webkit-mask: var(--pict-rule) repeat-x left top / auto 16px;
+  mask: var(--pict-rule) repeat-x left top / auto 16px;
+  opacity: 0.8;
 }
 .n-section-title {
   margin: 0 0 12px;
@@ -174,8 +177,8 @@ body::after {
   border-radius: 0;
   cursor: pointer;
   transition:
-    background-size var(--nier-normal) var(--nier-ease),
-    color var(--nier-fast) linear,
+    background-size var(--nier-sweep) var(--nier-ease),
+    color var(--nier-fast) linear calc(var(--nier-sweep) / 3),
     box-shadow var(--nier-fast) linear;
 }
 .n-btn::before {
@@ -246,7 +249,41 @@ body::after {
   border-color: var(--nier-low);
   box-shadow: var(--nier-drop) var(--nier-drop) 0 var(--nier-shadow);
 }
+/* Champ discret : flou au repos, net au survol ou pendant la saisie. */
+.n-input--soft {
+  opacity: 0.6;
+  filter: blur(1.5px);
+  transition: filter var(--nier-sweep) var(--nier-ease), opacity var(--nier-sweep) var(--nier-ease),
+    border-color var(--nier-fast), box-shadow var(--nier-fast);
+}
+.n-input--soft:hover,
+.n-input--soft:focus,
+.n-input--soft:not(:placeholder-shown) { opacity: 1; filter: none; }
 .n-hint { font-size: var(--fs-xs); color: var(--nier-mid); }
+
+/* ---------- Texte tronqué qui défile (composant Marquee) ---------- */
+.n-marquee {
+  display: block;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.n-marquee-track { display: inline-flex; }
+.n-marquee--on {
+  -webkit-mask: linear-gradient(90deg, #000 94%, transparent);
+  mask: linear-gradient(90deg, #000 94%, transparent);
+}
+.n-marquee--on .n-marquee-track > span { padding-right: 3em; }
+.n-marquee--on:not(.n-marquee--hover) .n-marquee-track,
+.n-marquee-host:is(:hover, :focus-visible) .n-marquee--on .n-marquee-track {
+  animation: n-marquee var(--marquee-duration, 12s) linear 1s infinite;
+}
+.n-marquee--on:not(.n-marquee--hover) {
+  -webkit-mask: linear-gradient(90deg, transparent, #000 2%, #000 96%, transparent);
+  mask: linear-gradient(90deg, transparent, #000 2%, #000 96%, transparent);
+}
+.n-marquee--on:not(.n-marquee--hover):hover .n-marquee-track { animation-play-state: paused; }
+@keyframes n-marquee { to { transform: translateX(-50%); } }
 
 /* ---------- Messages ---------- */
 .n-alert {
@@ -314,9 +351,11 @@ body::after {
 .n-appear { animation: n-in var(--nier-normal) var(--nier-ease); }
 
 /* Animations réduites (souvent coupées par Windows, ex. AtlasOS) : sauf l'ouverture
-   et le passage vers une fiche, courts et demandés explicitement. */
+   et le passage vers une fiche, courts et demandés explicitement, le remplissage
+   des boutons au survol (signature NieR) et le défilement
+   des titres trop longs (sinon illisibles). */
 @media (prefers-reduced-motion: reduce) {
-  :where(*:not(.intro, .intro *, .hack-stage)),
+  :where(*:not(.intro, .intro *, .hack-stage, .n-marquee-track, .n-btn, .card, .pcard)),
   :where(*:not(.intro, .intro *))::before,
   :where(*:not(.intro, .intro *))::after {
     animation: none !important;

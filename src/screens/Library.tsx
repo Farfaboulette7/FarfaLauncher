@@ -18,6 +18,7 @@ import {
 } from "../api/backend";
 import { useFirstImage } from "../hooks/useCachedImage";
 import { BoxArt } from "../components/BoxArt";
+import { Marquee } from "../components/Marquee";
 import { loadSounds, play as playSound } from "../sounds";
 import { loadMusic, setMusicMuted, setMusicVersion, stopMusic } from "../music";
 import { useFavorites } from "../hooks/useFavorites";
@@ -321,20 +322,22 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
       <div className="n-rule lib-rule" />
 
       <div className="lib-toolbar">
-        {tab === "library" && platform && (
-          <button className="n-link" onClick={() => setPlatformId(null)}>
-            ← Plateformes
-          </button>
-        )}
-        <h2 className="n-section-title lib-view-title">{viewTitle(tab, platform)}</h2>
+        <div className="lib-toolbar-start">
+          {tab === "library" && platform && (
+            <button className="n-link" onClick={() => setPlatformId(null)}>
+              ← Plateformes
+            </button>
+          )}
+          <h2 className="n-section-title lib-view-title">{viewTitle(tab, platform)}</h2>
+        </div>
         <input
-          className="n-input lib-search"
+          className="n-input lib-search n-input--soft"
           type="search"
           placeholder="Rechercher un jeu…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
-        <span className="n-hint">
+        <span className="n-hint lib-count">
           {snapshot && !showPlatforms && `${games.length} jeu${games.length > 1 ? "x" : ""}`}
           {snapshot && showPlatforms && `${platforms.length} plateforme${platforms.length > 1 ? "s" : ""}`}
           {fetched && ` · mis à jour ${fetched}`}
@@ -453,7 +456,7 @@ function GameCard({
           : null;
   const [kind, setKind] = useState<"box" | "flat" | null>(null);
   return (
-    <button className={`card${kind === "box" ? " card--box3d" : ""}`} data-sound-hover="game" data-game-id={game.id} onClick={(e) => onOpen(e.currentTarget)} title={game.name}>
+    <button className={`card n-marquee-host${kind === "box" ? " card--box3d" : ""}`} data-sound-hover="game" data-game-id={game.id} onClick={(e) => onOpen(e.currentTarget)} title={game.name}>
       <div className="card-cover">
         <BoxArt game={game} onKind={setKind} />
         {kind === null && !game.boxFaces && <span className="card-placeholder">{game.name}</span>}
@@ -464,7 +467,7 @@ function GameCard({
           </span>
         )}
       </div>
-      <span className="card-name">{game.name}</span>
+      <Marquee className="card-name" text={game.name} onHover />
       {caption && <span className="card-caption">{caption}</span>}
     </button>
   );

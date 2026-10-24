@@ -1,10 +1,11 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { backend, formatPlaytime, Game, Manual, Platform, Target } from "../api/backend";
 import { InstallsState } from "../hooks/useInstalls";
-import { InstallPanel } from "./InstallPanel";
+import { InstallFacts, InstallPanel } from "./InstallPanel";
 import { ModsTab } from "./ModsTab";
 import { useCachedImage } from "../hooks/useCachedImage";
 import { BoxArt } from "../components/BoxArt";
+import { Marquee } from "../components/Marquee";
 import "./GameDetail.css";
 
 // pdf.js est lourd : chargé seulement à l'ouverture d'un livret.
@@ -28,10 +29,11 @@ interface Props {
 export function GameDetail({ game, platform, target, installs, favorite, onToggleFavorite, favoriteError, onBack, onError }: Props) {
   const [tab, setTab] = useState<Tab>("infos");
   const [coverKind, setCoverKind] = useState<"box" | "flat" | null>(null);
+  const [zoom, setZoom] = useState(false);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !document.querySelector(".lightbox, .dialog-backdrop")) onBack();
+      if (e.key === "Escape" && !document.querySelector(".lightbox, .gd-boxzoom, .dialog-backdrop")) onBack();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -52,9 +54,7 @@ export function GameDetail({ game, platform, target, installs, favorite, onToggl
         </button>
         <div className="gd-title-row">
           <div className="gd-title-block">
-            <h1 className="n-title gd-title" title={game.name}>
-              {game.name}
-            </h1>
+            <Marquee as="h1" className="n-title gd-title" text={game.name} />
             {platform && <p className="n-subtitle gd-platform">{platform.name}</p>}
           </div>
           <button
@@ -72,9 +72,21 @@ export function GameDetail({ game, platform, target, installs, favorite, onToggl
 
       <div className="gd-body">
         <aside className="gd-side">
-          <div className={`gd-cover${coverKind === "box" ? " gd-cover--box3d" : ""}`}>
+          <div className={`gd-cover${coverKind ? ` gd-cover--${coverKind}` : ""}`}>
             <BoxArt game={game} interactive onKind={setCoverKind} />
             {coverKind === null && !game.boxFaces && <span>{game.name}</span>}
+            {coverKind !== null && (
+              <button
+                className="gd-zoom"
+                title={coverKind === "box" ? "Agrandir la boîte" : "Agrandir la jaquette"}
+                aria-label={coverKind === "box" ? "Agrandir la boîte" : "Agrandir la jaquette"}
+                onClick={() => setZoom(true)}
+              >
+                <svg viewBox="0 0 16 16" aria-hidden="true">
+                  <path d="M1 6V1h5M10 1h5v5M15 10v5h-5M6 15H1v-5" />
+                </svg>
+              </button>
+            )}
           </div>
           <InstallPanel game={game} target={target} installs={installs} onError={onError} />
         </aside>
@@ -96,18 +108,37 @@ export function GameDetail({ game, platform, target, installs, favorite, onToggl
             ))}
           </nav>
           <div className="gd-content n-appear" key={tab}>
-            {tab === "infos" && <InfoTab game={game} onError={onError} refreshKey={installs.lastSession.get(game.id)} />}
+            {tab === "infos" && <InfoTab game={game} installs={installs} onError={onError} />}
             {tab === "medias" && <MediaTab game={game} />}
             {tab === "livret" && <ManualTab game={game} onError={onError} />}
             {tab === "mods" && <ModsTab game={game} installs={installs} onError={onError} />}
           </div>
         </section>
       </div>
+      {zoom && coverKind && <BoxZoom game={game} kind={coverKind} onClose={() => setZoom(false)} />}
     </div>
   );
 }
 
-function InfoTab({ game, onError, refreshKey }: { game: Game; onError: (e: unknown) => Promise<string>; refreshKey?: unknown }) {
+/** Boîte (ou jaquette) en plein écran ; la boîte reste orientable à la souris. */
+function BoxZoom({ game, kind, onClose }: { game: Game; kind: "box" | "flat"; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div className={`gd-boxzoom gd-boxzoom--${kind}`} onClick={onClose} role="dialog" aria-modal="true" aria-label={game.name}>
+      <div className="gd-boxzoom-art" onClick={kind === "box" ? (e) => e.stopPropagation() : undefined}>
+        <BoxArt game={game} interactive />
+      </div>
+      <span className="lightbox-count">{kind === "box" ? "Glisser pour tourner · " : ""}Échap ou clic pour fermer</span>
+    </div>
+  );
+}
+
+function InfoTab({ game, installs, onError }: { game: Game; installs: InstallsState; onError: (e: unknown) => Promise<string> }) {
+  const refreshKey = installs.lastSession.get(game.id);
   const [playtime, setPlaytime] = useState<number | null | undefined>(undefined);
 
   useEffect(() => {
@@ -127,30 +158,41 @@ function InfoTab({ game, onError, refreshKey }: { game: Game; onError: (e: unkno
   return (
     <div className="gd-info">
       {game.summary ? <p className="gd-summary">{game.summary}</p> : <p className="n-hint">Aucun résumé.</p>}
-      <dl className="gd-facts gd-facts--wide">
-        {game.releaseYear && (
-          <>
-            <dt>Sortie</dt>
-            <dd>{game.releaseYear}</dd>
-          </>
-        )}
-        {game.developers.length > 0 && (
-          <>
-            <dt>Développement</dt>
-            <dd>{game.developers.join(", ")}</dd>
-          </>
-        )}
-        {game.genres.length > 0 && (
-          <>
-            <dt>Genres</dt>
-            <dd>{game.genres.join(", ")}</dd>
-          </>
-        )}
-        <dt>Temps de jeu</dt>
-        <dd>
-          {playtime === undefined ? <span className="n-spinner" /> : playtime === null ? "indisponible" : playtime === 0 ? "jamais joué" : formatPlaytime(playtime)}
-        </dd>
-      </dl>
+      <div className="gd-facts-cols">
+        <section>
+          <h3 className="n-section-title">Jeu</h3>
+          <dl className="gd-facts gd-facts--wide">
+            {game.releaseYear && (
+              <>
+                <dt>Sortie</dt>
+                <dd>{game.releaseYear}</dd>
+              </>
+            )}
+            {game.developers.length > 0 && (
+              <>
+                <dt>Développement</dt>
+                <dd>{game.developers.join(", ")}</dd>
+              </>
+            )}
+            {game.genres.length > 0 && (
+              <>
+                <dt>Genres</dt>
+                <dd>{game.genres.join(", ")}</dd>
+              </>
+            )}
+            <dt>Temps de jeu</dt>
+            <dd>
+              {playtime === undefined ? <span className="n-spinner" /> : playtime === null ? "indisponible" : playtime === 0 ? "jamais joué" : formatPlaytime(playtime)}
+            </dd>
+          </dl>
+        </section>
+        <section>
+          <h3 className="n-section-title">Installation</h3>
+          <dl className="gd-facts gd-facts--wide">
+            <InstallFacts game={game} installs={installs} />
+          </dl>
+        </section>
+      </div>
     </div>
   );
 }
