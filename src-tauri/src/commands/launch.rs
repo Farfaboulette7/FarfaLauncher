@@ -5,6 +5,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use time::OffsetDateTime;
 
+use super::saves::{self, SaveChoice, SaveUpload};
 use crate::error::{AppError, AppResult};
 use crate::install::{rel_to_path, state};
 use crate::launch;
@@ -23,6 +24,9 @@ struct GameStopped {
     recorded: bool,
     /// Sessions encore en attente d'envoi à RomM (serveur injoignable).
     pending: usize,
+    /// Envoi de la sauvegarde après la partie.
+    save: SaveUpload,
+    save_error: Option<AppError>,
 }
 
 #[tauri::command]
@@ -30,8 +34,10 @@ pub fn running_games(state: State<'_, AppState>) -> Vec<i64> {
     state.running.lock().unwrap().iter().copied().collect()
 }
 
+/// Lance le jeu. `save_choice` : réponse à `save_check` (sauvegarde locale ou
+/// du serveur), appliquée avant le lancement.
 #[tauri::command]
-pub fn play_game(app: AppHandle, state: State<'_, AppState>, rom_id: i64) -> AppResult<()> {
+pub async fn play_game(app: AppHandle, state: State<'_, AppState>, rom_id: i64, save_choice: SaveChoice) -> AppResult<()> {
     let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
     let exe = st.executable.clone().ok_or(AppError::NoExecutable)?;
     if state.installs.lock().unwrap().contains_key(&rom_id) {
@@ -39,6 +45,10 @@ pub fn play_game(app: AppHandle, state: State<'_, AppState>, rom_id: i64) -> App
     }
     if !state.running.lock().unwrap().insert(rom_id) {
         return Err(AppError::AlreadyRunning);
+    }
+    if let Err(e) = saves::before_play(&state, rom_id, save_choice).await {
+        state.running.lock().unwrap().remove(&rom_id);
+        return Err(e);
     }
     let running = match launch::spawn(&st.game_dir, &rel_to_path(&exe)) {
         Ok(r) => r,
@@ -70,7 +80,9 @@ pub fn play_game(app: AppHandle, state: State<'_, AppState>, rom_id: i64) -> App
         } else {
             tracing::info!("session de {} s ignorée (moins de {MIN_SESSION_SECS} s)", (ended - started).whole_seconds());
         }
-        let _ = app.emit("game-stopped", GameStopped { rom_id, duration_ms: session.duration_ms, recorded, pending });
+        // Même pour une session courte : le joueur a pu sauvegarder.
+        let (save, save_error) = saves::after_play(&state, state.client().ok(), rom_id).await;
+        let _ = app.emit("game-stopped", GameStopped { rom_id, duration_ms: session.duration_ms, recorded, pending, save, save_error });
     });
     Ok(())
 }

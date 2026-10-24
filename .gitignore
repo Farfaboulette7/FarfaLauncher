@@ -32,3 +32,6 @@ desktop.ini
 
 # Claude Code (local)
 .claude/settings.local.json
+
+# Sons du launcher : non redistribuables, servis par le serveur des assets (voir README).
+Ressources/

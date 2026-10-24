@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { open } from "@tauri-apps/plugin-dialog";
-import { backend, errorMessage, SessionInfo } from "../api/backend";
+import { AssetsInfo, backend, errorMessage, SessionInfo } from "../api/backend";
 import { clearImageMemo } from "../hooks/useCachedImage";
 import { InstallsState } from "../hooks/useInstalls";
 import { Dialog } from "../components/Dialog";
+import { play as playSound, reloadSounds, setSoundSettings, soundSettings } from "../sounds";
+import { musicSettings, reloadMusic, setMusicSettings } from "../music";
 import "./Settings.css";
 
 interface Props {
@@ -22,9 +24,34 @@ export function Settings({ session, installs, onBack, onLogout, onCacheCleared, 
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [checking, setChecking] = useState(false);
+  const [sound, setSound] = useState(soundSettings());
+  const [assets, setAssets] = useState<AssetsInfo | null>(null);
+  const [assetsInput, setAssetsInput] = useState("");
+  const [music, setMusic] = useState(musicSettings());
+
+  function updateSound(next: Partial<ReturnType<typeof soundSettings>>) {
+    setSoundSettings(next);
+    setSound(soundSettings());
+  }
+
+  function updateMusic(next: Partial<ReturnType<typeof musicSettings>>) {
+    setMusicSettings(next);
+    setMusic(musicSettings());
+  }
+
+  function saveAssetsUrl(url: string | null, ok: string) {
+    return act(async () => {
+      const info = await backend.setAssetsUrl(url);
+      setAssets(info);
+      setAssetsInput("");
+      await reloadSounds();
+      void reloadMusic();
+    }, ok);
+  }
 
   useEffect(() => {
     getVersion().then(setVersion).catch(() => undefined);
+    backend.assetsInfo().then(setAssets).catch(() => undefined);
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !document.querySelector(".dialog-backdrop")) onBack();
     };
@@ -120,6 +147,94 @@ export function Settings({ session, installs, onBack, onLogout, onCacheCleared, 
         </section>
 
         <section className="n-panel">
+          <div className="n-panel-header">Sons</div>
+          <div className="n-panel-body settings-section">
+            <label className="settings-check">
+              <input
+                type="checkbox"
+                checked={sound.enabled}
+                onChange={(e) => updateSound({ enabled: e.target.checked })}
+              />
+              Bruitages de navigation
+            </label>
+            <label className="settings-range">
+              Volume
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={sound.volume}
+                disabled={!sound.enabled}
+                onChange={(e) => updateSound({ volume: Number(e.target.value) })}
+                onPointerUp={() => playSound("deplacementOption")}
+              />
+            </label>
+            <label className="settings-check">
+              <input
+                type="checkbox"
+                checked={music.enabled}
+                onChange={(e) => updateMusic({ enabled: e.target.checked })}
+              />
+              Musique (version 8-bit sur la fiche d'un jeu)
+            </label>
+            <label className="settings-range">
+              Volume
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={music.volume}
+                disabled={!music.enabled}
+                onChange={(e) => updateMusic({ volume: Number(e.target.value) })}
+              />
+            </label>
+            <dl className="gd-facts">
+              <dt>Serveur des sons et musiques</dt>
+              <dd>
+                {assets === null ? "…" : (assets.url ?? "aucun")}
+                {assets && !assets.custom && assets.url && " (déduit de l'adresse RomM)"}
+              </dd>
+            </dl>
+            <p className="n-hint">
+              Les sons et musiques ne sont envoyés qu'aux comptes connectés à votre serveur RomM. Par défaut, leur adresse
+              est celle de RomM avec « assets » à la place du premier mot (romm.exemple.fr → assets.exemple.fr). Sans
+              serveur, le launcher reste silencieux.
+            </p>
+            <form
+              className="settings-actions"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (assetsInput.trim()) saveAssetsUrl(assetsInput, "Adresse des sons et musiques enregistrée.");
+              }}
+            >
+              <input
+                className="n-input"
+                type="url"
+                inputMode="url"
+                placeholder="https://assets.exemple.fr"
+                value={assetsInput}
+                onChange={(e) => setAssetsInput(e.target.value)}
+                spellCheck={false}
+              />
+              <button className="n-btn" type="submit" disabled={!assetsInput.trim()}>
+                Enregistrer
+              </button>
+              {assets?.custom && (
+                <button
+                  className="n-btn"
+                  type="button"
+                  onClick={() => saveAssetsUrl(null, "Adresse par défaut rétablie.")}
+                >
+                  Adresse par défaut
+                </button>
+              )}
+            </form>
+          </div>
+        </section>
+
+        <section className="n-panel">
           <div className="n-panel-header">Cache et dépannage</div>
           <div className="n-panel-body settings-section">
             <p className="n-hint">
@@ -151,7 +266,7 @@ export function Settings({ session, installs, onBack, onLogout, onCacheCleared, 
           <div className="n-panel-body settings-section">
             <dl className="gd-facts">
               <dt>Version</dt>
-              <dd>FarfaLauncher {version}</dd>
+              <dd>FaRFa project {version}</dd>
             </dl>
             <div className="settings-actions">
               <button

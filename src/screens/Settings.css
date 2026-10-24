@@ -15,3 +15,14 @@
 .settings-section { display: flex; flex-direction: column; gap: 14px; }
 .settings-section p { margin: 0; }
 .settings-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+.settings-check,
+.settings-range {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.settings-check input { width: 18px; height: 18px; accent-color: var(--nier-low); }
+.settings-range input { width: min(280px, 50%); accent-color: var(--nier-low); }
+.settings-actions .n-input { flex: 1 1 280px; min-width: 0; }

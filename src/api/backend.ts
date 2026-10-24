@@ -1,6 +1,7 @@
 // Appels typés vers les commandes Rust (src-tauri/src/commands).
 // Le token RomM ne transite jamais par ici : seul le côté Rust le manipule.
 import { invoke } from "@tauri-apps/api/core";
+import { play } from "../sounds";
 
 export interface AppError {
   code: string;
@@ -14,7 +15,9 @@ export function isAppError(e: unknown): e is AppError {
   return typeof e === "object" && e !== null && "code" in e && "message" in e;
 }
 
+/** Message à afficher pour une erreur (joue aussi le son d'erreur). */
 export function errorMessage(e: unknown): string {
+  play("Error");
   if (isAppError(e)) return e.message;
   console.error(e);
   return "Une erreur inattendue est survenue. Les détails sont dans les logs.";
@@ -145,6 +148,7 @@ export interface InstalledGame {
   pendingCandidates: string[];
   roms: string[];
   modsDownloaded: string[];
+  saves: SaveSync;
   installedAt: number;
   updatedAt: number;
   gameDir: string;
@@ -180,7 +184,27 @@ export interface GameStopped {
   durationMs: number;
   recorded: boolean;
   pending: number;
+  /** Envoi de la sauvegarde après la partie. */
+  save: "off" | "unchanged" | "uploaded" | "failed";
+  saveError: AppError | null;
 }
+
+export interface SaveSync {
+  dir: string | null;
+  patterns: string[];
+  off: boolean;
+  syncedHash: string | null;
+  syncedServer: string | null;
+}
+
+/** Réponse de la vérification des sauvegardes avant de jouer. */
+export type SaveCheck =
+  | { status: "off" | "ready" }
+  | { status: "unknown"; suggestions: string[] }
+  | { status: "conflict"; localModified: number | null; serverModified: string };
+
+/** Sauvegarde à utiliser pour la partie. */
+export type SaveChoice = "local" | "server" | "unchanged";
 
 export const MOD_PROGRESS_EVENT = "mod-progress";
 export const MOD_FINISHED_EVENT = "mod-finished";
@@ -195,6 +219,28 @@ export interface ModFinished {
   fileId: number;
   fileName: string;
   error: AppError | null;
+}
+
+/** Serveur des musiques et bruitages. */
+export interface AssetsInfo {
+  /** Adresse effective ; null si elle ne peut pas être déduite de celle de RomM. */
+  url: string | null;
+  /** Saisie dans les paramètres (sinon déduite : romm.x → assets.x). */
+  custom: boolean;
+}
+
+/** Une version d'un morceau ; boucle en secondes. */
+export interface MusicVariant {
+  file: string;
+  loopStart: number;
+  loopEnd: number;
+}
+
+export interface MusicTrack {
+  id: string;
+  title: string;
+  normal: MusicVariant;
+  eightBit: MusicVariant;
 }
 
 export const INSTALL_PROGRESS_EVENT = "install-progress";
@@ -219,6 +265,11 @@ export const backend = {
   gamePlaytime: (romId: number) => invoke<number | null>("game_playtime", { romId }),
   clearCache: () => invoke<void>("clear_cache"),
   favoritesList: () => invoke<FavoritesInfo>("favorites_list"),
+  soundPaths: () => invoke<Record<string, string>>("sound_paths"),
+  assetsInfo: () => invoke<AssetsInfo>("assets_info"),
+  setAssetsUrl: (url: string | null) => invoke<AssetsInfo>("set_assets_url", { url }),
+  musicTracks: () => invoke<MusicTrack[]>("music_tracks"),
+  musicFiles: (track: MusicTrack) => invoke<{ normal: string; eightBit: string }>("music_files", { track }),
   favoriteSet: (romId: number, favorite: boolean) => invoke<number[]>("favorite_set", { romId, favorite }),
   installInfo: () => invoke<InstallInfo>("install_info"),
   installGame: (romId: number) => invoke<void>("install_game", { romId }),
@@ -228,7 +279,11 @@ export const backend = {
   uninstallGame: (romId: number, keepSaves: boolean) => invoke<void>("uninstall_game", { romId, keepSaves }),
   openGameFolder: (romId: number, sub?: "mods_downloads") => invoke<void>("open_game_folder", { romId, sub: sub ?? null }),
   setInstallDir: (path: string | null) => invoke<string>("set_install_dir", { path }),
-  playGame: (romId: number) => invoke<void>("play_game", { romId }),
+  playGame: (romId: number, saveChoice: SaveChoice) => invoke<void>("play_game", { romId, saveChoice }),
+  saveCheck: (romId: number) => invoke<SaveCheck>("save_check", { romId }),
+  setSaveLocation: (romId: number, dir: string | null, off: boolean) =>
+    invoke<InstalledGame>("set_save_location", { romId, dir, off }),
+  openSaveFolder: (romId: number) => invoke<void>("open_save_folder", { romId }),
   runningGames: () => invoke<number[]>("running_games"),
   flushPlaySessions: () => invoke<number>("flush_play_sessions"),
   downloadedMods: (romId: number) => invoke<string[]>("downloaded_mods", { romId }),

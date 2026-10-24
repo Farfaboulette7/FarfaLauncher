@@ -52,7 +52,7 @@ export function UpdateDialog({ update, onClose }: Props) {
       }
     >
       <p>
-        La version <strong>{update.version}</strong> de FarfaLauncher est disponible (vous avez la {update.currentVersion}).
+        La version <strong>{update.version}</strong> de FaRFa project est disponible (vous avez la {update.currentVersion}).
       </p>
       {update.body && <pre className="update-notes">{update.body}</pre>}
       {state === "downloading" && (

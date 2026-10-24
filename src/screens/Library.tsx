@@ -1,3 +1,4 @@
+import logo from "../assets/logo.png";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -17,6 +18,8 @@ import {
 } from "../api/backend";
 import { useFirstImage } from "../hooks/useCachedImage";
 import { BoxArt } from "../components/BoxArt";
+import { loadSounds, play as playSound } from "../sounds";
+import { loadMusic, setMusicMuted, setMusicVersion, stopMusic } from "../music";
 import { useFavorites } from "../hooks/useFavorites";
 import { InstallsState, useInstalls } from "../hooks/useInstalls";
 import { GameDetail } from "./GameDetail";
@@ -101,8 +104,20 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
     return () => unlisten.forEach((p) => p.then((f) => f()));
   }, []);
 
+  // Musique : réservée aux utilisateurs connectés, arrêtée à la déconnexion.
+  useEffect(() => {
+    loadMusic();
+    return stopMusic;
+  }, []);
+  // Version 8-bit sur la fiche d'un jeu, normale partout ailleurs.
+  useEffect(() => setMusicVersion(selectedId !== null ? "eightBit" : "normal"), [selectedId]);
+  // Silence pendant qu'un jeu tourne.
+  const gameRunning = installs.running.size > 0;
+  useEffect(() => setMusicMuted(gameRunning), [gameRunning]);
+
   useEffect(() => {
     backend.systemTarget().then(setTarget);
+    loadSounds();
     // Temps de jeu resté en attente (serveur injoignable lors d'une session).
     if (!session.offline) {
       backend.flushPlaySessions().catch((e) => console.warn("sessions en attente non envoyées", e));
@@ -185,7 +200,10 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
         favorite={favorites.ids.has(selected.id)}
         onToggleFavorite={favorites.offline || favorites.needsRelogin ? null : () => favorites.toggle(selected.id)}
         favoriteError={favorites.error}
-        onBack={() => setSelectedId(null)}
+        onBack={() => {
+          playSound("retourSelection");
+          setSelectedId(null);
+        }}
         onError={handleError}
       />
     );
@@ -197,7 +215,10 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
     <div className="lib">
       <header className="lib-header">
         <div className="lib-brand">
-          <p className="n-subtitle">FarfaLauncher</p>
+          <p className="n-subtitle lib-brand-name">
+            <img className="brand-logo" src={logo} alt="" />
+            FaRFa project
+          </p>
           <nav className="lib-tabs" role="tablist">
             {TABS.map((t) => (
               <button
@@ -364,7 +385,7 @@ function GameCard({
           : null;
   const [kind, setKind] = useState<"box" | "flat" | null>(null);
   return (
-    <button className={`card${kind === "box" ? " card--box3d" : ""}`} onClick={onOpen} title={game.name}>
+    <button className={`card${kind === "box" ? " card--box3d" : ""}`} data-sound-hover="game" onClick={onOpen} title={game.name}>
       <div className="card-cover">
         <BoxArt game={game} onKind={setKind} />
         {kind === null && !game.boxFaces && <span className="card-placeholder">{game.name}</span>}

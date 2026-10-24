@@ -47,8 +47,8 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               tag_name: context.ref.replace('refs/tags/', ''),
-              name: `FarfaLauncher ${context.ref.replace('refs/tags/', '')}`,
-              body: 'Téléchargez le fichier correspondant à votre système ci-dessous. Si FarfaLauncher est déjà installé, il se met à jour tout seul.',
+              name: `FaRFa project ${context.ref.replace('refs/tags/', '')}`,
+              body: 'Téléchargez le fichier correspondant à votre système ci-dessous. Si FaRFa project est déjà installé, il se met à jour tout seul.',
               draft: true,
               prerelease: false,
             });

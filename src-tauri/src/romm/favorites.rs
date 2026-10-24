@@ -25,7 +25,7 @@ struct RawCollection {
 /// répond 403. Ce n'est pas une session invalide, juste un droit à ajouter.
 fn scope_error(e: AppError) -> AppError {
     match e {
-        AppError::Forbidden => AppError::FavoritesScope,
+        AppError::Forbidden => AppError::ScopeMissing,
         other => other,
     }
 }

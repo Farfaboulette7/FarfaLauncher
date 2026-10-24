@@ -171,6 +171,7 @@ impl InstallJob {
             pending_candidates: Vec::new(),
             roms: previous.as_ref().map(|p| p.roms.clone()).unwrap_or_default(),
             mods_downloaded: previous.as_ref().map(|p| p.mods_downloaded.clone()).unwrap_or_default(),
+            saves: previous.as_ref().map(|p| p.saves.clone()).unwrap_or_default(),
             installed_at: previous.as_ref().map(|p| p.installed_at).unwrap_or(now),
             updated_at: now,
             game_dir: game_dir.clone(),

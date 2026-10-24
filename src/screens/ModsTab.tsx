@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { backend, formatSize, Game, MOD_FINISHED_EVENT, MOD_PROGRESS_EVENT, ModFinished, ModProgress } from "../api/backend";
 import { InstallsState } from "../hooks/useInstalls";
+import { play as playSound } from "../sounds";
 
 interface Props {
   game: Game;
@@ -34,6 +35,7 @@ export function ModsTab({ game, installs, onError }: Props) {
           return next;
         });
         if (payload.error) setMessage(await onError(payload.error));
+        else playSound("DownloadEnd");
         reload();
       }),
     ];

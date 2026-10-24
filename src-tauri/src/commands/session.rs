@@ -70,7 +70,11 @@ pub async fn set_server(state: State<'_, AppState>, url: String) -> AppResult<Se
     let server_url = normalize_server_url(&url)?;
     let version = auth::check_server(&RommClient::new(&server_url, None)?).await?;
     tracing::info!("serveur RomM {version} configuré");
-    state.update_settings(|s| s.server_url = Some(server_url.clone()))?;
+    // Une adresse d'assets saisie pour l'ancien serveur recevrait le token du nouveau.
+    state.update_settings(|s| {
+        s.server_url = Some(server_url.clone());
+        s.assets_url = None;
+    })?;
     state.set_client(None);
     Ok(ServerInfo { server_url, version })
 }
@@ -88,7 +92,7 @@ pub struct DeviceAuthStart {
 pub async fn start_device_auth(state: State<'_, AppState>) -> AppResult<DeviceAuthStart> {
     let server_url = state.server_url()?;
     let client = RommClient::new(&server_url, None)?;
-    let name = format!("FarfaLauncher — {}", device_name());
+    let name = format!("FaRFa project — {}", device_name());
     let init = auth::device_init(&client, &state.settings().device_id, &name).await?;
     *state.pending_device.lock().unwrap() = Some(PendingDevice { server_url: server_url.clone(), device_code: init.device_code });
     Ok(DeviceAuthStart {

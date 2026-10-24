@@ -18,6 +18,8 @@ pub const REQUIRED_SCOPES: &[&str] = &[
     "devices.read",
     "collections.read",
     "collections.write",
+    "assets.read",
+    "assets.write",
 ];
 
 pub const TOKEN_PREFIX: &str = "rmm_";

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { play as playSound } from "../sounds";
 import {
   AppError,
   GAME_STARTED_EVENT,
@@ -11,6 +12,7 @@ import {
   InstallFinished,
   InstalledGame,
   InstallProgress,
+  SaveChoice,
 } from "../api/backend";
 
 export interface InstallsState {
@@ -27,7 +29,7 @@ export interface InstallsState {
   running: Map<number, number>;
   /** Dernière session terminée par jeu. */
   lastSession: Map<number, GameStopped>;
-  play: (romId: number) => Promise<string | null>;
+  play: (romId: number, saveChoice?: SaveChoice) => Promise<string | null>;
 }
 
 /** État des installations, tenu à jour par les événements du Rust. */
@@ -54,7 +56,10 @@ export function useInstalls(onAuthError: (e: unknown) => Promise<string>): Insta
   useEffect(() => {
     reload();
     const subs = [
-      listen<number>(GAME_STARTED_EVENT, ({ payload }) => setRunning((r) => new Map(r).set(payload, Date.now()))),
+      listen<number>(GAME_STARTED_EVENT, ({ payload }) => {
+        playSound("LancementGame");
+        setRunning((r) => new Map(r).set(payload, Date.now()));
+      }),
       listen<GameStopped>(GAME_STOPPED_EVENT, ({ payload }) => {
         setRunning((r) => {
           const next = new Map(r);
@@ -74,9 +79,10 @@ export function useInstalls(onAuthError: (e: unknown) => Promise<string>): Insta
         });
         if (payload.outcome) {
           const game = payload.outcome.game;
+          playSound("DownloadEnd");
           setInstalledMap((m) => new Map(m).set(game.romId, game));
         } else if (payload.error && payload.error.code !== "cancelled") {
-          await onAuthError(payload.error);
+          await onAuthError(payload.error); // joue aussi le son d'erreur
           const err = payload.error;
           setErrors((m) => new Map(m).set(payload.romId, err));
         }
@@ -121,9 +127,9 @@ export function useInstalls(onAuthError: (e: unknown) => Promise<string>): Insta
 
   /** Lance le jeu ; renvoie un message d'erreur ou null. */
   const play = useCallback(
-    async (romId: number): Promise<string | null> => {
+    async (romId: number, saveChoice: SaveChoice = "unchanged"): Promise<string | null> => {
       try {
-        await backend.playGame(romId);
+        await backend.playGame(romId, saveChoice);
         return null;
       } catch (e) {
         return onAuthError(e);

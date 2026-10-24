@@ -47,7 +47,7 @@ export function GameDetail({ game, platform, target, installs, favorite, onToggl
   return (
     <div className="gd">
       <header className="gd-header">
-        <button className="n-link gd-back" onClick={onBack}>
+        <button className="n-link gd-back" data-sound="none" onClick={onBack}>
           ← Retour
         </button>
         <div className="gd-title-row">

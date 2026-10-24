@@ -106,8 +106,9 @@ dans RomM). Les scopes accordés = demandés ∩ droits du compte (l'ami peut en
 | `roms.user.read` | `GET /api/play-sessions` : relire le temps de jeu | oui (temps de jeu) |
 | `devices.read` | lire les sessions de **tous** les appareils de l'ami (PC + Steam Deck…). Sans lui, le launcher ne voit que les sessions de son propre appareil | recommandé |
 | `collections.read` / `collections.write` | favoris = collection « favoris » de l'ami (§5). Un token créé avant les favoris reçoit 403 : le launcher propose de se reconnecter | oui (favoris) |
+| `assets.read` / `assets.write` | sauvegardes du joueur (§7) | oui (sauvegardes) |
 
-Pas besoin de `assets.read` : les jaquettes, captures et livrets scrapés sont des fichiers
+Les jaquettes, captures et livrets scrapés ne demandent pas `assets.read` : ce sont des fichiers
 statiques servis sans authentification (voir §4).
 
 Lecture seule stricte impossible si on veut le temps de jeu : `roms.user.write` est le
@@ -248,6 +249,25 @@ RomM 5.4.0 a des **sessions de jeu par utilisateur**
 - Sans `device_id` (toutes les sessions de l'ami, tous appareils) → nécessite
   `devices.read`. Avec `device_id=<son appareil>` → `roms.user.read` suffit.
 - Il n'existe pas d'endpoint « temps total » : le launcher fait la somme.
+
+---
+
+## 7. Sauvegardes
+
+(`backend/endpoints/saves.py`, `backend/endpoints/responses/assets.py`)
+
+- Lister : `GET /api/saves?rom_id=42` (`assets.read`) → `list[SaveSchema]` (`id`,
+  `file_name`, `emulator`, `updated_at`…). Le launcher garde l'archive `farfa-save.zip`
+  d'émulateur `farfa-project`.
+- Envoyer : `POST /api/saves?rom_id=42&emulator=farfa-project&overwrite=true`
+  (`assets.write`), multipart, champ `saveFile`. Même nom de fichier → la sauvegarde
+  existante est remplacée. Taille limitée par `MAX_ASSET_UPLOAD_SIZE_BYTES` du serveur.
+- Télécharger : `GET /api/saves/{id}/content`.
+- Le contenu d'un jeu (un dossier, ou quelques fichiers) est zippé. L'empreinte comparée
+  est un SHA-1 des chemins et contenus des fichiers (pas de l'archive elle-même), et la
+  date `updated_at` du serveur évite de retélécharger l'archive quand rien n'a changé.
+- Scopes : `assets.read` / `assets.write` ; un token plus ancien reçoit 403, traité comme
+  pour les favoris (reconnexion proposée, sans déconnexion forcée).
 
 ---
 

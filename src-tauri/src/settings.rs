@@ -14,6 +14,9 @@ pub struct Settings {
     pub server_url: Option<String>,
     /// Dossier d'installation des jeux ; `None` = dossier par défaut.
     pub install_dir: Option<PathBuf>,
+    /// Serveur des musiques et bruitages, normalisé ; `None` = déduit de
+    /// `server_url` (voir `assets::derive_url`).
+    pub assets_url: Option<String>,
     /// Identifiant stable de cette installation, envoyé à RomM lors de
     /// l'appairage (`client_device_identifier`).
     pub device_id: String,
@@ -24,6 +27,7 @@ impl Default for Settings {
         Self {
             server_url: None,
             install_dir: None,
+            assets_url: None,
             device_id: uuid::Uuid::new_v4().to_string(),
         }
     }

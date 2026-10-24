@@ -24,7 +24,7 @@ export function useFavorites(onError: (e: unknown) => Promise<string>, enabled: 
 
   const fail = useCallback(
     async (e: unknown) => {
-      setNeedsRelogin(isAppError(e) && e.code === "favorites_scope");
+      setNeedsRelogin(isAppError(e) && e.code === "scope_missing");
       setError(await onError(e));
     },
     [onError],

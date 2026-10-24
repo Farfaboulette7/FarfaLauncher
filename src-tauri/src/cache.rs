@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::error::{log_err, AppError, AppResult};
 use crate::romm::client::RommClient;
@@ -139,6 +139,36 @@ pub async fn cached_download(
         }
     }
     Ok(path)
+}
+
+async fn starts_with(path: &Path, magic: &[u8]) -> bool {
+    let mut head = vec![0u8; magic.len()];
+    match tokio::fs::File::open(path).await {
+        Ok(mut f) => f.read_exact(&mut head).await.is_ok() && head == magic,
+        Err(_) => false,
+    }
+}
+
+/// `cached_download` pour un fichier à signature connue (`RIFF`, `OggS`…). Un fichier
+/// qui ne la porte pas (ex. page HTML d'un reverse proxy renvoyée avec un 200) est
+/// retiré du cache et retéléchargé une fois.
+pub async fn cached_download_checked(
+    client: &RommClient,
+    dir: &Path,
+    key: &str,
+    url_path: &str,
+    ext: &str,
+    magic: &[u8],
+) -> AppResult<PathBuf> {
+    for attempt in 0..2 {
+        let path = cached_download(client, dir, key, url_path, Some(ext)).await?;
+        if starts_with(&path, magic).await {
+            return Ok(path);
+        }
+        let _ = tokio::fs::remove_file(&path).await;
+        tracing::warn!("{url_path} : réponse inattendue (pas un fichier .{ext}), retirée du cache (essai {})", attempt + 1);
+    }
+    Err(AppError::Download)
 }
 
 #[cfg(test)]

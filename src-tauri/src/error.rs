@@ -35,8 +35,10 @@ pub enum AppError {
     Keychain,
     #[error("Aucune plateforme « portage-… » n'a été trouvée sur ce serveur RomM.")]
     PlatformMissing,
-    #[error("Les favoris demandent une autorisation de plus : déconnectez-vous puis reconnectez-vous une fois.")]
-    FavoritesScope,
+    #[error("Cette fonction demande une autorisation de plus : reconnectez-vous une fois (Paramètres → Se déconnecter).")]
+    ScopeMissing,
+    #[error("Ce dossier ne peut pas servir de dossier de sauvegardes (trop large ou trop volumineux). Choisissez le dossier qui contient uniquement les sauvegardes du jeu.")]
+    SaveDirInvalid,
     #[error("Impossible de lire ou d'écrire le cache local.")]
     Cache,
     #[error("Téléchargement impossible. Vérifiez votre connexion et réessayez.")]
@@ -87,7 +89,8 @@ impl AppError {
             AppError::TokenRejected => "token_rejected",
             AppError::Keychain => "keychain",
             AppError::PlatformMissing => "platform_missing",
-            AppError::FavoritesScope => "favorites_scope",
+            AppError::ScopeMissing => "scope_missing",
+            AppError::SaveDirInvalid => "save_dir_invalid",
             AppError::Cache => "cache",
             AppError::Download => "download",
             AppError::Integrity => "integrity",

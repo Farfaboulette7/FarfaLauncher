@@ -1,5 +1,18 @@
 import { useEffect, useState } from "react";
-import { backend, formatPlaytime, hasUpdate, formatSize, Game, GameStopped, InstallPhase, Target, TARGET_LABELS } from "../api/backend";
+import { open } from "@tauri-apps/plugin-dialog";
+import {
+  backend,
+  formatPlaytime,
+  hasUpdate,
+  formatSize,
+  Game,
+  GameStopped,
+  InstallPhase,
+  isAppError,
+  SaveChoice,
+  Target,
+  TARGET_LABELS,
+} from "../api/backend";
 import { InstallsState } from "../hooks/useInstalls";
 import { Dialog } from "../components/Dialog";
 
@@ -26,6 +39,14 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
   const error = installs.errors.get(game.id);
   const [message, setMessage] = useState<string | null>(null);
   const [dialog, setDialog] = useState<"exe" | "uninstall" | null>(null);
+  /** Question sur les sauvegardes avant de jouer. */
+  const [saveAsk, setSaveAsk] = useState<
+    | { kind: "where"; suggestions: string[]; thenPlay: boolean }
+    | { kind: "conflict"; localModified: number | null; serverModified: string }
+    | null
+  >(null);
+  const [launching, setLaunching] = useState(false);
+  const [saveNotice, setSaveNotice] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<string[]>([]);
 
   const downloadSize = game.myArchive ? game.myArchive.file.size + game.romFiles.reduce((s, f) => s + f.size, 0) : 0;
@@ -42,6 +63,42 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
       setMessage(await onError(e));
       return undefined;
     }
+  }
+
+  async function launch(choice: SaveChoice) {
+    setSaveAsk(null);
+    setLaunching(true);
+    const err = await installs.play(game.id, choice);
+    setLaunching(false);
+    if (err) setMessage(err);
+  }
+
+  /** « Jouer » : compare d'abord la sauvegarde locale à celle du serveur. */
+  async function startPlay() {
+    setMessage(null);
+    setSaveNotice(null);
+    setLaunching(true);
+    try {
+      const check = await backend.saveCheck(game.id);
+      setLaunching(false);
+      if (check.status === "unknown") setSaveAsk({ kind: "where", suggestions: check.suggestions, thenPlay: true });
+      else if (check.status === "conflict") setSaveAsk({ kind: "conflict", ...check });
+      else await launch("unchanged");
+    } catch (e) {
+      // Sauvegardes indisponibles (droits, serveur…) : on joue quand même.
+      setLaunching(false);
+      const msg = await onError(e);
+      setSaveNotice(isAppError(e) && e.code === "scope_missing" ? msg : `Sauvegardes non vérifiées : ${msg}`);
+      await launch("unchanged");
+    }
+  }
+
+  async function chooseSaveDir(dir: string | null, off: boolean, thenPlay: boolean) {
+    const updated = await run(() => backend.setSaveLocation(game.id, dir, off));
+    if (!updated) return;
+    installs.setInstalled(updated);
+    setSaveAsk(null);
+    if (thenPlay) await startPlay();
   }
 
   async function openExeChoice() {
@@ -71,13 +128,11 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
             ) : (
               <button
                 className="n-btn n-btn--primary n-btn--block n-cursor"
-                onClick={async () => {
-                  setMessage(null);
-                  const err = await installs.play(game.id);
-                  if (err) setMessage(err);
-                }}
+                data-sound="none"
+                disabled={launching}
+                onClick={startPlay}
               >
-                Jouer
+                {launching ? "Vérification des sauvegardes…" : "Jouer"}
               </button>
             )}
             {last && <p className="n-hint">{sessionSummary(last)}</p>}
@@ -102,11 +157,12 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
             {installs.installRoot && <p className="n-hint">Dans {installs.installRoot}</p>}
           </>
         ) : (
-          <p className="n-alert">Non disponible pour votre système{target ? ` (${TARGET_LABELS[target]})` : ""}.</p>
+          <p className="n-alert" data-sound="none">Non disponible pour votre système{target ? ` (${TARGET_LABELS[target]})` : ""}.</p>
         )}
 
         {error && <p className="n-alert">{error.message}</p>}
         {message && <p className="n-alert">{message}</p>}
+        {saveNotice && <p className="n-notice">{saveNotice}</p>}
 
         <dl className="gd-facts">
           <dt>Version serveur</dt>
@@ -117,6 +173,10 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
             <>
               <dt>Exécutable</dt>
               <dd>{inst.executable}</dd>
+              <dt>Sauvegardes</dt>
+              <dd className="gd-savedir" title={inst.saves.dir ?? undefined}>
+                {inst.saves.off ? "non synchronisées" : inst.saves.dir ? shortPath(inst.saves.dir) : "dossier inconnu (demandé au lancement)"}
+              </dd>
             </>
           )}
           {!inst && game.myArchive && (
@@ -135,6 +195,16 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
             {inst.executable && (
               <button className="n-link" onClick={openExeChoice}>
                 Changer l'exécutable
+              </button>
+            )}
+            {inst.executable && inst.saves.dir && !inst.saves.off && (
+              <button className="n-link" onClick={() => run(() => backend.openSaveFolder(game.id))}>
+                Ouvrir les sauvegardes
+              </button>
+            )}
+            {inst.executable && (
+              <button className="n-link" onClick={() => setSaveAsk({ kind: "where", suggestions: [], thenPlay: false })}>
+                Dossier des sauvegardes…
               </button>
             )}
             <button className="n-link" onClick={() => setDialog("uninstall")}>
@@ -168,6 +238,24 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
               setDialog(null);
             }
           }}
+        />
+      )}
+      {saveAsk?.kind === "where" && (
+        <SaveDirDialog
+          name={game.name}
+          suggestions={saveAsk.suggestions}
+          current={inst?.saves.dir ?? null}
+          playing={saveAsk.thenPlay}
+          onClose={() => setSaveAsk(null)}
+          onChoose={(dir, off) => chooseSaveDir(dir, off, saveAsk.thenPlay)}
+        />
+      )}
+      {saveAsk?.kind === "conflict" && (
+        <SaveConflictDialog
+          localModified={saveAsk.localModified}
+          serverModified={saveAsk.serverModified}
+          onClose={() => setSaveAsk(null)}
+          onChoose={launch}
         />
       )}
       {dialog === "uninstall" && inst && (
@@ -291,9 +379,145 @@ function UninstallDialog({ name, onClose, onConfirm }: { name: string; onClose: 
 
 
 function sessionSummary(s: GameStopped): string {
-  if (!s.recorded) return "Session trop courte : non comptée.";
-  const base = `Dernière session : ${formatPlaytime(s.durationMs)}`;
-  return s.pending > 0 ? `${base} (sera envoyée à RomM dès que le serveur répondra)` : `${base}, enregistrée.`;
+  const time = !s.recorded
+    ? "Session trop courte : non comptée."
+    : s.pending > 0
+      ? `Dernière session : ${formatPlaytime(s.durationMs)} (sera envoyée à RomM dès que le serveur répondra).`
+      : `Dernière session : ${formatPlaytime(s.durationMs)}, enregistrée.`;
+  const save =
+    s.save === "uploaded"
+      ? " Sauvegarde envoyée sur le serveur."
+      : s.save === "failed"
+        ? ` Sauvegarde non envoyée : ${s.saveError?.message ?? "erreur inconnue"}`
+        : "";
+  return time + save;
+}
+
+function shortPath(p: string): string {
+  const parts = p.split(/[\\/]/).filter(Boolean);
+  return parts.length > 3 ? `…/${parts.slice(-3).join("/")}` : p;
+}
+
+function formatDate(d: Date): string {
+  return d.toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
+}
+
+function SaveConflictDialog({
+  localModified,
+  serverModified,
+  onClose,
+  onChoose,
+}: {
+  localModified: number | null;
+  serverModified: string;
+  onClose: () => void;
+  onChoose: (choice: SaveChoice) => void;
+}) {
+  const server = new Date(serverModified);
+  return (
+    <Dialog
+      title="Sauvegardes différentes"
+      onClose={onClose}
+      actions={
+        <>
+          <button className="n-btn" onClick={() => onChoose("server")}>
+            Prendre celle du serveur
+          </button>
+          <button className="n-btn" autoFocus onClick={() => onChoose("local")}>
+            Garder la locale
+          </button>
+        </>
+      }
+    >
+      <p>La sauvegarde de cet appareil n'est pas la même que celle du serveur.</p>
+      <dl className="gd-facts">
+        <dt>Sur cet appareil</dt>
+        <dd>{localModified ? `modifiée le ${formatDate(new Date(localModified * 1000))}` : "aucune sauvegarde"}</dd>
+        <dt>Sur le serveur</dt>
+        <dd>{isNaN(server.getTime()) ? "présente" : `envoyée le ${formatDate(server)}`}</dd>
+      </dl>
+      <p className="n-hint">
+        « Garder la locale » : vous continuez votre partie d'ici, et le serveur est mis à jour à la fin. « Prendre celle
+        du serveur » remplace la sauvegarde de cet appareil (une copie de secours est gardée dans le dossier du jeu).
+      </p>
+    </Dialog>
+  );
+}
+
+function SaveDirDialog({
+  name,
+  suggestions,
+  current,
+  playing,
+  onClose,
+  onChoose,
+}: {
+  name: string;
+  suggestions: string[];
+  current: string | null;
+  playing: boolean;
+  onClose: () => void;
+  onChoose: (dir: string | null, off: boolean) => void;
+}) {
+  async function browse() {
+    const dir = await open({
+      directory: true,
+      multiple: false,
+      title: `Dossier des sauvegardes de ${name}`,
+      defaultPath: suggestions[0] ?? current ?? undefined,
+    });
+    if (typeof dir === "string") onChoose(dir, false);
+  }
+  return (
+    <Dialog
+      title="Dossier des sauvegardes"
+      onClose={onClose}
+      actions={
+        <>
+          <button className="n-btn" onClick={() => onChoose(null, true)}>
+            {playing ? "Jouer sans synchroniser" : "Ne pas synchroniser"}
+          </button>
+          <button className="n-btn" autoFocus onClick={browse}>
+            Choisir le dossier…
+          </button>
+        </>
+      }
+    >
+      {playing ? (
+        <p>
+          FaRFa project n'a pas trouvé où <strong>{name}</strong> range ses sauvegardes. Indiquez le dossier : elles seront
+          copiées sur le serveur et retrouvées sur vos autres appareils.
+        </p>
+      ) : (
+        <p>
+          Dossier actuel : <strong>{current ?? "inconnu"}</strong>
+        </p>
+      )}
+      {suggestions.length > 0 && (
+        <>
+          <p className="n-label">Dossiers de données trouvés pour ce jeu :</p>
+          <ul className="choice-list">
+            {suggestions.map((s) => (
+              <li key={s}>
+                <button className="n-link" onClick={() => onChoose(s, false)}>
+                  {s}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      <p className="n-hint">
+        Astuce : la documentation de la recomp indique souvent l'emplacement (un dossier « saves », des fichiers .sav…).
+        Choisissez le dossier qui ne contient que les sauvegardes.
+      </p>
+      {!playing && current && (
+        <button className="n-link" onClick={() => onChoose(null, false)}>
+          Réinitialiser (rechercher à nouveau automatiquement)
+        </button>
+      )}
+    </Dialog>
+  );
 }
 
 function Elapsed({ since }: { since: number }) {

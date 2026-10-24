@@ -28,7 +28,7 @@ export function useUpdater(): Updater {
         setAvailable(u);
         return `La version ${u.version} est disponible.`;
       }
-      return "FarfaLauncher est à jour.";
+      return "FaRFa project est à jour.";
     } catch (e) {
       logToFile("warn", `vérification des mises à jour: ${String(e)}`);
       return "Impossible de vérifier les mises à jour. Vérifiez votre connexion Internet.";

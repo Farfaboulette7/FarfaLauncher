@@ -72,6 +72,11 @@ impl RommClient {
         Ok(Self { base: base.to_string(), token, http })
     }
 
+    /// Même token, autre serveur (serveur des musiques et bruitages).
+    pub fn with_base(&self, base: &str) -> Self {
+        Self { base: base.to_string(), token: self.token.clone(), http: self.http.clone() }
+    }
+
     pub fn base(&self) -> &str {
         &self.base
     }
@@ -109,6 +114,10 @@ impl RommClient {
     /// POST de formulaire (`application/x-www-form-urlencoded`).
     pub fn post_form<B: Serialize + ?Sized>(&self, path: &str, form: &B) -> RequestBuilder {
         self.authed(self.http.post(self.url(path)).form(form).timeout(API_TIMEOUT))
+    }
+
+    pub fn post_multipart(&self, path: &str, form: reqwest::multipart::Form) -> RequestBuilder {
+        self.authed(self.http.post(self.url(path)).multipart(form))
     }
 
     pub async fn send(&self, req: RequestBuilder) -> AppResult<Response> {

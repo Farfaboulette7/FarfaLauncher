@@ -1,8 +1,11 @@
 pub mod install;
 pub mod launch;
 pub mod mods;
+pub mod music;
+pub mod saves;
 pub mod library;
 pub mod session;
+pub mod sounds;
 
 use tauri::State;
 use tauri_plugin_opener::OpenerExt;

@@ -1,3 +1,4 @@
+mod assets;
 mod cache;
 mod commands;
 mod error;
@@ -6,6 +7,7 @@ mod launch;
 mod logging;
 mod platform;
 mod romm;
+mod saves;
 mod secrets;
 mod settings;
 mod state;
@@ -57,6 +59,14 @@ pub fn run() {
             commands::library::clear_cache,
             commands::library::favorites_list,
             commands::library::favorite_set,
+            commands::sounds::sound_paths,
+            commands::sounds::assets_info,
+            commands::sounds::set_assets_url,
+            commands::music::music_tracks,
+            commands::music::music_files,
+            commands::saves::save_check,
+            commands::saves::set_save_location,
+            commands::saves::open_save_folder,
             commands::install::install_info,
             commands::install::install_game,
             commands::install::cancel_install,

@@ -316,3 +316,16 @@ body::after {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* Logo Farfaboulette (pixel art : agrandi sans lissage). */
+.brand-logo {
+  height: 1.6em;
+  width: auto;
+  image-rendering: pixelated;
+  vertical-align: middle;
+  margin-right: 0.4em;
+  filter: drop-shadow(1px 1px 0 var(--nier-shadow));
+}
+.lib-brand-name { display: flex; align-items: center; margin: 0; }
+.login-brand { display: flex; align-items: center; }
+.login-brand .brand-logo { height: 1.4em; }

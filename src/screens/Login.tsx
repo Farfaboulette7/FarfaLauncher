@@ -1,3 +1,4 @@
+import logo from "../assets/logo.png";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { backend, DeviceAuthStart, errorMessage, SessionInfo } from "../api/backend";
 import "./Login.css";
@@ -18,7 +19,10 @@ export function Login({ initialServerUrl, notice, onLoggedIn }: Props) {
     <div className="login">
       <header className="login-header">
         <p className="n-subtitle">Unité de lancement</p>
-        <h1 className="n-title">FarfaLauncher</h1>
+        <h1 className="n-title login-brand">
+          <img className="brand-logo" src={logo} alt="" />
+          FaRFa project
+        </h1>
         <div className="n-rule login-rule" />
       </header>
 
@@ -197,7 +201,7 @@ function DeviceStep({
             <ol className="login-steps">
               <li>Cliquez sur « Ouvrir RomM » : la page d'autorisation s'ouvre dans votre navigateur.</li>
               <li>Connectez-vous à RomM si besoin, vérifiez que le code affiché est le même qu'ici.</li>
-              <li>Cliquez sur « Approve ». FarfaLauncher se connecte tout seul.</li>
+              <li>Cliquez sur « Approve ». FaRFa project se connecte tout seul.</li>
             </ol>
             <div className="login-code-row">
               <span className="n-code" aria-label="Code de connexion">

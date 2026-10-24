@@ -2,7 +2,7 @@ import { Component, ErrorInfo, ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 /** Recopie une erreur de l'interface dans le fichier de logs (jamais à l'écran). */
-export function logToFile(level: "error" | "warn", message: string) {
+export function logToFile(level: "error" | "warn" | "info", message: string) {
   invoke("log_frontend", { level, message }).catch(() => undefined);
 }
 

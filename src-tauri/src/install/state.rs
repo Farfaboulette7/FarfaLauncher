@@ -37,12 +37,34 @@ pub struct InstalledGame {
     /// Archives de mods téléchargées dans `mods_downloads/`.
     #[serde(default)]
     pub mods_downloaded: Vec<String>,
+    /// Synchronisation des sauvegardes avec le serveur.
+    #[serde(default)]
+    pub saves: SaveSync,
     /// Horodatages Unix (secondes).
     pub installed_at: u64,
     pub updated_at: u64,
     /// Dossier du jeu (non stocké dans le fichier, déduit de son emplacement).
     #[serde(skip_deserializing, default)]
     pub game_dir: PathBuf,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveSync {
+    /// Dossier des sauvegardes (absolu). `None` : pas encore trouvé.
+    pub dir: Option<PathBuf>,
+    /// Fichiers à prendre dans `dir` (motifs `*`, premier niveau) ; vide = tout le dossier.
+    #[serde(default)]
+    pub patterns: Vec<String>,
+    /// L'utilisateur a choisi de jouer sans synchroniser.
+    #[serde(default)]
+    pub off: bool,
+    /// Empreinte du contenu au dernier échange avec le serveur.
+    #[serde(default)]
+    pub synced_hash: Option<String>,
+    /// Date (`updated_at`) de la sauvegarde serveur à ce moment-là.
+    #[serde(default)]
+    pub synced_server: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -199,6 +221,7 @@ mod tests {
             pending_candidates: vec![],
             roms: vec![],
             mods_downloaded: vec![],
+            saves: SaveSync::default(),
             installed_at: 1,
             updated_at: 1,
             game_dir: game_dir.clone(),

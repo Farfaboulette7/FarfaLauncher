@@ -225,3 +225,4 @@
 .gd-mods li { align-items: center; }
 .gd-mod-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .gd-mod-progress { font-size: var(--fs-sm); min-width: 60px; text-align: right; }
+.gd-savedir { overflow-wrap: anywhere; }
