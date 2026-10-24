@@ -2,6 +2,7 @@ mod cache;
 mod commands;
 mod error;
 mod install;
+mod launch;
 mod logging;
 mod platform;
 mod romm;
@@ -32,6 +33,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::open_logs,
             commands::open_url,
+            commands::log_frontend,
             commands::session::session_status,
             commands::session::set_server,
             commands::session::start_device_auth,
@@ -55,6 +57,9 @@ pub fn run() {
             commands::install::uninstall_game,
             commands::install::open_game_folder,
             commands::install::set_install_dir,
+            commands::launch::running_games,
+            commands::launch::play_game,
+            commands::launch::flush_play_sessions,
         ])
         .run(tauri::generate_context!())
         .expect("erreur au lancement de FarfaLauncher");

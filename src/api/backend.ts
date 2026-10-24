@@ -149,6 +149,15 @@ export interface InstallFinished {
   error: AppError | null;
 }
 
+export const GAME_STARTED_EVENT = "game-started";
+export const GAME_STOPPED_EVENT = "game-stopped";
+export interface GameStopped {
+  romId: number;
+  durationMs: number;
+  recorded: boolean;
+  pending: number;
+}
+
 export const INSTALL_PROGRESS_EVENT = "install-progress";
 export const INSTALL_FINISHED_EVENT = "install-finished";
 
@@ -178,6 +187,9 @@ export const backend = {
   uninstallGame: (romId: number, keepSaves: boolean) => invoke<void>("uninstall_game", { romId, keepSaves }),
   openGameFolder: (romId: number, sub?: "mods_downloads") => invoke<void>("open_game_folder", { romId, sub: sub ?? null }),
   setInstallDir: (path: string | null) => invoke<string>("set_install_dir", { path }),
+  playGame: (romId: number) => invoke<void>("play_game", { romId }),
+  runningGames: () => invoke<number[]>("running_games"),
+  flushPlaySessions: () => invoke<number>("flush_play_sessions"),
 };
 
 export function formatSize(bytes: number): string {
@@ -198,4 +210,10 @@ export function formatPlaytime(ms: number): string {
   const m = totalMin % 60;
   if (h === 0) return `${m} min`;
   return m === 0 ? `${h} h` : `${h} h ${String(m).padStart(2, "0")}`;
+}
+
+/** Mise à jour disponible : le VERSION.txt du serveur diffère de celui installé
+ *  (ou la version installée est inconnue). */
+export function hasUpdate(game: Game, inst: InstalledGame | undefined): boolean {
+  return !!inst?.executable && !!game.serverVersionRaw && game.serverVersionRaw !== inst.versionRaw;
 }

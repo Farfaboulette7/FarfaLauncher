@@ -47,6 +47,9 @@ pub fn install_game(app: AppHandle, state: State<'_, AppState>, rom_id: i64) -> 
     let cancel = CancellationToken::new();
     {
         let mut jobs = state.installs.lock().unwrap();
+        if state.running.lock().unwrap().contains(&rom_id) {
+            return Err(AppError::AlreadyRunning);
+        }
         if jobs.contains_key(&rom_id) {
             return Err(AppError::Busy);
         }
@@ -128,6 +131,9 @@ async fn game_details(state: &AppState, rom_id: i64) -> AppResult<Game> {
 
 #[tauri::command]
 pub async fn uninstall_game(state: State<'_, AppState>, rom_id: i64, keep_saves: bool) -> AppResult<()> {
+    if state.running.lock().unwrap().contains(&rom_id) {
+        return Err(AppError::AlreadyRunning);
+    }
     if state.installs.lock().unwrap().contains_key(&rom_id) {
         return Err(AppError::Busy);
     }

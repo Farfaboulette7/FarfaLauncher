@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { backend, formatSize, Game, InstalledGame, InstallPhase, Target, TARGET_LABELS } from "../api/backend";
+import { useEffect, useState } from "react";
+import { backend, formatPlaytime, hasUpdate, formatSize, Game, GameStopped, InstallPhase, Target, TARGET_LABELS } from "../api/backend";
 import { InstallsState } from "../hooks/useInstalls";
 import { Dialog } from "../components/Dialog";
 
@@ -19,11 +19,6 @@ interface Props {
   onError: (e: unknown) => Promise<string>;
 }
 
-/** Mise à jour disponible : le VERSION.txt du serveur diffère de celui installé
- *  (ou la version installée est inconnue). */
-export function hasUpdate(game: Game, inst: InstalledGame | undefined): boolean {
-  return !!inst?.executable && !!game.serverVersionRaw && game.serverVersionRaw !== inst.versionRaw;
-}
 
 export function InstallPanel({ game, target, installs, onError }: Props) {
   const inst = installs.installed.get(game.id);
@@ -36,6 +31,8 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
   const downloadSize = game.myArchive ? game.myArchive.file.size + game.romFiles.reduce((s, f) => s + f.size, 0) : 0;
   const update = hasUpdate(game, inst);
   const pendingChoice = !!inst && !inst.executable && !progress;
+  const runningSince = installs.running.get(game.id);
+  const last = installs.lastSession.get(game.id);
 
   async function run<T>(f: () => Promise<T>): Promise<T | undefined> {
     setMessage(null);
@@ -67,10 +64,24 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
           </p>
         ) : inst?.executable ? (
           <>
-            <button className="n-btn n-btn--primary n-btn--block" disabled title="Arrive à la prochaine étape">
-              Jouer
-            </button>
-            {update && (
+            {runningSince !== undefined ? (
+              <div className="gd-running">
+                <span className="n-spinner" /> En cours de jeu · <Elapsed since={runningSince} />
+              </div>
+            ) : (
+              <button
+                className="n-btn n-btn--primary n-btn--block n-cursor"
+                onClick={async () => {
+                  setMessage(null);
+                  const err = await installs.play(game.id);
+                  if (err) setMessage(err);
+                }}
+              >
+                Jouer
+              </button>
+            )}
+            {last && <p className="n-hint">{sessionSummary(last)}</p>}
+            {update && runningSince === undefined && (
               <button className="n-btn n-btn--block gd-update" onClick={() => installs.start(game.id)}>
                 Mettre à jour ({inst.versionRaw ? inst.version : "?"} → {game.serverVersion})
               </button>
@@ -116,7 +127,7 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
           )}
         </dl>
 
-        {inst && !progress && (
+        {inst && !progress && runningSince === undefined && (
           <div className="gd-inst-actions">
             <button className="n-link" onClick={() => run(() => backend.openGameFolder(game.id))}>
               Ouvrir le dossier du jeu
@@ -278,3 +289,22 @@ function UninstallDialog({ name, onClose, onConfirm }: { name: string; onClose: 
   );
 }
 
+
+function sessionSummary(s: GameStopped): string {
+  if (!s.recorded) return "Session trop courte : non comptée.";
+  const base = `Dernière session : ${formatPlaytime(s.durationMs)}`;
+  return s.pending > 0 ? `${base} (sera envoyée à RomM dès que le serveur répondra)` : `${base}, enregistrée.`;
+}
+
+function Elapsed({ since }: { since: number }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(t);
+  }, []);
+  const s = Math.max(0, Math.floor((now - since) / 1000));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return <span>{h > 0 ? `${h}:${String(m).padStart(2, "0")}` : m}:{String(sec).padStart(2, "0")}</span>;
+}

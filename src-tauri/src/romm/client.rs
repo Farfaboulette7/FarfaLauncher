@@ -107,8 +107,16 @@ impl RommClient {
         check_status(resp).await
     }
 
+    /// Lecture JSON ; une erreur serveur passagère (5xx) est retentée une fois.
     pub async fn get_json<T: DeserializeOwned>(&self, path: &str) -> AppResult<T> {
-        let resp = self.send(self.get(path)).await?;
+        let resp = match self.send(self.get(path)).await {
+            Err(AppError::Server) => {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                tracing::info!("nouvel essai après une erreur serveur");
+                self.send(self.get(path)).await?
+            }
+            other => other?,
+        };
         parse_json(resp).await
     }
 }

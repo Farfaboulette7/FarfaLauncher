@@ -59,6 +59,10 @@ pub enum AppError {
     NotInstalled,
     #[error("Opération annulée.")]
     Cancelled,
+    #[error("Impossible de lancer le jeu. Essayez de choisir un autre exécutable, ou consultez les logs.")]
+    LaunchFailed,
+    #[error("Ce jeu est déjà en cours d'exécution.")]
+    AlreadyRunning,
     #[error("Le serveur a renvoyé une erreur inattendue. Réessayez plus tard.")]
     Server,
     #[error("Une erreur inattendue est survenue. Les détails sont dans les logs.")]
@@ -93,6 +97,8 @@ impl AppError {
             AppError::Busy => "busy",
             AppError::NotInstalled => "not_installed",
             AppError::Cancelled => "cancelled",
+            AppError::LaunchFailed => "launch_failed",
+            AppError::AlreadyRunning => "already_running",
             AppError::Server => "server",
             AppError::Internal => "internal",
         }

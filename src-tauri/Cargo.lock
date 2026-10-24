@@ -1106,6 +1106,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
  "thiserror 2.0.21",
+ "time",
  "tokio",
  "tokio-util",
  "tracing",
@@ -1113,6 +1114,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+ "windows-sys 0.61.2",
  "zip",
 ]
 

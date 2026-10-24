@@ -1,7 +1,7 @@
 //! État partagé entre les commandes Tauri.
 
 use std::path::PathBuf;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
 
@@ -31,6 +31,8 @@ pub struct AppState {
     pub refreshing: AtomicBool,
     /// Installations en cours (jeu → jeton d'annulation).
     pub installs: Mutex<HashMap<i64, CancellationToken>>,
+    /// Jeux en cours d'exécution.
+    pub running: Mutex<HashSet<i64>>,
     /// Dossier d'installation par défaut (`~/FarfaLauncher/Jeux`).
     pub default_install_root: PathBuf,
 }
@@ -52,6 +54,7 @@ impl AppState {
             library: Mutex::new(None),
             refreshing: AtomicBool::new(false),
             installs: Mutex::new(HashMap::new()),
+            running: Mutex::new(HashSet::new()),
             default_install_root,
         }
     }

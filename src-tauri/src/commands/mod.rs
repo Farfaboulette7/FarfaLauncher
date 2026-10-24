@@ -1,4 +1,5 @@
 pub mod install;
+pub mod launch;
 pub mod library;
 pub mod session;
 
@@ -13,6 +14,17 @@ pub fn open_logs(app: tauri::AppHandle, state: State<'_, AppState>) -> AppResult
     app.opener()
         .open_path(state.log_dir.to_string_lossy(), None::<&str>)
         .map_err(|e| log_err(AppError::Internal, "ouverture du dossier de logs", e))
+}
+
+/// Erreurs de l'interface, recopiées dans le fichier de logs.
+#[tauri::command]
+pub fn log_frontend(level: String, message: String) {
+    let message: String = message.chars().take(8000).collect();
+    match level.as_str() {
+        "error" => tracing::error!(target: "interface", "{message}"),
+        "warn" => tracing::warn!(target: "interface", "{message}"),
+        _ => tracing::info!(target: "interface", "{message}"),
+    }
 }
 
 #[tauri::command]

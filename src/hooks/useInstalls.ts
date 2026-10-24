@@ -2,6 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
   AppError,
+  GAME_STARTED_EVENT,
+  GAME_STOPPED_EVENT,
+  GameStopped,
   backend,
   INSTALL_FINISHED_EVENT,
   INSTALL_PROGRESS_EVENT,
@@ -20,6 +23,11 @@ export interface InstallsState {
   start: (romId: number) => Promise<void>;
   setInstalled: (game: InstalledGame) => void;
   remove: (romId: number) => void;
+  /** Jeux en cours (id → heure de lancement, ms). */
+  running: Map<number, number>;
+  /** Dernière session terminée par jeu. */
+  lastSession: Map<number, GameStopped>;
+  play: (romId: number) => Promise<string | null>;
 }
 
 /** État des installations, tenu à jour par les événements du Rust. */
@@ -28,9 +36,12 @@ export function useInstalls(onAuthError: (e: unknown) => Promise<string>): Insta
   const [installed, setInstalledMap] = useState(new Map<number, InstalledGame>());
   const [progress, setProgress] = useState(new Map<number, InstallProgress>());
   const [errors, setErrors] = useState(new Map<number, AppError>());
+  const [running, setRunning] = useState(new Map<number, number>());
+  const [lastSession, setLastSession] = useState(new Map<number, GameStopped>());
 
   const reload = useCallback(async () => {
-    const info = await backend.installInfo();
+    const [info, runningIds] = await Promise.all([backend.installInfo(), backend.runningGames()]);
+    setRunning((r) => new Map(runningIds.map((id) => [id, r.get(id) ?? Date.now()])));
     setInstallRoot(info.installRoot);
     setInstalledMap(new Map(info.games.map((g) => [g.romId, g])));
     setProgress((p) => {
@@ -43,6 +54,15 @@ export function useInstalls(onAuthError: (e: unknown) => Promise<string>): Insta
   useEffect(() => {
     reload();
     const subs = [
+      listen<number>(GAME_STARTED_EVENT, ({ payload }) => setRunning((r) => new Map(r).set(payload, Date.now()))),
+      listen<GameStopped>(GAME_STOPPED_EVENT, ({ payload }) => {
+        setRunning((r) => {
+          const next = new Map(r);
+          next.delete(payload.romId);
+          return next;
+        });
+        setLastSession((m) => new Map(m).set(payload.romId, payload));
+      }),
       listen<InstallProgress>(INSTALL_PROGRESS_EVENT, ({ payload }) =>
         setProgress((p) => new Map(p).set(payload.romId, payload)),
       ),
@@ -99,5 +119,18 @@ export function useInstalls(onAuthError: (e: unknown) => Promise<string>): Insta
     [],
   );
 
-  return { installRoot, installed, progress, errors, reload, start, setInstalled, remove };
+  /** Lance le jeu ; renvoie un message d'erreur ou null. */
+  const play = useCallback(
+    async (romId: number): Promise<string | null> => {
+      try {
+        await backend.playGame(romId);
+        return null;
+      } catch (e) {
+        return onAuthError(e);
+      }
+    },
+    [onAuthError],
+  );
+
+  return { installRoot, installed, progress, errors, reload, start, setInstalled, remove, running, lastSession, play };
 }

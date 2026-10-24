@@ -20,7 +20,7 @@
 .gd-rule { margin: 0 var(--gutter); }
 .gd-body {
   display: grid;
-  grid-template-columns: clamp(240px, 22vw, 380px) minmax(0, 1fr);
+  grid-template-columns: clamp(280px, 26vw, 420px) minmax(0, 1fr);
   gap: clamp(20px, 2vw, 40px);
   min-height: 0;
   padding: 20px var(--gutter) 28px;
@@ -205,3 +205,13 @@
 }
 .gd-side { overflow-x: hidden; }
 .gd-actions-body .n-hint { overflow-wrap: anywhere; }
+.gd-running {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  font-size: var(--fs-md);
+  background: var(--nier-low);
+  color: var(--nier-high);
+}
+.gd-running .n-spinner { background: var(--nier-high); }

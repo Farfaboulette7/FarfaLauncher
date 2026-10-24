@@ -15,7 +15,7 @@ import {
 } from "../api/backend";
 import { useCachedImage } from "../hooks/useCachedImage";
 import { InstallsState, useInstalls } from "../hooks/useInstalls";
-import { hasUpdate } from "./InstallPanel";
+import { hasUpdate } from "../api/backend";
 import { GameDetail } from "./GameDetail";
 import "./Library.css";
 
@@ -78,6 +78,10 @@ export function Library({ session, onLogout }: Props) {
 
   useEffect(() => {
     backend.systemTarget().then(setTarget);
+    // Temps de jeu resté en attente (serveur injoignable lors d'une session).
+    if (!session.offline) {
+      backend.flushPlaySessions().catch((e) => console.warn("sessions en attente non envoyées", e));
+    }
     // Cache d'abord ; le serveur n'est interrogé que si le cache est vide
     // (sinon : bouton « Rafraîchir »).
     backend

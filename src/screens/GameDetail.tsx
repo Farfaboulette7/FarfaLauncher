@@ -72,7 +72,7 @@ export function GameDetail({ game, target, installs, onBack, onError }: Props) {
             ))}
           </nav>
           <div className="gd-content n-appear" key={tab}>
-            {tab === "infos" && <InfoTab game={game} onError={onError} />}
+            {tab === "infos" && <InfoTab game={game} onError={onError} refreshKey={installs.lastSession.get(game.id)} />}
             {tab === "medias" && <MediaTab game={game} />}
             {tab === "livret" && <ManualTab game={game} onError={onError} />}
             {tab === "mods" && <ModsTab game={game} />}
@@ -83,7 +83,7 @@ export function GameDetail({ game, target, installs, onBack, onError }: Props) {
   );
 }
 
-function InfoTab({ game, onError }: { game: Game; onError: (e: unknown) => Promise<string> }) {
+function InfoTab({ game, onError, refreshKey }: { game: Game; onError: (e: unknown) => Promise<string>; refreshKey?: unknown }) {
   const [playtime, setPlaytime] = useState<number | null | undefined>(undefined);
 
   useEffect(() => {
@@ -98,7 +98,7 @@ function InfoTab({ game, onError }: { game: Game; onError: (e: unknown) => Promi
     return () => {
       alive = false;
     };
-  }, [game.id, onError]);
+  }, [game.id, onError, refreshKey]);
 
   return (
     <div className="gd-info">
