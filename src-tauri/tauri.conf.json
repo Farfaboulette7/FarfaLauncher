@@ -32,15 +32,32 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis", "appimage", "deb", "app", "dmg"],
+    "createUpdaterArtifacts": true,
     "publisher": "Farfaboulette7",
     "shortDescription": "Launcher de portages PC hébergés sur RomM",
+    "category": "Game",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["French"]
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "CLE_PUBLIQUE_A_RENSEIGNER",
+      "endpoints": ["https://github.com/Farfaboulette7/FarfaLauncher/releases/latest/download/latest.json"],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

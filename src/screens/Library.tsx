@@ -24,9 +24,10 @@ interface Props {
   session: SessionInfo;
   /** Déconnexion volontaire (notice = null) ou forcée (token révoqué…). */
   onLogout: (notice: string | null) => void;
+  onCheckUpdates: () => Promise<string>;
 }
 
-export function Library({ session, onLogout }: Props) {
+export function Library({ session, onLogout, onCheckUpdates }: Props) {
   const [snapshot, setSnapshot] = useState<LibrarySnapshot | null>(null);
   const [target, setTarget] = useState<Target | null>(null);
   const [loading, setLoading] = useState(true);
@@ -117,6 +118,7 @@ export function Library({ session, onLogout }: Props) {
         installs={installs}
         onBack={() => setShowSettings(false)}
         onLogout={onLogout}
+        onCheckUpdates={onCheckUpdates}
         onCacheCleared={() => {
           setSnapshot(null);
           if (!session.offline) refresh();

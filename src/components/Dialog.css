@@ -53,3 +53,13 @@
   cursor: pointer;
 }
 .n-check input { accent-color: var(--nier-low); width: 16px; height: 16px; }
+.update-notes {
+  margin: 0;
+  max-height: 240px;
+  overflow: auto;
+  padding: 10px 12px;
+  font: inherit;
+  font-size: var(--fs-sm);
+  white-space: pre-wrap;
+  background: var(--nier-high-mid);
+}

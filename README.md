@@ -4,11 +4,63 @@ Launcher desktop pour installer, mettre à jour et lancer en un clic les jeux re
 portages PC natifs hébergés sur un serveur [RomM](https://romm.app) (plateforme
 `farfa-portage`), avec l'identité visuelle YoRHa de *NieR:Automata*.
 
-> 🚧 En développement. État actuel : connexion au serveur RomM.
-
 ## Pour mes amis : installation
 
-*(Section complétée à la première release.)*
+Téléchargez le fichier de votre système dans la
+[dernière release](https://github.com/Farfaboulette7/FarfaLauncher/releases/latest) :
+
+| Système | Fichier |
+|---|---|
+| Windows | `FarfaLauncher_x.y.z_x64-setup.exe` |
+| Linux / Steam Deck | `FarfaLauncher_x.y.z_amd64.AppImage` |
+| macOS (Apple Silicon : M1, M2…) | `FarfaLauncher_x.y.z_aarch64.dmg` |
+| macOS (Intel) | `FarfaLauncher_x.y.z_x64.dmg` |
+
+Ensuite, FarfaLauncher **se met à jour tout seul** : il vérifie au démarrage et propose
+la nouvelle version (aussi : *Paramètres → Vérifier les mises à jour*).
+
+### Windows : avertissement SmartScreen / antivirus
+
+Le launcher n'est pas signé par un certificat payant : Windows affiche
+« Windows a protégé votre ordinateur ». C'est normal pour un petit projet entre amis.
+
+1. Cliquez **Informations complémentaires**, puis **Exécuter quand même**.
+2. L'installation se fait dans votre dossier utilisateur, sans droits administrateur.
+
+Si votre antivirus bloque le fichier, autorisez-le (ou ajoutez une exception) : le code
+source est public et les fichiers sont compilés par GitHub à partir de ce dépôt.
+
+### Linux / Steam Deck
+
+```bash
+chmod +x FarfaLauncher_*.AppImage
+./FarfaLauncher_*.AppImage
+```
+
+Sur Steam Deck, faites-le en mode Bureau. Vous pouvez ensuite ajouter l'AppImage à Steam
+(*Ajouter un jeu non-Steam*) pour le lancer depuis le mode Jeu.
+
+### macOS
+
+L'application n'est pas notarisée par Apple. Après l'avoir glissée dans *Applications*,
+si macOS dit qu'elle est « endommagée » ou « ne peut pas être ouverte », ouvrez le
+Terminal et tapez :
+
+```bash
+xattr -cr /Applications/FarfaLauncher.app
+```
+
+### Bon à savoir
+
+- Les jeux s'installent par défaut dans `~/FarfaLauncher/Jeux` (modifiable dans
+  *Paramètres*). Vos sauvegardes (`save`/`saves`) ne sont jamais écrasées lors d'une mise
+  à jour : elles sont même copiées dans `.farfalauncher/backups/` avant.
+- **N'utilisez pas la mise à jour intégrée d'un jeu** (certains, comme gen1recomp, en
+  proposent une) : c'est FarfaLauncher qui gère les versions, avec le badge
+  « Mise à jour disponible ».
+- Les mods se téléchargent dans `mods_downloads/` du jeu : à vous de les placer selon les
+  instructions du mod (boutons « Ouvrir le dossier » dans l'onglet *Mods*).
+- En cas de souci : *Paramètres → Ouvrir les logs*, et envoyez le fichier du jour.
 
 ## Se connecter
 
@@ -81,10 +133,16 @@ FarfaLauncher/
 ├── src-tauri/                Cœur Rust
 │   └── src/
 │       ├── commands/         Commandes exposées à l'interface
-│       ├── romm/             Client API RomM (auth, jeux, fichiers)
+│       ├── romm/             Client API RomM (auth, jeux, fichiers, temps de jeu)
+│       ├── install/          Téléchargement, extraction sans casse, exécutable, état
+│       ├── launch/           Lancement et suivi des processus du jeu
+│       ├── platform.rs       Détection du système et des archives RECOMP
+│       ├── cache.rs          Cache local (métadonnées, images, livrets)
 │       ├── secrets.rs        Trousseau OS
 │       ├── settings.rs       Paramètres (JSON, sans secret)
 │       └── logging.rs        Logs fichier
+├── scripts/bump-version.mjs  Changement de version
+├── .github/workflows/        CI et publication des releases
 └── third_party/              Licences des ressources tierces
 ```
 
@@ -97,6 +155,42 @@ Prérequis : Node.js 20+, Rust stable, et les
 npm install
 npm run tauri dev
 ```
+
+## Publier une nouvelle version (admin)
+
+```bash
+node scripts/bump-version.mjs 0.2.0
+git commit -am "chore: version 0.2.0"
+git tag v0.2.0
+git push && git push origin v0.2.0
+```
+
+Le workflow [`release.yml`](.github/workflows/release.yml) vérifie que le tag correspond
+aux versions des fichiers, compile Windows / Linux / macOS (Apple Silicon et Intel),
+signe les paquets de mise à jour et publie la release avec `latest.json`, que les
+launchers installés consultent au démarrage.
+
+### Clé de signature des mises à jour
+
+Les mises à jour sont signées : un launcher n'installe une nouvelle version que si elle
+est signée par **votre** clé privée (la clé publique est dans `src-tauri/tauri.conf.json`).
+
+1. **Générer la clé** (une seule fois, sur votre PC) :
+   ```bash
+   npx tauri signer generate -w ~/.tauri/farfalauncher.key
+   ```
+   Choisissez un mot de passe. Deux fichiers sont créés hors du dépôt :
+   `farfalauncher.key` (privée, **secrète**) et `farfalauncher.key.pub` (publique).
+2. **Clé publique** : son contenu va dans `plugins.updater.pubkey` de
+   `src-tauri/tauri.conf.json` (elle peut être publique sans risque).
+3. **Secrets GitHub** : *Settings → Secrets and variables → Actions → New repository
+   secret* :
+   - `TAURI_SIGNING_PRIVATE_KEY` : tout le contenu de `farfalauncher.key` ;
+   - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` : le mot de passe.
+4. **Ne jamais commiter la clé privée** : elle est hors du dépôt, et le `.gitignore`
+   exclut `*.key` par sécurité. Sauvegardez-la (gestionnaire de mots de passe, clé USB) :
+   **si vous la perdez, les launchers déjà installés ne pourront plus se mettre à jour**
+   (il faudrait que chacun réinstalle manuellement une version avec une nouvelle clé).
 
 ## Crédits et licences
 

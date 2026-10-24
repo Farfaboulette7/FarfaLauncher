@@ -12,14 +12,16 @@ interface Props {
   installs: InstallsState;
   onBack: () => void;
   onLogout: (notice: string | null) => void;
+  onCheckUpdates: () => Promise<string>;
   /** Vide l'affichage puis recharge la bibliothèque depuis le serveur. */
   onCacheCleared: () => void;
 }
 
-export function Settings({ session, installs, onBack, onLogout, onCacheCleared }: Props) {
+export function Settings({ session, installs, onBack, onLogout, onCacheCleared, onCheckUpdates }: Props) {
   const [version, setVersion] = useState("");
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const [confirmLogout, setConfirmLogout] = useState(false);
+  const [checking, setChecking] = useState(false);
 
   useEffect(() => {
     getVersion().then(setVersion).catch(() => undefined);
@@ -151,6 +153,19 @@ export function Settings({ session, installs, onBack, onLogout, onCacheCleared }
               <dt>Version</dt>
               <dd>FarfaLauncher {version}</dd>
             </dl>
+            <div className="settings-actions">
+              <button
+                className="n-btn"
+                disabled={checking}
+                onClick={async () => {
+                  setChecking(true);
+                  setMessage({ kind: "ok", text: await onCheckUpdates() });
+                  setChecking(false);
+                }}
+              >
+                {checking ? "Vérification…" : "Vérifier les mises à jour"}
+              </button>
+            </div>
           </div>
         </section>
       </main>
