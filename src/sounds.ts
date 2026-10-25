@@ -50,10 +50,16 @@ export function setSoundSettings(next: Partial<SoundSettings>) {
   } catch {
     // préférence non mémorisée : sans gravité
   }
+  // Bruitages réactivés : on les charge s'ils ne l'étaient pas.
+  if (settings.enabled) void loadSounds();
 }
 
-/** Charge les sons (une fois connecté). Sans effet s'ils sont déjà là. */
+/**
+ * Charge les sons (une fois connecté). Sans effet s'ils sont déjà là, ou s'ils
+ * sont coupés : aucun lecteur audio n'est alors créé.
+ */
 export function loadSounds(): Promise<void> {
+  if (!settings.enabled) return Promise.resolve();
   loading ??= backend
     .soundPaths()
     .then((paths) => {

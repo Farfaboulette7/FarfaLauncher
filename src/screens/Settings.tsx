@@ -9,6 +9,7 @@ import { play as playSound, reloadSounds, setSoundSettings, soundSettings } from
 import { musicSettings, reloadMusic, setMusicSettings } from "../music";
 import { PcPanel } from "./PcPanel";
 import { useReveal } from "../reveal";
+import { audioAutoDisabled, clearAudioNotice } from "../audioGuard";
 import "./Settings.css";
 
 interface Props {
@@ -34,11 +35,13 @@ export function Settings({ session, installs, onBack, onLogout, onCacheCleared, 
   useReveal(root, [], { screen: true });
 
   function updateSound(next: Partial<ReturnType<typeof soundSettings>>) {
+    if (next.enabled) clearAudioNotice();
     setSoundSettings(next);
     setSound(soundSettings());
   }
 
   function updateMusic(next: Partial<ReturnType<typeof musicSettings>>) {
+    if (next.enabled) clearAudioNotice();
     setMusicSettings(next);
     setMusic(musicSettings());
   }
@@ -154,6 +157,12 @@ export function Settings({ session, installs, onBack, onLogout, onCacheCleared, 
           <section className="n-panel">
             <div className="n-panel-header">Sons</div>
             <div className="n-panel-body settings-section">
+              {audioAutoDisabled() && (
+                <p className="n-notice">
+                  Le son a été coupé automatiquement : au lancement précédent, l'application s'est figée en le préparant.
+                  Vous pouvez le réactiver ci-dessous ; si elle se fige de nouveau, il sera recoupé au lancement suivant.
+                </p>
+              )}
               <label className="settings-check">
                 <input
                   type="checkbox"

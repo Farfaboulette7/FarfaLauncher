@@ -26,6 +26,7 @@ import { InstallsState, useInstalls } from "../hooks/useInstalls";
 import { GameDetail } from "./GameDetail";
 import { Settings } from "./Settings";
 import { useReveal } from "../reveal";
+import { beginAudio } from "../audioGuard";
 import "./Library.css";
 import "./Hack.css";
 
@@ -142,6 +143,8 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
 
   // Musique : réservée aux utilisateurs connectés, arrêtée à la déconnexion.
   useEffect(() => {
+    // Filet de sécurité : son coupé si le lancement précédent s'est figé dessus.
+    beginAudio();
     loadMusic();
     return stopMusic;
   }, []);
