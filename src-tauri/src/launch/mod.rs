@@ -9,12 +9,17 @@
 //!   enfants ; on surveille ce groupe dans /proc ;
 //! - macOS : le bundle `.app` est ouvert via `open -W`, qui ne rend la main
 //!   qu'à la fermeture de l'application.
+//!
+//! Les programmes démarrés pendant la partie sont relevés : voir [`direct`].
+
+pub mod direct;
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use crate::error::{log_err, AppError, AppResult};
+use crate::install::state::DirectLaunch;
 
 /// Intervalle de surveillance des processus.
 const POLL: Duration = Duration::from_secs(2);
@@ -28,20 +33,41 @@ pub struct RunningGame {
     child: Child,
     started: Instant,
     run_log: Option<PathBuf>,
+    /// Relevé des programmes lancés (`None` : lancement direct, rien à apprendre).
+    watcher: Option<direct::Watcher>,
     #[cfg(windows)]
     job: windows_job::Job,
 }
 
-/// Lance `exe` (relatif à `game_dir`) dans son propre dossier.
-pub fn spawn(game_dir: &Path, exe_rel: &Path) -> AppResult<RunningGame> {
-    let exe = game_dir.join(exe_rel);
+/// Programme à lancer, relatif au dossier du jeu.
+pub struct Launch<'a> {
+    pub exe: PathBuf,
+    pub args: &'a [String],
+    /// Variables d'environnement en plus (`{GAME_DIR}` remplacé).
+    pub env: &'a [(String, String)],
+    /// Dossier de travail (`None` : celui du programme).
+    pub cwd: Option<PathBuf>,
+    /// Relever le jeu que ce programme démarre (c'est peut-être un launcher).
+    pub learn: bool,
+}
+
+/// Lance le programme dans le dossier du jeu.
+pub fn spawn(game_dir: &Path, launch: Launch<'_>) -> AppResult<RunningGame> {
+    let exe = game_dir.join(&launch.exe);
     if !exe.exists() {
         return Err(AppError::NoExecutable);
     }
-    let work_dir = exe.parent().unwrap_or(game_dir).to_path_buf();
+    let work_dir = match &launch.cwd {
+        Some(rel) if game_dir.join(rel).is_dir() => game_dir.join(rel),
+        _ => exe.parent().unwrap_or(game_dir).to_path_buf(),
+    };
     let mut cmd = build_command(&exe);
+    cmd.args(direct::expand_args(launch.args, game_dir));
     cmd.current_dir(&work_dir);
     crate::external::use_system_env(&mut cmd);
+    for (k, v) in launch.env {
+        cmd.env(k, direct::expand_args(std::slice::from_ref(v), game_dir).remove(0));
+    }
     // Sortie du jeu gardée dans un fichier : utile s'il se ferme aussitôt.
     let run_log = game_dir.join(crate::install::extract::INTERNAL_DIR).join(RUN_LOG);
     let run_log = std::fs::File::create(&run_log).ok().and_then(|f| {
@@ -56,7 +82,8 @@ pub fn spawn(game_dir: &Path, exe_rel: &Path) -> AppResult<RunningGame> {
         cmd.process_group(0);
     }
     let child = cmd.spawn().map_err(|e| log_err(AppError::LaunchFailed, &format!("lancement de {}", exe.display()), e))?;
-    tracing::info!("jeu lancé: {} (pid {})", exe.display(), child.id());
+    tracing::info!("jeu lancé: {} {:?} (pid {})", exe.display(), launch.args, child.id());
+    let watcher = launch.learn.then(|| direct::Watcher::new(game_dir, &exe));
 
     #[cfg(windows)]
     {
@@ -65,10 +92,10 @@ pub fn spawn(game_dir: &Path, exe_rel: &Path) -> AppResult<RunningGame> {
             // Sans job, on suit au moins le processus principal.
             tracing::warn!("processus non rattaché au job: {e}");
         }
-        Ok(RunningGame { child, started: Instant::now(), run_log, job })
+        Ok(RunningGame { child, started: Instant::now(), run_log, watcher, job })
     }
     #[cfg(not(windows))]
-    Ok(RunningGame { child, started: Instant::now(), run_log })
+    Ok(RunningGame { child, started: Instant::now(), run_log, watcher })
 }
 
 fn build_command(exe: &Path) -> Command {
@@ -89,9 +116,15 @@ fn build_command(exe: &Path) -> Command {
 
 impl RunningGame {
     /// Attend la fin du jeu et de tous ses processus (bloquant : à appeler
-    /// dans `spawn_blocking`).
-    pub fn wait(mut self) {
+    /// dans `spawn_blocking`). Renvoie le jeu démarré par un launcher, s'il y en a eu un.
+    pub fn wait(mut self) -> Option<DirectLaunch> {
         loop {
+            if self.watcher.is_some() {
+                let pids = self.process_ids();
+                if let Some(w) = self.watcher.as_mut() {
+                    w.observe(&pids);
+                }
+            }
             // Récolte le processus principal s'il est terminé (évite un zombie).
             let main_alive = matches!(self.child.try_wait(), Ok(None));
             if !main_alive && !self.descendants_alive() {
@@ -104,6 +137,27 @@ impl RunningGame {
         if self.started.elapsed() < QUICK_EXIT {
             self.log_output_tail();
         }
+        let learned = self.watcher.as_ref().and_then(direct::Watcher::learned);
+        if let Some(d) = &learned {
+            tracing::info!("jeu démarré par le launcher: {} {:?}", d.exe, d.args);
+        }
+        learned
+    }
+
+    /// Processus de la partie (le programme lancé et ses descendants).
+    #[cfg(windows)]
+    fn process_ids(&self) -> Vec<u32> {
+        self.job.process_ids()
+    }
+
+    #[cfg(target_os = "linux")]
+    fn process_ids(&self) -> Vec<u32> {
+        group_members(self.child.id())
+    }
+
+    #[cfg(all(unix, not(target_os = "linux")))]
+    fn process_ids(&self) -> Vec<u32> {
+        Vec::new()
     }
 
     /// Fin de la sortie du jeu, pour comprendre une fermeture immédiate.
@@ -145,6 +199,19 @@ fn group_alive(pgid: u32) -> bool {
         .any(|stat| parse_stat(&stat).map(|(state, pgrp)| state != 'Z' && pgrp == pgid).unwrap_or(false))
 }
 
+/// Processus non zombies du groupe `pgid`.
+#[cfg(target_os = "linux")]
+fn group_members(pgid: u32) -> Vec<u32> {
+    let Ok(rd) = std::fs::read_dir("/proc") else { return Vec::new() };
+    rd.filter_map(Result::ok)
+        .filter_map(|e| {
+            let pid: u32 = e.file_name().to_str()?.parse().ok()?;
+            let stat = std::fs::read_to_string(e.path().join("stat")).ok()?;
+            parse_stat(&stat).filter(|&(state, pgrp)| state != 'Z' && pgrp == pgid).map(|_| pid)
+        })
+        .collect()
+}
+
 /// `pid (comm) state ppid pgrp …` → (state, pgrp). `comm` peut contenir des espaces.
 #[cfg(any(target_os = "linux", test))]
 fn parse_stat(stat: &str) -> Option<(char, u32)> {
@@ -163,9 +230,20 @@ mod windows_job {
 
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
     use windows_sys::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JobObjectBasicAccountingInformation, QueryInformationJobObject,
-        JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectBasicAccountingInformation, JobObjectBasicProcessIdList,
+        QueryInformationJobObject, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
     };
+
+    /// Nombre maximal de processus relevés à la fois.
+    const MAX_IDS: usize = 512;
+
+    /// `JOBOBJECT_BASIC_PROCESS_ID_LIST` avec de la place pour [`MAX_IDS`] processus.
+    #[repr(C)]
+    struct IdList {
+        assigned: u32,
+        listed: u32,
+        ids: [usize; MAX_IDS],
+    }
 
     use crate::error::{AppError, AppResult};
 
@@ -212,6 +290,24 @@ mod windows_job {
                 info.ActiveProcesses
             }
         }
+
+        pub fn process_ids(&self) -> Vec<u32> {
+            let mut list = Box::new(IdList { assigned: 0, listed: 0, ids: [0; MAX_IDS] });
+            let ok = unsafe {
+                QueryInformationJobObject(
+                    self.0,
+                    JobObjectBasicProcessIdList,
+                    &mut *list as *mut IdList as *mut _,
+                    std::mem::size_of::<IdList>() as u32,
+                    std::ptr::null_mut(),
+                )
+            };
+            // Liste trop longue : remplie en partie, ce qui suffit.
+            if ok == 0 && list.listed == 0 {
+                return Vec::new();
+            }
+            list.ids[..(list.listed as usize).min(MAX_IDS)].iter().map(|&id| id as u32).collect()
+        }
     }
 
     impl Drop for Job {
@@ -244,7 +340,33 @@ mod tests {
         let child = cmd.spawn().unwrap();
         let job = windows_job::Job::create().unwrap();
         job.assign(&child).unwrap();
-        RunningGame { child, started: Instant::now(), run_log: None, job }.wait();
+        let watcher = Some(direct::Watcher::new(&dir, Path::new("cmd.exe")));
+        let learned = RunningGame { child, started: Instant::now(), run_log: None, watcher, job }.wait();
+        // ping hors du dossier et trop bref : ce n'est pas un jeu.
+        assert_eq!(learned, None);
         assert!(started.elapsed() >= Duration::from_secs(3), "{:?}", started.elapsed());
+    }
+
+    /// Un « launcher » (cmd) qui démarre le « jeu » (une copie de ping dans le
+    /// dossier du jeu) : le jeu est relevé. Lent (~25 s) : `cargo test -- --ignored`.
+    #[cfg(windows)]
+    #[test]
+    #[ignore]
+    fn learns_the_game_started_by_a_launcher() {
+        let game_dir = std::env::temp_dir().join(format!("farfa-direct-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(game_dir.join("bin")).unwrap();
+        std::fs::copy(r"C:\Windows\System32\PING.EXE", game_dir.join("bin/Jeu.exe")).unwrap();
+        std::fs::write(game_dir.join("launcher.cmd"), "@set \"FARFA_TEST=%~dp0x\"\r\n@\"%~dp0bin\\Jeu.exe\" -n 25 127.0.0.1 > NUL\r\n").unwrap();
+        let launch = Launch { exe: "launcher.cmd".into(), args: &[], env: &[], cwd: None, learn: true };
+        let learned = spawn(&game_dir, launch).unwrap().wait().expect("jeu relevé");
+        assert_eq!(learned.exe, "bin/Jeu.exe");
+        assert_eq!(learned.args, ["-n", "25", "127.0.0.1"]);
+        // Le launcher est resté à la racine du jeu : le jeu y sera lancé aussi.
+        assert_eq!(learned.cwd.as_deref(), Some(""));
+        // Variable ajoutée par le launcher, avec le dossier du jeu remplacé.
+        let var = learned.env.iter().find(|(k, _)| k == "FARFA_TEST").expect("variable relevée");
+        assert_eq!(var.1, format!("{}\\x", direct::GAME_DIR_VAR));
+        assert!(learned.env.iter().all(|(k, _)| k != "PATH"), "{:?}", learned.env);
+        let _ = std::fs::remove_dir_all(&game_dir);
     }
 }

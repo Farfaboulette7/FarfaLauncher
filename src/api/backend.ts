@@ -149,9 +149,20 @@ export interface InstalledGame {
   roms: string[];
   modsDownloaded: string[];
   saves: SaveSync;
+  /** Vrai jeu démarré par le launcher de l'exécutable : « Jouer » le lance directement. */
+  directLaunch: DirectLaunch | null;
+  /** Passer quand même par le launcher. */
+  preferLauncher: boolean;
   installedAt: number;
   updatedAt: number;
   gameDir: string;
+}
+
+export interface DirectLaunch {
+  exe: string;
+  args: string[];
+  cwd: string | null;
+  env: [string, string][];
 }
 
 export interface InstallInfo {
@@ -214,6 +225,8 @@ export interface GameStopped {
   /** Envoi de la sauvegarde après la partie. */
   save: "off" | "unchanged" | "uploaded" | "failed";
   saveError: AppError | null;
+  /** État du jeu, quand le jeu démarré par son launcher vient d'être relevé. */
+  game: InstalledGame | null;
 }
 
 export interface SaveSync {
@@ -309,6 +322,7 @@ export const backend = {
   setInstallDir: (path: string | null) => invoke<string>("set_install_dir", { path }),
   /** `dest` : dossier qui contiendra celui du jeu. */
   moveGame: (romId: number, dest: string) => invoke<InstalledGame>("move_game", { romId, dest }),
+  setPreferLauncher: (romId: number, prefer: boolean) => invoke<InstalledGame>("set_prefer_launcher", { romId, prefer }),
   systemInfo: () => invoke<SystemInfo>("system_info"),
   serverPing: () => invoke<number>("server_ping"),
   playGame: (romId: number, saveChoice: SaveChoice) => invoke<void>("play_game", { romId, saveChoice }),

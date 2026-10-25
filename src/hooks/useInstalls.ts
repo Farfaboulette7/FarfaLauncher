@@ -67,6 +67,8 @@ export function useInstalls(onAuthError: (e: unknown) => Promise<string>): Insta
           return next;
         });
         setLastSession((m) => new Map(m).set(payload.romId, payload));
+        const game = payload.game;
+        if (game) setInstalledMap((m) => new Map(m).set(game.romId, game));
       }),
       listen<InstallProgress>(INSTALL_PROGRESS_EVENT, ({ payload }) =>
         setProgress((p) => new Map(p).set(payload.romId, payload)),

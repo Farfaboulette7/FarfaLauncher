@@ -172,6 +172,8 @@ impl InstallJob {
             roms: previous.as_ref().map(|p| p.roms.clone()).unwrap_or_default(),
             mods_downloaded: previous.as_ref().map(|p| p.mods_downloaded.clone()).unwrap_or_default(),
             saves: previous.as_ref().map(|p| p.saves.clone()).unwrap_or_default(),
+            direct_launch: None,
+            prefer_launcher: previous.as_ref().is_some_and(|p| p.prefer_launcher),
             installed_at: previous.as_ref().map(|p| p.installed_at).unwrap_or(now),
             updated_at: now,
             game_dir: game_dir.clone(),
@@ -263,6 +265,8 @@ pub async fn change_executable(config_dir: &Path, mut st: InstalledGame, executa
     st.roms = roms;
     st.executable = Some(path_to_rel(&exe_rel));
     st.pending_candidates.clear();
+    // Autre exécutable : le jeu qu'il lance sera relevé à nouveau.
+    st.direct_launch = None;
     state::write_state(config_dir, &st)?;
     Ok(st)
 }
@@ -537,6 +541,8 @@ mod tests {
             roms: vec![],
             mods_downloaded: vec![],
             saves: state::SaveSync { dir: Some(old.join("saves")), ..Default::default() },
+            direct_launch: None,
+            prefer_launcher: false,
             installed_at: 0,
             updated_at: 0,
             game_dir: old.clone(),

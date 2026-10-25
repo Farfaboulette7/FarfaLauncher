@@ -40,12 +40,37 @@ pub struct InstalledGame {
     /// Synchronisation des sauvegardes avec le serveur.
     #[serde(default)]
     pub saves: SaveSync,
+    /// Vrai jeu démarré par le launcher de l'exécutable (relevé pendant une
+    /// partie) : « Jouer » le lance directement. Oublié à chaque mise à jour.
+    #[serde(default)]
+    pub direct_launch: Option<DirectLaunch>,
+    /// Passer quand même par le launcher (réglages, mise à jour du port…).
+    #[serde(default)]
+    pub prefer_launcher: bool,
     /// Horodatages Unix (secondes).
     pub installed_at: u64,
     pub updated_at: u64,
     /// Dossier du jeu (non stocké dans le fichier, déduit de son emplacement).
     #[serde(skip_deserializing, default)]
     pub game_dir: PathBuf,
+}
+
+/// Lancement direct du jeu, tel que son launcher le fait.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectLaunch {
+    /// Programme du jeu, relatif au dossier du jeu (séparateurs `/`).
+    pub exe: String,
+    /// Arguments passés par le launcher (`{GAME_DIR}` à la place du dossier du jeu).
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Dossier de travail, relatif au dossier du jeu (`None` : celui du programme).
+    #[serde(default)]
+    pub cwd: Option<String>,
+    /// Variables d'environnement ajoutées ou changées par le launcher (réglages,
+    /// chemins de bibliothèques…), `{GAME_DIR}` à la place du dossier du jeu.
+    #[serde(default)]
+    pub env: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -222,6 +247,8 @@ mod tests {
             roms: vec![],
             mods_downloaded: vec![],
             saves: SaveSync::default(),
+            direct_launch: None,
+            prefer_launcher: false,
             installed_at: 1,
             updated_at: 1,
             game_dir: game_dir.clone(),

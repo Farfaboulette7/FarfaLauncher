@@ -119,6 +119,13 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
     if (updated) installs.setInstalled(updated);
   }
 
+  /** Le jeu démarré par son launcher a été relevé : le lancer directement ou non. */
+  async function togglePreferLauncher() {
+    if (!inst) return;
+    const updated = await run(() => backend.setPreferLauncher(game.id, !inst.preferLauncher));
+    if (updated) installs.setInstalled(updated);
+  }
+
   async function chooseInstallDir() {
     const dir = await open({
       directory: true,
@@ -220,6 +227,11 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
                 Changer l'exécutable
               </button>
             )}
+            {inst.directLaunch && (
+              <button className="n-link" onClick={togglePreferLauncher}>
+                {inst.preferLauncher ? "Lancer le jeu sans son launcher" : "Passer par le launcher du jeu"}
+              </button>
+            )}
             {inst.executable && inst.saves.dir && !inst.saves.off && (
               <button className="n-link" onClick={() => run(() => backend.openSaveFolder(game.id))}>
                 Ouvrir les sauvegardes
@@ -312,6 +324,14 @@ export function InstallFacts({ game, installs }: { game: Game; installs: Install
         <>
           <dt>Exécutable</dt>
           <dd>{inst.executable}</dd>
+          {inst.directLaunch && (
+            <>
+              <dt>Lancement</dt>
+              <dd title={inst.directLaunch.exe}>
+                {inst.preferLauncher ? "par le launcher" : `direct (${inst.directLaunch.exe.split("/").pop()})`}
+              </dd>
+            </>
+          )}
           <dt>Sauvegardes</dt>
           <dd className="gd-savedir" title={inst.saves.dir ?? undefined}>
             {inst.saves.off ? "non synchronisées" : inst.saves.dir ? shortPath(inst.saves.dir) : "dossier inconnu (demandé au lancement)"}

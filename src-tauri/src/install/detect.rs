@@ -112,14 +112,19 @@ fn words(stem: &str) -> Vec<String> {
     stem.to_lowercase().split(|c: char| !c.is_ascii_alphanumeric()).filter(|w| !w.is_empty()).map(str::to_string).collect()
 }
 
+/// Nom (sans extension) d'un programme annexe : désinstalleur, updater, crash handler…
+pub fn is_annex_name(stem: &str) -> bool {
+    let stem = stem.to_lowercase();
+    // Désinstalleurs Inno Setup : unins000.exe, unins001.exe…
+    WINDOWS_EXCLUDED_WORDS.contains(&stem.as_str())
+        || stem.starts_with("unins")
+        || words(&stem).iter().any(|w| WINDOWS_EXCLUDED_WORDS.contains(&w.as_str()))
+}
+
 fn is_windows_game_exe(rel: &Path) -> bool {
     let name = rel.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
     let Some(stem) = name.strip_suffix(".exe") else { return false };
-    // Désinstalleurs Inno Setup : unins000.exe, unins001.exe…
-    if WINDOWS_EXCLUDED_WORDS.contains(&stem) || stem.starts_with("unins") {
-        return false;
-    }
-    !words(stem).iter().any(|w| WINDOWS_EXCLUDED_WORDS.contains(&w.as_str()))
+    !is_annex_name(stem)
 }
 
 fn linux_candidates(game_dir: &Path, files: Vec<PathBuf>) -> Vec<PathBuf> {

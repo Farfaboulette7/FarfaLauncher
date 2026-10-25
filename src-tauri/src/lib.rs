@@ -82,6 +82,7 @@ pub fn run() {
             commands::install::move_game,
             commands::launch::running_games,
             commands::launch::play_game,
+            commands::launch::set_prefer_launcher,
             commands::launch::flush_play_sessions,
             commands::mods::downloaded_mods,
             commands::mods::download_mod,
