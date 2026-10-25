@@ -3,31 +3,50 @@
   position: fixed;
   inset: 0;
   z-index: -1;
-  width: 100%;
-  height: 100%;
+  overflow: hidden;
   pointer-events: none;
+}
+/* Repère 16:10 qui couvre toute la fenêtre, centré. */
+.backdrop-stage {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: max(100vw, 160vh);
+  height: max(100vh, 62.5vw);
+  transform: translate(-50%, -50%);
+}
+
+.backdrop-ring {
+  position: absolute;
+  overflow: visible;
   fill: none;
   stroke: rgba(87, 84, 74, 0.28);
   stroke-width: 1.2;
+  will-change: transform;
+  animation: backdrop-spin 180s linear infinite;
 }
-.backdrop * { vector-effect: non-scaling-stroke; }
-
-.backdrop-ring { transform-box: view-box; }
-.backdrop-ring--a { transform-origin: 0 0; animation: backdrop-spin 180s linear infinite; }
-.backdrop-ring--b { transform-origin: 1780px 1120px; animation: backdrop-spin 220s linear infinite reverse; }
+.backdrop-ring * { vector-effect: non-scaling-stroke; }
 /* Graduations et cercle interrompu : c'est grâce à eux qu'on voit tourner. */
 .backdrop-ticks { stroke-dasharray: 1.5 22; stroke-width: 6; stroke: rgba(87, 84, 74, 0.16); }
 .backdrop-gap { stroke-dasharray: 420 60 140 60; stroke: rgba(87, 84, 74, 0.18); }
 @keyframes backdrop-spin { to { transform: rotate(360deg); } }
 
 .backdrop-line {
-  transform-box: view-box;
+  position: absolute;
+  height: 1.2px;
+  background: rgba(87, 84, 74, 0.28);
+  transform-origin: 0 50%;
+  will-change: transform;
   animation-name: backdrop-breathe;
   animation-timing-function: ease-in-out;
   animation-iteration-count: infinite;
   animation-direction: alternate;
 }
+/* La ligne s'allonge et se raccourcit depuis son point de départ. */
 @keyframes backdrop-breathe {
-  from { transform: scale(0.82); }
-  to { transform: scale(1.04); }
+  from { transform: scaleX(0.82); }
+  to { transform: scaleX(1.04); }
 }
+
+/* Paramètre « Fond animé » désactivé : fond fixe. */
+.no-backdrop-motion .backdrop * { animation: none !important; will-change: auto; }

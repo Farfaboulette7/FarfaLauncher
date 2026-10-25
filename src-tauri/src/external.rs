@@ -15,11 +15,11 @@ use crate::error::{log_err, AppError, AppResult};
 pub fn prepare_linux() {
     #[cfg(target_os = "linux")]
     {
-        // WebKitGTK : avec certains pilotes (NVIDIA, Wayland, Bazzite/SteamOS…),
-        // le rendu « DMA-BUF » fige la fenêtre ou la laisse vide après une
-        // réduction. Le rendu classique reste accéléré. Variable respectée si
-        // l'utilisateur l'a déjà définie.
-        if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        // WebKitGTK : avec le pilote propriétaire NVIDIA, le rendu « DMA-BUF »
+        // laisse la fenêtre vide ou figée. Ailleurs on le garde : c'est le plus
+        // fluide. Variable respectée si l'utilisateur l'a déjà définie.
+        let nvidia = std::path::Path::new("/proc/driver/nvidia/version").exists();
+        if nvidia && std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
             std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
         }
     }
@@ -41,6 +41,17 @@ pub fn open_path(app: &AppHandle, path: &str, context: &str) -> AppResult<()> {
         return Ok(());
     }
     app.opener().open_path(path, None::<&str>).map_err(|e| log_err(AppError::Internal, context, e))
+}
+
+/// Programme lancé depuis l'AppImage (un jeu…) : on lui rend l'environnement
+/// du système, sinon il charge les bibliothèques de l'AppImage et plante.
+pub fn use_system_env(cmd: &mut std::process::Command) {
+    #[cfg(target_os = "linux")]
+    if let Some(appdir) = std::env::var_os("APPDIR") {
+        clean_env(cmd, &appdir.to_string_lossy());
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = cmd;
 }
 
 /// Dans une AppImage : `xdg-open` (ou `gio open`) avec un environnement propre.

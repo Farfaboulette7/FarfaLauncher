@@ -5,6 +5,9 @@
  * Durées : HACK_OUT_MS et HACK_IN_MS dans Library.tsx.
  */
 .hack-stage { height: 100%; }
+/* Linux (WebKitGTK) : le flou plein écran fait chuter la fluidité ; zoom et
+   fondu seuls (une déclaration !important l'emporte sur l'animation). */
+.fx-lite .hack-stage[class*="hack-stage--"] { filter: none !important; }
 .hack-stage[class*="hack-stage--"] {
   transform-origin: var(--hx) var(--hy);
   pointer-events: none;

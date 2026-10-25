@@ -1,16 +1,54 @@
+import { CSSProperties } from "react";
 import "./Backdrop.css";
 
-/** Ligne qui s'allonge et se raccourcit doucement depuis son point de départ. */
-function Line({ x1, y1, x2, y2, dur, delay }: { x1: number; y1: number; x2: number; y2: number; dur: number; delay: number }) {
+// Repère de 1600 × 1000 unités, étiré pour couvrir la fenêtre (comme une image
+// en « cover »). Chaque élément animé est son propre calque : la carte graphique
+// le tourne ou l'étire sans rien redessiner, même sous Linux (WebKitGTK).
+const W = 1600;
+const H = 1000;
+
+interface Ring {
+  cx: number;
+  cy: number;
+  radii: number[];
+  ticks: number;
+  gap: number;
+  dur: number;
+  reverse?: boolean;
+}
+
+const RINGS: Ring[] = [
+  { cx: 0, cy: 0, radii: [540, 556], ticks: 524, gap: 575, dur: 180 },
+  { cx: 1780, cy: 1120, radii: [500, 516], ticks: 484, gap: 536, dur: 220, reverse: true },
+];
+
+const LINES = [
+  { x1: 20, y1: 40, x2: 880, y2: 940, dur: 19, delay: 0 },
+  { x1: 90, y1: 0, x2: 960, y2: 900, dur: 23, delay: 7 },
+  { x1: 140, y1: 0, x2: 1000, y2: 880, dur: 17, delay: 3 },
+  { x1: 780, y1: 10, x2: 1600, y2: 830, dur: 21, delay: 11 },
+  { x1: 900, y1: 60, x2: 1600, y2: 760, dur: 25, delay: 5 },
+  { x1: 910, y1: 210, x2: 1600, y2: 900, dur: 18, delay: 9 },
+];
+
+function RingLayer({ ring }: { ring: Ring }) {
+  const r = ring.gap;
+  const style: CSSProperties = {
+    left: `${((ring.cx - r) / W) * 100}%`,
+    top: `${((ring.cy - r) / H) * 100}%`,
+    width: `${((2 * r) / W) * 100}%`,
+    height: `${((2 * r) / H) * 100}%`,
+    animationDuration: `${ring.dur}s`,
+    animationDirection: ring.reverse ? "reverse" : "normal",
+  };
   return (
-    <line
-      className="backdrop-line"
-      x1={x1}
-      y1={y1}
-      x2={x2}
-      y2={y2}
-      style={{ transformOrigin: `${x1}px ${y1}px`, animationDuration: `${dur}s`, animationDelay: `-${delay}s` }}
-    />
+    <svg className="backdrop-ring" style={style} viewBox={`${-r} ${-r} ${2 * r} ${2 * r}`}>
+      {ring.radii.map((radius) => (
+        <circle key={radius} r={radius} />
+      ))}
+      <circle className="backdrop-ticks" r={ring.ticks} />
+      <circle className="backdrop-gap" r={ring.gap - 1} />
+    </svg>
   );
 }
 
@@ -20,25 +58,26 @@ function Line({ x1, y1, x2, y2, dur, delay }: { x1: number; y1: number; x2: numb
  */
 export function Backdrop() {
   return (
-    <svg className="backdrop" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
-      <g className="backdrop-ring backdrop-ring--a">
-        <circle cx="0" cy="0" r="540" />
-        <circle cx="0" cy="0" r="556" />
-        <circle className="backdrop-ticks" cx="0" cy="0" r="524" />
-        <circle className="backdrop-gap" cx="0" cy="0" r="575" />
-      </g>
-      <g className="backdrop-ring backdrop-ring--b">
-        <circle cx="1780" cy="1120" r="500" />
-        <circle cx="1780" cy="1120" r="516" />
-        <circle className="backdrop-ticks" cx="1780" cy="1120" r="484" />
-        <circle className="backdrop-gap" cx="1780" cy="1120" r="536" />
-      </g>
-      <Line x1={20} y1={40} x2={880} y2={940} dur={19} delay={0} />
-      <Line x1={90} y1={0} x2={960} y2={900} dur={23} delay={7} />
-      <Line x1={140} y1={0} x2={1000} y2={880} dur={17} delay={3} />
-      <Line x1={780} y1={10} x2={1600} y2={830} dur={21} delay={11} />
-      <Line x1={900} y1={60} x2={1600} y2={760} dur={25} delay={5} />
-      <Line x1={910} y1={210} x2={1600} y2={900} dur={18} delay={9} />
-    </svg>
+    <div className="backdrop" aria-hidden="true">
+      <div className="backdrop-stage">
+        {RINGS.map((ring) => (
+          <RingLayer key={ring.cx} ring={ring} />
+        ))}
+        {LINES.map((l) => (
+          <div
+            key={`${l.x1}-${l.y1}`}
+            className="backdrop-line"
+            style={{
+              left: `${(l.x1 / W) * 100}%`,
+              top: `${(l.y1 / H) * 100}%`,
+              width: `${(Math.hypot(l.x2 - l.x1, l.y2 - l.y1) / W) * 100}%`,
+              rotate: `${Math.atan2(l.y2 - l.y1, l.x2 - l.x1)}rad`,
+              animationDuration: `${l.dur}s`,
+              animationDelay: `-${l.delay}s`,
+            }}
+          />
+        ))}
+      </div>
+    </div>
   );
 }

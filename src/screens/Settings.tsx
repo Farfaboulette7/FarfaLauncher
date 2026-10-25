@@ -9,6 +9,7 @@ import { play as playSound, reloadSounds, setSoundSettings, soundSettings } from
 import { musicSettings, reloadMusic, setMusicSettings } from "../music";
 import { PcPanel } from "./PcPanel";
 import { useReveal } from "../reveal";
+import { backdropMotion, setBackdropMotion } from "../display";
 import { audioAutoDisabled, clearAudioNotice } from "../audioGuard";
 import "./Settings.css";
 
@@ -31,6 +32,7 @@ export function Settings({ session, installs, onBack, onLogout, onCacheCleared, 
   const [assets, setAssets] = useState<AssetsInfo | null>(null);
   const [assetsInput, setAssetsInput] = useState("");
   const [music, setMusic] = useState(musicSettings());
+  const [motion, setMotion] = useState(backdropMotion());
   const root = useRef<HTMLDivElement>(null);
   useReveal(root, [], { screen: true });
 
@@ -38,6 +40,11 @@ export function Settings({ session, installs, onBack, onLogout, onCacheCleared, 
     if (next.enabled) clearAudioNotice();
     setSoundSettings(next);
     setSound(soundSettings());
+  }
+
+  function updateMotion(on: boolean) {
+    setBackdropMotion(on);
+    setMotion(on);
   }
 
   function updateMusic(next: Partial<ReturnType<typeof musicSettings>>) {
@@ -151,6 +158,17 @@ export function Settings({ session, installs, onBack, onLogout, onCacheCleared, 
                   </button>
                 )}
               </div>
+            </div>
+          </section>
+
+          <section className="n-panel">
+            <div className="n-panel-header">Affichage</div>
+            <div className="n-panel-body settings-section">
+              <label className="settings-check">
+                <input type="checkbox" checked={motion} onChange={(e) => updateMotion(e.target.checked)} />
+                Fond animé (cercles et lignes en mouvement)
+              </label>
+              <p className="n-hint">À décocher si l'application manque de fluidité sur cet ordinateur.</p>
             </div>
           </section>
 

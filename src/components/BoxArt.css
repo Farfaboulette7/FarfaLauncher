@@ -17,6 +17,7 @@
 }
 .b3-stage {
   position: relative;
+  -webkit-transform-style: preserve-3d;
   transform-style: preserve-3d;
   transform: rotateX(var(--rx)) rotateY(calc(var(--ry) + var(--ry-hover, 0deg)));
   transition: transform var(--nier-normal) var(--nier-ease);
@@ -27,6 +28,9 @@
 
 .b3-face {
   position: absolute;
+  /* Préfixe indispensable sous WebKit (Linux, macOS) : sinon le dos, peint en
+     dernier, recouvre la face avant. */
+  -webkit-backface-visibility: hidden;
   backface-visibility: hidden;
   overflow: hidden;
 }

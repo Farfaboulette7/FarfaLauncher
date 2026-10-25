@@ -10,18 +10,24 @@
 //! - macOS : le bundle `.app` est ouvert via `open -W`, qui ne rend la main
 //!   qu'à la fermeture de l'application.
 
-use std::path::Path;
-use std::process::{Child, Command};
-use std::time::Duration;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
 
 use crate::error::{log_err, AppError, AppResult};
 
 /// Intervalle de surveillance des processus.
 const POLL: Duration = Duration::from_secs(2);
+/// Jeu fermé plus vite que ça : sa sortie (erreurs) est recopiée dans nos logs.
+const QUICK_EXIT: Duration = Duration::from_secs(15);
+/// Sortie du dernier lancement, dans le dossier interne du jeu.
+const RUN_LOG: &str = "dernier-lancement.log";
 
 /// Jeu lancé, à surveiller jusqu'à sa fermeture.
 pub struct RunningGame {
     child: Child,
+    started: Instant,
+    run_log: Option<PathBuf>,
     #[cfg(windows)]
     job: windows_job::Job,
 }
@@ -35,6 +41,14 @@ pub fn spawn(game_dir: &Path, exe_rel: &Path) -> AppResult<RunningGame> {
     let work_dir = exe.parent().unwrap_or(game_dir).to_path_buf();
     let mut cmd = build_command(&exe);
     cmd.current_dir(&work_dir);
+    crate::external::use_system_env(&mut cmd);
+    // Sortie du jeu gardée dans un fichier : utile s'il se ferme aussitôt.
+    let run_log = game_dir.join(crate::install::extract::INTERNAL_DIR).join(RUN_LOG);
+    let run_log = std::fs::File::create(&run_log).ok().and_then(|f| {
+        let err = f.try_clone().ok()?;
+        cmd.stdout(Stdio::from(f)).stderr(Stdio::from(err));
+        Some(run_log)
+    });
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -51,10 +65,10 @@ pub fn spawn(game_dir: &Path, exe_rel: &Path) -> AppResult<RunningGame> {
             // Sans job, on suit au moins le processus principal.
             tracing::warn!("processus non rattaché au job: {e}");
         }
-        Ok(RunningGame { child, job })
+        Ok(RunningGame { child, started: Instant::now(), run_log, job })
     }
     #[cfg(not(windows))]
-    Ok(RunningGame { child })
+    Ok(RunningGame { child, started: Instant::now(), run_log })
 }
 
 fn build_command(exe: &Path) -> Command {
@@ -85,7 +99,23 @@ impl RunningGame {
             }
             std::thread::sleep(POLL);
         }
-        tracing::info!("jeu fermé (pid {})", self.child.id());
+        let status = self.child.try_wait().ok().flatten();
+        tracing::info!("jeu fermé (pid {}, {})", self.child.id(), status.map(|s| s.to_string()).unwrap_or_else(|| "état inconnu".into()));
+        if self.started.elapsed() < QUICK_EXIT {
+            self.log_output_tail();
+        }
+    }
+
+    /// Fin de la sortie du jeu, pour comprendre une fermeture immédiate.
+    fn log_output_tail(&self) {
+        let Some(text) = self.run_log.as_ref().and_then(|p| std::fs::read(p).ok()) else { return };
+        let tail = String::from_utf8_lossy(&text[text.len().saturating_sub(3000)..]).trim().to_string();
+        if tail.is_empty() {
+            tracing::warn!("jeu fermé aussitôt, sans rien afficher");
+        } else {
+            tracing::warn!("jeu fermé aussitôt ; fin de sa sortie :
+{tail}");
+        }
     }
 
     #[cfg(windows)]
@@ -214,7 +244,7 @@ mod tests {
         let child = cmd.spawn().unwrap();
         let job = windows_job::Job::create().unwrap();
         job.assign(&child).unwrap();
-        RunningGame { child, job }.wait();
+        RunningGame { child, started: Instant::now(), run_log: None, job }.wait();
         assert!(started.elapsed() >= Duration::from_secs(3), "{:?}", started.elapsed());
     }
 }
