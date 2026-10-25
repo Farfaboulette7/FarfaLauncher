@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { open } from "@tauri-apps/plugin-dialog";
 import { AssetsInfo, backend, errorMessage, SessionInfo } from "../api/backend";
@@ -8,6 +8,7 @@ import { Dialog } from "../components/Dialog";
 import { play as playSound, reloadSounds, setSoundSettings, soundSettings } from "../sounds";
 import { musicSettings, reloadMusic, setMusicSettings } from "../music";
 import { PcPanel } from "./PcPanel";
+import { useReveal } from "../reveal";
 import "./Settings.css";
 
 interface Props {
@@ -29,6 +30,8 @@ export function Settings({ session, installs, onBack, onLogout, onCacheCleared, 
   const [assets, setAssets] = useState<AssetsInfo | null>(null);
   const [assetsInput, setAssetsInput] = useState("");
   const [music, setMusic] = useState(musicSettings());
+  const root = useRef<HTMLDivElement>(null);
+  useReveal(root, [], { screen: true });
 
   function updateSound(next: Partial<ReturnType<typeof soundSettings>>) {
     setSoundSettings(next);
@@ -82,7 +85,7 @@ export function Settings({ session, installs, onBack, onLogout, onCacheCleared, 
 
 
   return (
-    <div className="settings">
+    <div className="settings" ref={root}>
       <header className="gd-header">
         <button className="n-link gd-back" onClick={onBack}>
           ← Bibliothèque

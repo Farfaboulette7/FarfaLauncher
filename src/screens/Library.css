@@ -8,21 +8,25 @@
 
 /* ---------- Onglets principaux ---------- */
 .lib-brand { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.lib-tabs { display: flex; gap: clamp(14px, 1.8vw, 40px); }
+.lib-tabs { display: flex; gap: clamp(8px, 0.8vw, 16px); }
+/* Onglets : un fond plein en dégradé (plus marqué sur l'onglet actif) pour
+   qu'on les lise tout de suite comme des onglets, même sur le fond animé. */
 .lib-tab {
   position: relative;
-  padding: 0 0 6px;
+  padding: 6px clamp(12px, 1vw, 20px) 8px;
   font: inherit;
-  font-size: clamp(22px, 1.7vw + 8px, 44px);
+  font-size: clamp(18px, 1.15vw + 6px, 32px);
+  background-color: rgba(183, 177, 156, 0.82);
+  background-image: linear-gradient(to top, rgba(87, 84, 74, 0.16), transparent 85%);
+  box-shadow: var(--nier-drop) var(--nier-drop) 0 var(--nier-shadow);
   font-weight: var(--nier-weight);
   letter-spacing: clamp(0.12rem, 0.25vw, 0.4rem);
   white-space: nowrap;
   text-transform: uppercase;
   color: var(--nier-mid);
-  background: none;
   border: 0;
   cursor: pointer;
-  transition: color var(--nier-fast) linear;
+  transition: color var(--nier-fast) linear, background-color var(--nier-fast) linear;
 }
 .lib-tab::after {
   content: "";
@@ -37,8 +41,12 @@
   transition: transform var(--nier-normal) var(--nier-ease);
 }
 .lib-tab:hover,
-.lib-tab:focus-visible { color: var(--nier-low); outline: none; }
-.lib-tab[aria-selected="true"] { color: var(--nier-text); }
+.lib-tab:focus-visible { color: var(--nier-low); outline: none; background-color: rgba(183, 177, 156, 0.95); }
+.lib-tab[aria-selected="true"] {
+  color: var(--nier-text);
+  background-color: var(--nier-high-mid);
+  background-image: linear-gradient(to top, rgba(87, 84, 74, 0.32), rgba(87, 84, 74, 0.06) 90%);
+}
 .lib-tab[aria-selected="true"]::after,
 .lib-tab:focus-visible::after { transform: scaleX(1); }
 .lib-view-title { margin: 0; }
@@ -57,7 +65,7 @@
 .pcard {
   width: 100%;
   min-height: clamp(200px, 15vw, 280px);
-  justify-content: center;
+  justify-content: flex-start;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -95,13 +103,56 @@
 }
 .pcard-icon img { max-width: 100%; max-height: 100%; object-fit: contain; }
 .pcard-glyph { font-size: 40px; }
+/* Nom centré dans l'espace libre ; compteur et nouveautés calés en bas, à la
+   même hauteur sur toutes les cartes d'une rangée. */
 .pcard-name {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   font-size: var(--fs-md);
   text-transform: uppercase;
   letter-spacing: var(--nier-tracking-wide);
   text-align: center;
 }
+.pcard-foot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-height: calc(var(--fs-xs) * 3.4 + 8px);
+}
 .pcard-count { font-size: var(--fs-xs); opacity: 0.8; }
+.pcard-new { display: flex; align-items: center; gap: 6px; font-size: var(--fs-xs); color: var(--nier-alert); }
+
+/* ---------- Nouveautés (7 jours), comme la boîte de réception de NieR ---------- */
+.n-new {
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: var(--fs-xs);
+  letter-spacing: var(--nier-tracking-wide);
+  line-height: 1.3;
+  background: var(--nier-alert);
+  color: var(--nier-high);
+}
+.card-new { position: absolute; top: 8px; left: 0; z-index: 1; }
+.card--new .card-name { color: var(--nier-alert); }
+.card--new:hover .card-name,
+.card--new:focus-visible .card-name { color: #f0a58f; }
+
+/* ---------- Récent : un groupe par jour d'ajout ---------- */
+.lib-day + .lib-day { margin-top: 28px; }
+.lib-day-title {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  margin: 0 0 14px;
+  padding-bottom: 6px;
+  font-size: var(--fs-md);
+  letter-spacing: var(--nier-tracking-wide);
+  border-bottom: var(--nier-line) solid var(--nier-mid);
+}
+.lib-day-count { font-size: var(--fs-xs); color: var(--nier-mid); }
 .lib-header {
   display: flex;
   align-items: flex-end;

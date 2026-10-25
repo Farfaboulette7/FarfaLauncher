@@ -1,6 +1,6 @@
 import { CSSProperties, PointerEvent as ReactPointerEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Game } from "../api/backend";
-import { useBoxArt, useCachedImage } from "../hooks/useCachedImage";
+import { knownRatio, useBoxArt, useCachedImage } from "../hooks/useCachedImage";
 import "./BoxArt.css";
 
 /** Angle de présentation : la tranche (côté gauche) bien visible. */
@@ -40,10 +40,11 @@ export function BoxArt({ game, interactive = false, onKind }: Props) {
 
 /** Dimensions naturelles d'une image (ratio largeur / hauteur). */
 function useRatio(src: string | null): number | null {
-  const [ratio, setRatio] = useState<number | null>(null);
+  const [ratio, setRatio] = useState<number | null>(() => knownRatio(src));
   useEffect(() => {
-    setRatio(null);
-    if (!src) return;
+    const known = knownRatio(src);
+    setRatio(known);
+    if (!src || known) return;
     const img = new Image();
     img.onload = () => img.naturalHeight > 0 && setRatio(img.naturalWidth / img.naturalHeight);
     img.src = src;

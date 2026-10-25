@@ -7,8 +7,11 @@
   justify-content: center;
   padding: var(--gutter);
   background: rgba(60, 57, 50, 0.55);
+  cursor: pointer;
 }
-.dialog {
+.dialog { cursor: auto; }
+/* Fenêtre opaque (le fond semi-transparent des panneaux ne s'applique pas ici). */
+.dialog.n-panel {
   width: min(640px, 100%);
   max-height: 100%;
   display: flex;

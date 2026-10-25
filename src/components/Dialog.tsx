@@ -23,7 +23,14 @@ export function Dialog({ title, children, actions, onClose }: Props) {
   }, [onClose]);
 
   return (
-    <div className="dialog-backdrop lightbox-like" role="dialog" aria-modal="true" aria-label={title}>
+    <div
+      className="dialog-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      // Clic à côté de la fenêtre : comme « Annuler ».
+      onClick={(e) => e.target === e.currentTarget && onClose?.()}
+    >
       <div className="dialog n-panel n-appear">
         <div className="n-panel-header">{title}</div>
         <div className="n-panel-body dialog-body">{children}</div>

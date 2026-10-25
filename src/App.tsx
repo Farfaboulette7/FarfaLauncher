@@ -4,6 +4,7 @@ import { Login } from "./screens/Login";
 import { Library } from "./screens/Library";
 import { Intro } from "./components/Intro";
 import { NowPlaying } from "./components/NowPlaying";
+import { Backdrop } from "./components/Backdrop";
 import { UpdateDialog } from "./components/UpdateDialog";
 import { useUpdater } from "./hooks/useUpdater";
 
@@ -52,6 +53,7 @@ export default function App() {
 
   return (
     <>
+      <Backdrop />
       {screen}
       {session?.connected && <NowPlaying />}
       {intro && <Intro onDone={endIntro} />}

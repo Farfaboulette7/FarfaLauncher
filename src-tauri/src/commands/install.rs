@@ -6,7 +6,6 @@ use std::sync::Arc;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
-use tauri_plugin_opener::OpenerExt;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::{log_err, AppError, AppResult};
@@ -177,9 +176,7 @@ pub fn open_game_folder(app: AppHandle, state: State<'_, AppState>, rom_id: i64,
         dir = dir.join(sub);
         std::fs::create_dir_all(&dir).map_err(|e| log_err(AppError::Disk, "création du dossier des mods", e))?;
     }
-    app.opener()
-        .open_path(dir.to_string_lossy(), None::<&str>)
-        .map_err(|e| log_err(AppError::Internal, "ouverture du dossier du jeu", e))
+    crate::external::open_path(&app, &dir.to_string_lossy(), "ouverture du dossier du jeu")
 }
 
 #[tauri::command]

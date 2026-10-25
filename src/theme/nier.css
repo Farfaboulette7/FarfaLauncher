@@ -356,6 +356,21 @@ body::after {
   50% { transform: translate(5px, -50%); }
 }
 @keyframes n-blink { to { visibility: hidden; } }
+/* Apparition d'un champ (voir src/reveal.ts) : fondu et léger glissement. */
+[data-reveal] { animation: n-reveal 0.16s cubic-bezier(0.2, 0.7, 0.3, 1) var(--reveal-delay, 0ms) backwards; }
+@keyframes n-reveal {
+  from { opacity: 0; transform: translateX(-10px); }
+}
+/* Lettres pas encore écrites : présentes (rien ne bouge) mais invisibles. */
+::highlight(n-reveal-hidden) { color: transparent; }
+/* Lettre « parasite » posée sur la prochaine lettre à écrire. */
+.n-reveal-glitch {
+  position: absolute;
+  z-index: 1;
+  white-space: pre;
+  pointer-events: none;
+}
+
 @keyframes n-in {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: none; }
@@ -367,7 +382,7 @@ body::after {
    des boutons au survol (signature NieR) et le défilement
    des titres trop longs (sinon illisibles). */
 @media (prefers-reduced-motion: reduce) {
-  :where(*:not(.intro, .intro *, .hack-stage, .n-marquee-track, .n-btn, .card, .pcard, .now-playing-pause, .pdf-leaf, .pdf-leaf *)),
+  :where(*:not(.intro, .intro *, .hack-stage, .n-marquee-track, .n-btn, .card, .pcard, .now-playing-pause, .pdf-leaf, .pdf-leaf *, .backdrop *, [data-reveal], .n-appear)),
   :where(*:not(.intro, .intro *))::before,
   :where(*:not(.intro, .intro *, .pdf-leaf *))::after {
     animation: none !important;
@@ -398,3 +413,17 @@ body::after {
 .lib-brand-name { display: flex; align-items: center; margin: 0; }
 .login-brand { display: flex; align-items: center; }
 .login-brand .brand-logo { height: 1.4em; }
+
+/* Textes posés directement sur le fond animé : un cran plus épais pour rester
+   lisibles (les textes dans les panneaux et boutons gardent la graisse fine). */
+.n-subtitle,
+.n-section-title,
+.n-label,
+.n-link,
+.n-hint,
+.lib-day-title,
+.lib-user,
+.lib-count,
+.now-playing-title {
+  font-weight: 400;
+}

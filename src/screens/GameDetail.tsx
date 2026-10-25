@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { CSSProperties, lazy, Suspense, useEffect, useRef, useState } from "react";
 import { backend, formatPlaytime, Game, Manual, Platform, Target } from "../api/backend";
 import { InstallsState } from "../hooks/useInstalls";
 import { InstallFacts, InstallPanel } from "./InstallPanel";
@@ -6,6 +6,7 @@ import { ModsTab } from "./ModsTab";
 import { useCachedImage } from "../hooks/useCachedImage";
 import { BoxArt } from "../components/BoxArt";
 import { Marquee } from "../components/Marquee";
+import { useReveal } from "../reveal";
 import "./GameDetail.css";
 
 // pdf.js est lourd : chargé seulement à l'ouverture d'un livret.
@@ -30,6 +31,15 @@ export function GameDetail({ game, platform, target, installs, favorite, onToggl
   const [tab, setTab] = useState<Tab>("infos");
   const [coverKind, setCoverKind] = useState<"box" | "flat" | null>(null);
   const [zoom, setZoom] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  const content = useRef<HTMLDivElement>(null);
+  useReveal(root, [], { screen: true });
+  useReveal(content, [tab], { skipFirst: true });
+  // Le contenu de l'onglet arrive juste après les boutons (plus vite à un changement d'onglet).
+  const contentDelay = useRef("340ms");
+  useEffect(() => {
+    contentDelay.current = "140ms";
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -47,7 +57,7 @@ export function GameDetail({ game, platform, target, installs, favorite, onToggl
   ];
 
   return (
-    <div className="gd">
+    <div className="gd" ref={root}>
       <header className="gd-header">
         <button className="n-link gd-back" data-sound="none" onClick={onBack}>
           ← Retour
@@ -107,7 +117,12 @@ export function GameDetail({ game, platform, target, installs, favorite, onToggl
               </button>
             ))}
           </nav>
-          <div className="gd-content n-appear" key={tab}>
+          <div
+            className="gd-content n-appear"
+            key={tab}
+            ref={content}
+            style={{ "--appear-delay": contentDelay.current } as CSSProperties}
+          >
             {tab === "infos" && <InfoTab game={game} installs={installs} onError={onError} />}
             {tab === "medias" && <MediaTab game={game} />}
             {tab === "livret" && <ManualTab game={game} onError={onError} />}

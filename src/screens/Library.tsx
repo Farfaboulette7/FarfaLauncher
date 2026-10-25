@@ -25,6 +25,7 @@ import { useFavorites } from "../hooks/useFavorites";
 import { InstallsState, useInstalls } from "../hooks/useInstalls";
 import { GameDetail } from "./GameDetail";
 import { Settings } from "./Settings";
+import { useReveal } from "../reveal";
 import "./Library.css";
 import "./Hack.css";
 
@@ -50,6 +51,20 @@ const TABS: { id: Tab; label: string }[] = [
 
 /** Nombre de jeux affichés dans « Récent ». */
 const RECENT_COUNT = 24;
+/** Un jeu reste « nouveau » (badge NEW, compteur des plateformes) pendant 7 jours. */
+const NEW_FOR_MS = 7 * 24 * 3600 * 1000;
+
+function isNew(game: Game): boolean {
+  const t = Date.parse(game.createdAt);
+  return !isNaN(t) && Date.now() - t < NEW_FOR_MS;
+}
+
+/** Jour d'ajout (« 24.10.2026 »), pour regrouper l'onglet Récent. */
+function dayOf(game: Game): string {
+  const d = new Date(game.createdAt);
+  if (isNaN(d.getTime())) return "Date inconnue";
+  return `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}.${d.getFullYear()}`;
+}
 
 interface Props {
   session: SessionInfo;
@@ -74,6 +89,8 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
   const openedFrom = useRef({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
   /** Dernier jeu ouvert : sa jaquette sert de cible au zoom arrière. */
   const lastSelected = useRef<number | null>(null);
+  const root = useRef<HTMLDivElement>(null);
+  const grid = useRef<HTMLElement>(null);
 
   /** Erreur d'appel : déconnexion propre si l'accès a été retiré. */
   const handleError = useCallback(
@@ -166,11 +183,17 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
   const platforms = useMemo(
     () =>
       (snapshot?.platforms ?? [])
-        .map((p) => ({ platform: p, count: allGames.filter((g) => g.platformId === p.id).length }))
+        .map((p) => {
+          const own = allGames.filter((g) => g.platformId === p.id);
+          return { platform: p, count: own.length, fresh: own.filter(isNew).length };
+        })
         .filter((p) => p.count > 0),
     [snapshot, allGames],
   );
   const platform = snapshot?.platforms.find((p) => p.id === platformId) ?? null;
+  // Écran révélé à chaque retour dessus, la grille à chaque changement de vue.
+  useReveal(root, [showSettings, selectedId === null], { screen: true });
+  useReveal(grid, [tab, platformId, !!snapshot], { skipFirst: true });
 
   /** Jeux de la vue courante, avant recherche. */
   const viewGames = useMemo(() => {
@@ -281,7 +304,7 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
   const fetched = snapshot && new Date(snapshot.fetchedAt * 1000).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
 
   return stage(
-    <div className="lib">
+    <div className="lib" ref={root}>
       <header className="lib-header">
         <div className="lib-brand">
           <p className="n-subtitle lib-brand-name">
@@ -364,7 +387,7 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
         </div>
       )}
 
-      <main className="lib-grid-wrap n-appear" key={`${tab}:${platformId}`}>
+      <main className="lib-grid-wrap n-appear" key={`${tab}:${platformId}`} ref={grid}>
         {!snapshot && loading && (
           <p className="lib-empty">
             <span className="n-spinner" /> Chargement de la bibliothèque…
@@ -372,29 +395,34 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
         )}
         {showPlatforms && snapshot && (
           <ul className="lib-platforms">
-            {platforms.map(({ platform: p, count }) => (
+            {platforms.map(({ platform: p, count, fresh }) => (
               <li key={p.id}>
-                <PlatformCard platform={p} count={count} onOpen={() => setPlatformId(p.id)} />
+                <PlatformCard platform={p} count={count} fresh={fresh} onOpen={() => setPlatformId(p.id)} />
               </li>
             ))}
           </ul>
         )}
         {!showPlatforms && snapshot && games.length === 0 && <p className="lib-empty">{emptyMessage(tab, q, favorites.loading)}</p>}
-        {!showPlatforms && (
-          <ul className="lib-grid">
-            {games.map((g) => (
-              <li key={g.id}>
-                <GameCard
-                  game={g}
-                  installs={installs}
-                  favorite={favorites.ids.has(g.id)}
-                  caption={tab === "recent" ? addedOn(g) : undefined}
-                  onOpen={(el) => openGame(g.id, el)}
-                />
-              </li>
-            ))}
-          </ul>
-        )}
+        {!showPlatforms &&
+          (tab === "recent" ? groupByDay(games) : [{ day: null, games }]).map(({ day, games: list }) => (
+            <section key={day ?? "all"} className="lib-day">
+              {day && (
+                <h3 className="lib-day-title">
+                  {day}
+                  <span className="lib-day-count">
+                    {list.length} jeu{list.length > 1 ? "x" : ""} ajouté{list.length > 1 ? "s" : ""}
+                  </span>
+                </h3>
+              )}
+              <ul className="lib-grid">
+                {list.map((g) => (
+                  <li key={g.id}>
+                    <GameCard game={g} installs={installs} favorite={favorites.ids.has(g.id)} onOpen={(el) => openGame(g.id, el)} />
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
       </main>
     </div>,
   );
@@ -412,19 +440,39 @@ function emptyMessage(tab: Tab, q: string, favoritesLoading: boolean): string {
   return "Aucun jeu sur le serveur.";
 }
 
-function addedOn(game: Game): string | undefined {
-  const d = new Date(game.createdAt);
-  return isNaN(d.getTime()) ? undefined : `Ajouté le ${d.toLocaleDateString("fr-FR")}`;
+/** Jeux déjà triés du plus récent au plus ancien → un groupe par jour d'ajout. */
+function groupByDay(games: Game[]): { day: string; games: Game[] }[] {
+  const groups: { day: string; games: Game[] }[] = [];
+  for (const g of games) {
+    const day = dayOf(g);
+    const last = groups[groups.length - 1];
+    if (last?.day === day) last.games.push(g);
+    else groups.push({ day, games: [g] });
+  }
+  return groups;
 }
 
-function PlatformCard({ platform, count, onOpen }: { platform: Platform; count: number; onOpen: () => void }) {
+/** « Portage GameCube » → « GameCube » : tous les jeux sont des portages, le mot n'apprend rien sur la carte. */
+function shortPlatformName(name: string): string {
+  return name.replace(/^portages?\s+/i, "").trim() || name;
+}
+
+function PlatformCard({ platform, count, fresh, onOpen }: { platform: Platform; count: number; fresh: number; onOpen: () => void }) {
   const { src } = useFirstImage(platform.iconUrls);
   return (
-    <button className="pcard" onClick={onOpen} title={platform.name}>
+    <button className="pcard n-marquee-host" onClick={onOpen} title={platform.name}>
       <span className="pcard-icon">{src ? <img src={src} alt="" draggable={false} /> : <span className="pcard-glyph">◆</span>}</span>
-      <span className="pcard-name">{platform.name}</span>
-      <span className="pcard-count">
-        {count} jeu{count > 1 ? "x" : ""}
+      <Marquee className="pcard-name" text={shortPlatformName(platform.name)} />
+      <span className="pcard-foot">
+        <span className="pcard-count">
+          {count} jeu{count > 1 ? "x" : ""}
+        </span>
+        {fresh > 0 && (
+          <span className="pcard-new">
+            <span className="n-new">NEW</span>
+            {fresh} nouveau{fresh > 1 ? "x" : ""}
+          </span>
+        )}
       </span>
     </button>
   );
@@ -434,15 +482,14 @@ function GameCard({
   game,
   installs,
   favorite,
-  caption,
   onOpen,
 }: {
   game: Game;
   installs: InstallsState;
   favorite: boolean;
-  caption?: string;
   onOpen: (el: HTMLElement) => void;
 }) {
+  const fresh = isNew(game);
   const inst = installs.installed.get(game.id);
   const busy = installs.progress.has(game.id);
   const badge = busy
@@ -456,10 +503,11 @@ function GameCard({
           : null;
   const [kind, setKind] = useState<"box" | "flat" | null>(null);
   return (
-    <button className={`card n-marquee-host${kind === "box" ? " card--box3d" : ""}`} data-sound-hover="game" data-game-id={game.id} onClick={(e) => onOpen(e.currentTarget)} title={game.name}>
+    <button className={`card n-marquee-host${kind === "box" ? " card--box3d" : ""}${fresh ? " card--new" : ""}`} data-sound-hover="game" data-game-id={game.id} onClick={(e) => onOpen(e.currentTarget)} title={game.name}>
       <div className="card-cover">
         <BoxArt game={game} onKind={setKind} />
         {kind === null && !game.boxFaces && <span className="card-placeholder">{game.name}</span>}
+        {fresh && <span className="n-new card-new">NEW</span>}
         {badge && <span className={`card-badge ${badge.cls}`}>{badge.label}</span>}
         {favorite && (
           <span className="card-fav" title="Favori">
@@ -467,8 +515,7 @@ function GameCard({
           </span>
         )}
       </div>
-      <Marquee className="card-name" text={game.name} onHover />
-      {caption && <span className="card-caption">{caption}</span>}
+      <Marquee className="card-name" text={game.name} />
     </button>
   );
 }

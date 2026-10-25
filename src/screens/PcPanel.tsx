@@ -141,9 +141,9 @@ export function PcPanel({ version, serverUrl }: { version: string; serverUrl: st
             <h3 className="n-section-title">FaRFa project</h3>
             <dl className="gd-facts">
               <dt>Jeux installés</dt>
-              <dd>
-                {info.gamesCount} · {formatSize(info.gamesSize)}
-              </dd>
+              <dd>{info.gamesCount}</dd>
+              <dt>Espace utilisé</dt>
+              <dd>{formatSize(info.gamesSize)}</dd>
               <dt>Cache</dt>
               <dd>{formatSize(info.cacheSize)}</dd>
               <dt>Logs</dt>

@@ -1,6 +1,7 @@
 import { Emblem } from "../components/Emblem";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { backend, DeviceAuthStart, errorMessage, SessionInfo } from "../api/backend";
+import { useReveal } from "../reveal";
 import "./Login.css";
 
 type Step = "server" | "device" | "pair" | "token";
@@ -14,9 +15,13 @@ interface Props {
 export function Login({ initialServerUrl, notice, onLoggedIn }: Props) {
   const [step, setStep] = useState<Step>(initialServerUrl ? "device" : "server");
   const [serverUrl, setServerUrl] = useState(initialServerUrl ?? "");
+  const root = useRef<HTMLDivElement>(null);
+  const main = useRef<HTMLElement>(null);
+  useReveal(root, []);
+  useReveal(main, [step], { skipFirst: true });
 
   return (
-    <div className="login">
+    <div className="login" ref={root}>
       <header className="login-header">
         <p className="n-subtitle">Unité de lancement</p>
         <h1 className="n-title login-brand">
@@ -26,7 +31,7 @@ export function Login({ initialServerUrl, notice, onLoggedIn }: Props) {
         <div className="n-rule login-rule" />
       </header>
 
-      <main className="login-main n-appear" key={step}>
+      <main className="login-main n-appear" key={step} ref={main}>
         {notice && step !== "server" && <p className="n-notice">{notice}</p>}
         {step === "server" && (
           <ServerStep

@@ -136,12 +136,9 @@ pub fn set_save_location(state: State<'_, AppState>, rom_id: i64, dir: Option<St
 
 #[tauri::command]
 pub fn open_save_folder(app: tauri::AppHandle, state: State<'_, AppState>, rom_id: i64) -> AppResult<()> {
-    use tauri_plugin_opener::OpenerExt;
     let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
     let dir = st.saves.dir.filter(|d| d.is_dir()).ok_or(AppError::SaveDirInvalid)?;
-    app.opener()
-        .open_path(dir.to_string_lossy(), None::<&str>)
-        .map_err(|e| crate::error::log_err(AppError::Internal, "ouverture du dossier des sauvegardes", e))
+    crate::external::open_path(&app, &dir.to_string_lossy(), "ouverture du dossier des sauvegardes")
 }
 
 /// Avant de lancer le jeu : applique le choix de l'utilisateur.
