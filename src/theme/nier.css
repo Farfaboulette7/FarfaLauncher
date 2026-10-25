@@ -288,7 +288,7 @@ body::after {
 .n-marquee--on .n-marquee-track > span { padding-right: 3em; }
 .n-marquee--on:not(.n-marquee--hover) .n-marquee-track,
 .n-marquee-host:is(:hover, :focus-visible) .n-marquee--on .n-marquee-track {
-  animation: n-marquee var(--marquee-duration, 12s) linear 1s infinite;
+  animation: n-marquee var(--marquee-duration, 12s) linear 2s infinite; /* après l'écriture du titre */
 }
 .n-marquee--on:not(.n-marquee--hover) {
   -webkit-mask: linear-gradient(90deg, transparent, #000 2%, #000 96%, transparent);
@@ -361,14 +361,16 @@ body::after {
 @keyframes n-reveal {
   from { opacity: 0; transform: translateX(-10px); }
 }
-/* Lettres pas encore écrites : présentes (rien ne bouge) mais invisibles. */
-::highlight(n-reveal-hidden) { color: transparent; }
-/* Lettre « parasite » posée sur la prochaine lettre à écrire. */
-.n-reveal-glitch {
+/* Copie superposée au texte en cours d'écriture (lettres écrites + parasite) ;
+   le texte d'origine, dessous, est transparent le temps de l'écriture. */
+.n-reveal-copy {
   position: absolute;
   z-index: 1;
+  margin: 0;
+  padding: 0;
   white-space: pre;
   pointer-events: none;
+  -webkit-text-fill-color: currentColor;
 }
 
 @keyframes n-in {

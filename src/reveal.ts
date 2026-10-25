@@ -9,10 +9,12 @@
 // Les informations non cliquables (titres, panneaux, textes) sont là d'emblée,
 // comme les fenêtres d'information du jeu.
 //
-// Le texte n'est jamais modifié : il est déjà entier à sa place, seules les
-// lettres pas encore écrites sont masquées (API CSS Highlight). Ainsi rien ne
-// bouge, même un texte centré, et React garde la main sur le contenu. La lettre
-// parasite est dessinée par-dessus, à l'emplacement exact de la lettre suivante.
+// Le texte d'origine n'est jamais modifié : il reste entier à sa place, rendu
+// transparent (-webkit-text-fill-color, géré par Chromium comme par WebKit),
+// et une copie exactement superposée affiche les lettres déjà écrites plus la
+// lettre parasite. Rien ne bouge, même un texte centré, et React garde la main
+// sur le contenu. La copie vit dans le cadre qui coupe le texte (titre trop
+// long) : elle est coupée avec lui.
 import { DependencyList, RefObject, useLayoutEffect, useRef } from "react";
 
 /** Éléments cliquables : ce sont eux qui apparaissent un par un. */
@@ -26,34 +28,22 @@ const TEXT_DELAY_MS = 170;
 const CHAR_MS = 24;
 /** Textes plus longs : affichés d'un coup. */
 const MAX_TYPED = 60;
-/** Nom du surlignage CSS qui rend transparentes les lettres pas encore écrites. */
-const HIDDEN = "n-reveal-hidden";
 
 interface Typing {
   node: Text;
   text: string;
   start: number;
-  /** Partie encore masquée : de la lettre courante à la fin. */
-  range: Range;
-  field: HTMLElement;
-  glitch: HTMLSpanElement | null;
+  /** Élément rendu transparent pendant l'écriture (parent du texte). */
+  hidden: HTMLElement;
+  /** Élément qui accueille la copie (celui qui coupe le texte, sinon le champ). */
+  host: HTMLElement;
+  copy: HTMLSpanElement;
 }
 
 let typings: Typing[] = [];
 let frame = 0;
-let highlight: Highlight | null = null;
-
-function supported(): boolean {
-  return typeof CSS !== "undefined" && "highlights" in CSS && typeof Highlight !== "undefined";
-}
-
-function hiddenRanges(): Highlight {
-  if (!highlight) {
-    highlight = new Highlight();
-    CSS.highlights.set(HIDDEN, highlight);
-  }
-  return highlight;
-}
+/** Écritures en cours par élément masqué : on le rend visible à la dernière. */
+const hiddenCount = new Map<HTMLElement, number>();
 
 function glitchChar(text: string): string {
   const letters = text.replace(/\s/g, "");
@@ -61,32 +51,32 @@ function glitchChar(text: string): string {
   return Math.random() < 0.5 ? letters[0] : letters[Math.floor(Math.random() * letters.length)];
 }
 
-/** Lettre parasite posée exactement sur la lettre `index` (cachée en dessous). */
-function placeGlitch(t: Typing, index: number) {
-  const r = document.createRange();
-  r.setStart(t.node, index);
-  r.setEnd(t.node, index + 1);
-  const box = r.getBoundingClientRect();
-  const field = t.field.getBoundingClientRect();
-  // Échelle d'un éventuel zoom de transition sur un parent.
-  const scale = t.field.offsetWidth > 0 ? field.width / t.field.offsetWidth : 1;
-  if (!t.glitch) {
-    const g = document.createElement("span");
-    g.className = "n-reveal-glitch";
-    g.setAttribute("aria-hidden", "true");
-    const style = getComputedStyle(t.node.parentElement ?? t.field);
-    g.style.font = style.font;
-    g.style.letterSpacing = style.letterSpacing;
-    g.style.textTransform = style.textTransform;
-    g.style.color = style.color;
-    t.glitch = g;
-    t.field.appendChild(g);
+/** Ancêtre (jusqu'au champ) qui coupe ce qui dépasse, ou le champ lui-même. */
+function clipHost(from: HTMLElement, field: HTMLElement): HTMLElement {
+  for (let el: HTMLElement | null = from; el && el !== field; el = el.parentElement) {
+    if (getComputedStyle(el).overflow !== "visible") return el;
   }
-  const g = t.glitch;
-  g.textContent = glitchChar(t.text);
-  g.style.left = `${(box.left - field.left) / scale}px`;
-  g.style.top = `${(box.top - field.top) / scale}px`;
-  g.style.lineHeight = `${box.height / scale}px`;
+  return field;
+}
+
+/** Texte sur une seule ligne ? (la copie superposée ne sait pas suivre un retour à la ligne) */
+function singleLine(node: Text): boolean {
+  const r = document.createRange();
+  r.selectNodeContents(node);
+  return r.getClientRects().length <= 1;
+}
+
+/** Recale la copie exactement sur le texte d'origine (suit aussi les zooms de transition). */
+function place(t: Typing, shown: string) {
+  const r = document.createRange();
+  r.selectNodeContents(t.node);
+  const box = r.getBoundingClientRect();
+  const host = t.host.getBoundingClientRect();
+  const scale = t.host.offsetWidth > 0 ? host.width / t.host.offsetWidth : 1;
+  t.copy.textContent = shown;
+  t.copy.style.left = `${(box.left - host.left) / scale - t.host.clientLeft}px`;
+  t.copy.style.top = `${(box.top - host.top) / scale - t.host.clientTop}px`;
+  t.copy.style.lineHeight = `${box.height / scale}px`;
 }
 
 function tick(now: number) {
@@ -94,17 +84,22 @@ function tick(now: number) {
     if (t.node.data !== t.text || !t.node.isConnected) return release(t);
     const n = Math.floor((now - t.start) / CHAR_MS);
     if (n >= t.text.length) return release(t);
-    t.range.setStart(t.node, Math.max(0, n));
-    if (n >= 0 && t.text[n].trim()) placeGlitch(t, n);
-    else if (t.glitch) t.glitch.textContent = "";
+    const shown = n < 0 ? "" : t.text.slice(0, n) + (t.text[n].trim() ? glitchChar(t.text) : "");
+    place(t, shown);
     return true;
   });
   frame = typings.length > 0 ? requestAnimationFrame(tick) : 0;
 }
 
 function release(t: Typing): false {
-  highlight?.delete(t.range);
-  t.glitch?.remove();
+  t.copy.remove();
+  const left = (hiddenCount.get(t.hidden) ?? 1) - 1;
+  if (left <= 0) {
+    hiddenCount.delete(t.hidden);
+    t.hidden.style.removeProperty("-webkit-text-fill-color");
+  } else {
+    hiddenCount.set(t.hidden, left);
+  }
   return false;
 }
 
@@ -113,11 +108,28 @@ function stopIn(root: Element) {
   typings = typings.filter((t) => (root.contains(t.node) ? release(t) : true));
 }
 
+function makeCopy(source: HTMLElement): HTMLSpanElement {
+  const copy = document.createElement("span");
+  copy.className = "n-reveal-copy";
+  copy.setAttribute("aria-hidden", "true");
+  const style = getComputedStyle(source);
+  // Propriétés une à une : le raccourci `font` calculé est vide sous certains moteurs.
+  copy.style.fontFamily = style.fontFamily;
+  copy.style.fontSize = style.fontSize;
+  copy.style.fontWeight = style.fontWeight;
+  copy.style.fontStyle = style.fontStyle;
+  copy.style.fontStretch = style.fontStretch;
+  copy.style.fontVariant = style.fontVariant;
+  copy.style.letterSpacing = style.letterSpacing;
+  copy.style.textTransform = style.textTransform;
+  copy.style.color = style.color;
+  return copy;
+}
+
 /** Fait apparaître les éléments cliquables de `root` à la manière de NieR. */
 export function reveal(root: Element) {
   stopIn(root);
   const now = performance.now();
-  const typing = supported();
   const fields = Array.from(root.querySelectorAll<HTMLElement>(FIELDS)).filter(
     // Un champ dans un autre champ suit son parent.
     (el, _i, all) => !all.some((p) => p !== el && p.contains(el)),
@@ -136,25 +148,33 @@ export function reveal(root: Element) {
       el.removeEventListener("animationend", done);
     };
     el.addEventListener("animationend", done);
-    if (!typing) return;
-    // Repère de la lettre parasite (positionnée en absolu dans le champ).
-    if (getComputedStyle(el).position === "static") el.style.position = "relative";
 
-    // Morceaux d'un même élément (« 3 » + « nouveau » + « x ») : écrits à la
-    // suite, comme un seul texte. Des lignes différentes s'écrivent en parallèle.
-    const written = new Map<Node | null, number>();
+    // Textes à écrire, regroupés par élément parent (masqué d'un bloc).
+    const groups = new Map<HTMLElement, Text[]>();
     const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
     for (let n = walker.nextNode(); n; n = walker.nextNode()) {
       const node = n as Text;
-      if (!node.data.trim() || node.data.length > MAX_TYPED) continue;
-      const before = written.get(node.parentNode) ?? 0;
-      written.set(node.parentNode, before + node.data.length);
-      const range = document.createRange();
-      range.setStart(node, 0);
-      range.setEnd(node, node.data.length);
-      hiddenRanges().add(range);
-      const start = now + delay + TEXT_DELAY_MS + before * CHAR_MS;
-      typings.push({ node, text: node.data, start, range, field: el, glitch: null });
+      const parent = node.parentElement;
+      if (!parent || !node.data.trim()) continue;
+      groups.set(parent, [...(groups.get(parent) ?? []), node]);
+    }
+    for (const [parent, nodes] of groups) {
+      // Un texte long ou sur plusieurs lignes : affiché tel quel.
+      if (nodes.some((n) => n.data.length > MAX_TYPED || !singleLine(n))) continue;
+      const host = clipHost(parent, el);
+      if (getComputedStyle(host).position === "static") host.style.position = "relative";
+      parent.style.setProperty("-webkit-text-fill-color", "transparent");
+      hiddenCount.set(parent, (hiddenCount.get(parent) ?? 0) + nodes.length);
+      // Morceaux d'un même élément (« 3 » + « nouveau » + « x ») : écrits à la suite.
+      let before = 0;
+      for (const node of nodes) {
+        const copy = makeCopy(parent);
+        host.appendChild(copy);
+        const t: Typing = { node, text: node.data, start: now + delay + TEXT_DELAY_MS + before * CHAR_MS, hidden: parent, host, copy };
+        before += node.data.length;
+        place(t, "");
+        typings.push(t);
+      }
     }
   });
   if (!frame && typings.length > 0) frame = requestAnimationFrame(tick);
