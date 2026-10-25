@@ -56,7 +56,7 @@ pub fn install_game(app: AppHandle, state: State<'_, AppState>, rom_id: i64, des
         if state.running.lock().unwrap().contains(&rom_id) {
             return Err(AppError::AlreadyRunning);
         }
-        if jobs.contains_key(&rom_id) {
+        if jobs.contains_key(&rom_id) || state.is_busy(rom_id) {
             return Err(AppError::Busy);
         }
         jobs.insert(rom_id, cancel.clone());
@@ -137,12 +137,7 @@ async fn game_details(state: &AppState, rom_id: i64) -> AppResult<Game> {
 
 #[tauri::command]
 pub async fn uninstall_game(state: State<'_, AppState>, rom_id: i64, keep_saves: bool) -> AppResult<()> {
-    if state.running.lock().unwrap().contains(&rom_id) {
-        return Err(AppError::AlreadyRunning);
-    }
-    if state.installs.lock().unwrap().contains_key(&rom_id) {
-        return Err(AppError::Busy);
-    }
+    let _busy = state.mark_busy(rom_id)?;
     let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
     install::uninstall(&state.config_dir, st, keep_saves).await
 }
@@ -154,12 +149,7 @@ pub async fn move_game(state: State<'_, AppState>, rom_id: i64, dest: String) ->
     if !dest.is_absolute() {
         return Err(AppError::Internal);
     }
-    if state.running.lock().unwrap().contains(&rom_id) {
-        return Err(AppError::AlreadyRunning);
-    }
-    if state.installs.lock().unwrap().contains_key(&rom_id) {
-        return Err(AppError::Busy);
-    }
+    let _busy = state.mark_busy(rom_id)?;
     let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
     install::move_game(&state.config_dir, st, dest).await
 }

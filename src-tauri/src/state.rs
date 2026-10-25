@@ -33,6 +33,8 @@ pub struct AppState {
     pub installs: Mutex<HashMap<i64, CancellationToken>>,
     /// Jeux en cours d'exécution.
     pub running: Mutex<HashSet<i64>>,
+    /// Jeux en cours de désinstallation ou de déplacement : ni lancés, ni installés.
+    pub busy: Mutex<HashSet<i64>>,
     /// Téléchargements de mods en cours (jeu, fichier).
     pub mod_downloads: Mutex<HashSet<(i64, i64)>>,
     /// Dossier d'installation par défaut (`~/FarfaLauncher/Jeux`).
@@ -57,9 +59,25 @@ impl AppState {
             refreshing: AtomicBool::new(false),
             installs: Mutex::new(HashMap::new()),
             running: Mutex::new(HashSet::new()),
+            busy: Mutex::new(HashSet::new()),
             mod_downloads: Mutex::new(HashSet::new()),
             default_install_root,
         }
+    }
+
+    /// Marque le jeu occupé jusqu'à la fin de la garde renvoyée.
+    pub fn mark_busy(&self, rom_id: i64) -> AppResult<BusyGuard<'_>> {
+        if self.running.lock().unwrap().contains(&rom_id) {
+            return Err(AppError::AlreadyRunning);
+        }
+        if self.installs.lock().unwrap().contains_key(&rom_id) || !self.busy.lock().unwrap().insert(rom_id) {
+            return Err(AppError::Busy);
+        }
+        Ok(BusyGuard { state: self, rom_id })
+    }
+
+    pub fn is_busy(&self, rom_id: i64) -> bool {
+        self.busy.lock().unwrap().contains(&rom_id)
     }
 
     pub fn install_root(&self) -> PathBuf {
@@ -88,5 +106,17 @@ impl AppState {
 
     pub fn set_client(&self, client: Option<RommClient>) {
         *self.client.lock().unwrap() = client;
+    }
+}
+
+/// Garde de [`AppState::mark_busy`] : le jeu redevient libre à sa fin.
+pub struct BusyGuard<'a> {
+    state: &'a AppState,
+    rom_id: i64,
+}
+
+impl Drop for BusyGuard<'_> {
+    fn drop(&mut self) {
+        self.state.busy.lock().unwrap().remove(&self.rom_id);
     }
 }

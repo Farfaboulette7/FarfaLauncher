@@ -15,6 +15,9 @@ import {
   SaveChoice,
 } from "../api/backend";
 
+/** Opération en cours sur un jeu installé, qui empêche de le lancer. */
+export type BusyKind = "uninstall" | "move";
+
 export interface InstallsState {
   installRoot: string | null;
   installed: Map<number, InstalledGame>;
@@ -25,6 +28,9 @@ export interface InstallsState {
   start: (romId: number, dest?: string) => Promise<void>;
   setInstalled: (game: InstalledGame) => void;
   remove: (romId: number) => void;
+  /** Désinstallations et déplacements en cours. */
+  busy: Map<number, BusyKind>;
+  setBusy: (romId: number, kind: BusyKind | null) => void;
   /** Jeux en cours (id → heure de lancement, ms). */
   running: Map<number, number>;
   /** Dernière session terminée par jeu. */
@@ -40,6 +46,7 @@ export function useInstalls(onAuthError: (e: unknown) => Promise<string>): Insta
   const [errors, setErrors] = useState(new Map<number, AppError>());
   const [running, setRunning] = useState(new Map<number, number>());
   const [lastSession, setLastSession] = useState(new Map<number, GameStopped>());
+  const [busy, setBusyMap] = useState(new Map<number, BusyKind>());
 
   const reload = useCallback(async () => {
     const [info, runningIds] = await Promise.all([backend.installInfo(), backend.runningGames()]);
@@ -127,6 +134,17 @@ export function useInstalls(onAuthError: (e: unknown) => Promise<string>): Insta
     [],
   );
 
+  const setBusy = useCallback(
+    (romId: number, kind: BusyKind | null) =>
+      setBusyMap((m) => {
+        const next = new Map(m);
+        if (kind) next.set(romId, kind);
+        else next.delete(romId);
+        return next;
+      }),
+    [],
+  );
+
   /** Lance le jeu ; renvoie un message d'erreur ou null. */
   const play = useCallback(
     async (romId: number, saveChoice: SaveChoice = "unchanged"): Promise<string | null> => {
@@ -140,5 +158,5 @@ export function useInstalls(onAuthError: (e: unknown) => Promise<string>): Insta
     [onAuthError],
   );
 
-  return { installRoot, installed, progress, errors, reload, start, setInstalled, remove, running, lastSession, play };
+  return { installRoot, installed, progress, errors, reload, start, setInstalled, remove, busy, setBusy, running, lastSession, play };
 }

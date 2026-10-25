@@ -48,7 +48,8 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
   const [launching, setLaunching] = useState(false);
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<string[]>([]);
-  const [moving, setMoving] = useState(false);
+  /** Désinstallation ou déplacement en cours (gardé même si on quitte la page). */
+  const busy = installs.busy.get(game.id);
   /** Emplacement choisi pour cette installation (sinon le dossier des jeux). */
   const [installDir, setInstallDir] = useState<string | null>(null);
 
@@ -113,9 +114,9 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
       defaultPath: parentDir(inst.gameDir),
     });
     if (typeof dest !== "string") return;
-    setMoving(true);
+    installs.setBusy(game.id, "move");
     const updated = await run(() => backend.moveGame(game.id, dest));
-    setMoving(false);
+    installs.setBusy(game.id, null);
     if (updated) installs.setInstalled(updated);
   }
 
@@ -156,7 +157,11 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
           </p>
         ) : inst?.executable ? (
           <>
-            {runningSince !== undefined ? (
+            {busy ? (
+              <div className="gd-running">
+                <span className="n-spinner" /> {busy === "uninstall" ? "Désinstallation en cours…" : "Déplacement en cours…"}
+              </div>
+            ) : runningSince !== undefined ? (
               <div className="gd-running">
                 <span className="n-spinner" /> En cours de jeu · <Elapsed since={runningSince} />
               </div>
@@ -164,14 +169,14 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
               <button
                 className="n-btn n-btn--primary n-btn--block n-cursor"
                 data-sound="none"
-                disabled={launching || moving}
+                disabled={launching}
                 onClick={startPlay}
               >
                 {launching ? "Vérification des sauvegardes…" : "Jouer"}
               </button>
             )}
             {last && <p className="n-hint">{sessionSummary(last)}</p>}
-            {update && runningSince === undefined && (
+            {update && runningSince === undefined && !busy && (
               <button className="n-btn n-btn--block gd-update" onClick={() => installs.start(game.id)}>
                 Mettre à jour ({inst.versionRaw ? inst.version : "?"} → {game.serverVersion})
               </button>
@@ -212,12 +217,7 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
         {message && <p className="n-alert">{message}</p>}
         {saveNotice && <p className="n-notice">{saveNotice}</p>}
 
-        {moving && (
-          <p>
-            <span className="n-spinner" /> Déplacement du jeu…
-          </p>
-        )}
-        {inst && !progress && runningSince === undefined && !moving && (
+        {inst && !progress && runningSince === undefined && !busy && (
           <div className="gd-inst-actions">
             <button className="n-link" onClick={() => run(() => backend.openGameFolder(game.id))}>
               Ouvrir le dossier du jeu
@@ -290,7 +290,9 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
           onClose={() => setDialog(null)}
           onConfirm={async (keepSaves) => {
             setDialog(null);
+            installs.setBusy(game.id, "uninstall");
             const ok = await run(() => backend.uninstallGame(game.id, keepSaves).then(() => true));
+            installs.setBusy(game.id, null);
             if (ok) installs.remove(game.id);
           }}
         />

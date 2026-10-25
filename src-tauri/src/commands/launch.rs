@@ -43,7 +43,7 @@ pub fn running_games(state: State<'_, AppState>) -> Vec<i64> {
 pub async fn play_game(app: AppHandle, state: State<'_, AppState>, rom_id: i64, save_choice: SaveChoice) -> AppResult<()> {
     let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
     let exe = st.executable.clone().ok_or(AppError::NoExecutable)?;
-    if state.installs.lock().unwrap().contains_key(&rom_id) {
+    if state.installs.lock().unwrap().contains_key(&rom_id) || state.is_busy(rom_id) {
         return Err(AppError::Busy);
     }
     if !state.running.lock().unwrap().insert(rom_id) {
