@@ -48,6 +48,9 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
   const [launching, setLaunching] = useState(false);
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<string[]>([]);
+  const [moving, setMoving] = useState(false);
+  /** Emplacement choisi pour cette installation (sinon le dossier des jeux). */
+  const [installDir, setInstallDir] = useState<string | null>(null);
 
   const update = hasUpdate(game, inst);
   const pendingChoice = !!inst && !inst.executable && !progress;
@@ -100,6 +103,32 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
     if (thenPlay) await startPlay();
   }
 
+  /** Déplace le dossier du jeu ailleurs (autre disque, autre dossier). */
+  async function moveGame() {
+    if (!inst) return;
+    const dest = await open({
+      directory: true,
+      multiple: false,
+      title: `Nouvel emplacement de ${game.name}`,
+      defaultPath: parentDir(inst.gameDir),
+    });
+    if (typeof dest !== "string") return;
+    setMoving(true);
+    const updated = await run(() => backend.moveGame(game.id, dest));
+    setMoving(false);
+    if (updated) installs.setInstalled(updated);
+  }
+
+  async function chooseInstallDir() {
+    const dir = await open({
+      directory: true,
+      multiple: false,
+      title: `Où installer ${game.name} ?`,
+      defaultPath: installDir ?? installs.installRoot ?? undefined,
+    });
+    if (typeof dir === "string") setInstallDir(dir);
+  }
+
   async function openExeChoice() {
     const list = inst?.executable ? await run(() => backend.executableCandidates(game.id)) : inst?.pendingCandidates;
     if (list) {
@@ -128,7 +157,7 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
               <button
                 className="n-btn n-btn--primary n-btn--block n-cursor"
                 data-sound="none"
-                disabled={launching}
+                disabled={launching || moving}
                 onClick={startPlay}
               >
                 {launching ? "Vérification des sauvegardes…" : "Jouer"}
@@ -150,13 +179,23 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
           </>
         ) : game.myArchive ? (
           <>
-            <button className="n-btn n-btn--primary n-btn--block" onClick={() => installs.start(game.id)}>
+            <button className="n-btn n-btn--primary n-btn--block" onClick={() => installs.start(game.id, installDir ?? undefined)}>
               Installer
             </button>
-            <p className="n-hint">
+            <p className="n-hint gd-install-dest" title={installDir ?? installs.installRoot ?? undefined}>
               {formatSize(downloadSize(game))}
-              {installs.installRoot && ` · dans ${installs.installRoot}`}
+              {(installDir ?? installs.installRoot) && ` · dans ${installDir ?? installs.installRoot}`}
             </p>
+            <div className="gd-inst-actions">
+              <button className="n-link" onClick={chooseInstallDir}>
+                Changer l'emplacement…
+              </button>
+              {installDir && (
+                <button className="n-link" onClick={() => setInstallDir(null)}>
+                  Emplacement par défaut
+                </button>
+              )}
+            </div>
           </>
         ) : (
           <p className="n-alert" data-sound="none">Non disponible pour votre système{target ? ` (${TARGET_LABELS[target]})` : ""}.</p>
@@ -166,7 +205,12 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
         {message && <p className="n-alert">{message}</p>}
         {saveNotice && <p className="n-notice">{saveNotice}</p>}
 
-        {inst && !progress && runningSince === undefined && (
+        {moving && (
+          <p>
+            <span className="n-spinner" /> Déplacement du jeu…
+          </p>
+        )}
+        {inst && !progress && runningSince === undefined && !moving && (
           <div className="gd-inst-actions">
             <button className="n-link" onClick={() => run(() => backend.openGameFolder(game.id))}>
               Ouvrir le dossier du jeu
@@ -186,6 +230,9 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
                 Dossier des sauvegardes…
               </button>
             )}
+            <button className="n-link" onClick={moveGame}>
+              Déplacer le jeu…
+            </button>
             <button className="n-link" onClick={() => setDialog("uninstall")}>
               Désinstaller
             </button>
@@ -253,6 +300,14 @@ export function InstallFacts({ game, installs }: { game: Game; installs: Install
       <dd>{game.serverVersion ?? "inconnue"}</dd>
       <dt>Version installée</dt>
       <dd>{inst?.executable ? inst.version ?? "inconnue" : "non installé"}</dd>
+      {inst && (
+        <>
+          <dt>Emplacement</dt>
+          <dd className="gd-savedir" title={inst.gameDir}>
+            {shortPath(inst.gameDir)}
+          </dd>
+        </>
+      )}
       {inst?.executable && (
         <>
           <dt>Exécutable</dt>
@@ -402,6 +457,10 @@ function sessionSummary(s: GameStopped): string {
         ? ` Sauvegarde non envoyée : ${s.saveError?.message ?? "erreur inconnue"}`
         : "";
   return time + save;
+}
+
+function parentDir(p: string): string {
+  return p.replace(/[\\/][^\\/]+[\\/]?$/, "") || p;
 }
 
 function shortPath(p: string): string {

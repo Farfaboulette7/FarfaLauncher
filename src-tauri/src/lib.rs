@@ -30,7 +30,7 @@ pub fn run() {
             let app_cache = paths.app_cache_dir()?;
             let cache_dir = app_cache.join("cache");
             cache::remove_legacy_entries(&app_cache);
-            let default_install_root = paths.home_dir()?.join("FarfaLauncher").join("Jeux");
+            let default_install_root = install::default_root(&paths.home_dir()?);
             if let Some(guard) = logging::init(&log_dir) {
                 // Garde le writer de logs vivant pendant toute l'exécution.
                 app.manage(guard);
@@ -41,6 +41,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::open_logs,
             commands::open_url,
+            commands::system::system_info,
+            commands::system::server_ping,
             commands::log_frontend,
             commands::session::session_status,
             commands::session::set_server,
@@ -75,6 +77,7 @@ pub fn run() {
             commands::install::uninstall_game,
             commands::install::open_game_folder,
             commands::install::set_install_dir,
+            commands::install::move_game,
             commands::launch::running_games,
             commands::launch::play_game,
             commands::launch::flush_play_sessions,

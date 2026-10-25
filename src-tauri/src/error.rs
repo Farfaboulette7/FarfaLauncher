@@ -67,6 +67,10 @@ pub enum AppError {
     LaunchFailed,
     #[error("Ce jeu est déjà en cours d'exécution.")]
     AlreadyRunning,
+    #[error("Un dossier du même nom existe déjà à cet endroit. Choisissez un autre emplacement.")]
+    DestinationExists,
+    #[error("Impossible de déplacer le jeu à l'intérieur de son propre dossier.")]
+    MoveIntoItself,
     #[error("Le serveur a renvoyé une erreur inattendue. Réessayez plus tard.")]
     Server,
     #[error("Une erreur inattendue est survenue. Les détails sont dans les logs.")]
@@ -105,6 +109,8 @@ impl AppError {
             AppError::Cancelled => "cancelled",
             AppError::LaunchFailed => "launch_failed",
             AppError::AlreadyRunning => "already_running",
+            AppError::DestinationExists => "destination_exists",
+            AppError::MoveIntoItself => "move_into_itself",
             AppError::Server => "server",
             AppError::Internal => "internal",
         }

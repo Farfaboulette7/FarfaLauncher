@@ -169,6 +169,33 @@ export interface InstallProgress {
   total: number;
 }
 
+export interface DiskInfo {
+  name: string;
+  mount: string;
+  total: number;
+  available: number;
+  /** Disque où s'installent les nouveaux jeux. */
+  holdsGames: boolean;
+}
+
+export interface SystemInfo {
+  os: string;
+  kernel: string | null;
+  hostName: string | null;
+  cpu: string | null;
+  cpuCores: number | null;
+  cpuThreads: number;
+  memoryTotal: number;
+  memoryAvailable: number;
+  /** Secondes depuis le démarrage de l'ordinateur. */
+  uptime: number;
+  disks: DiskInfo[];
+  gamesCount: number;
+  gamesSize: number;
+  cacheSize: number;
+  logsSize: number;
+}
+
 export type InstallOutcome = { status: "installed"; game: InstalledGame } | { status: "needsChoice"; game: InstalledGame };
 
 export interface InstallFinished {
@@ -272,13 +299,18 @@ export const backend = {
   musicFiles: (track: MusicTrack) => invoke<{ normal: string; eightBit: string }>("music_files", { track }),
   favoriteSet: (romId: number, favorite: boolean) => invoke<number[]>("favorite_set", { romId, favorite }),
   installInfo: () => invoke<InstallInfo>("install_info"),
-  installGame: (romId: number) => invoke<void>("install_game", { romId }),
+  /** `dest` : dossier où créer celui du jeu (sinon le dossier des jeux des paramètres). */
+  installGame: (romId: number, dest?: string) => invoke<void>("install_game", { romId, dest: dest ?? null }),
   cancelInstall: (romId: number) => invoke<void>("cancel_install", { romId }),
   executableCandidates: (romId: number) => invoke<string[]>("executable_candidates", { romId }),
   chooseExecutable: (romId: number, executable: string) => invoke<InstalledGame>("choose_executable", { romId, executable }),
   uninstallGame: (romId: number, keepSaves: boolean) => invoke<void>("uninstall_game", { romId, keepSaves }),
   openGameFolder: (romId: number, sub?: "mods_downloads") => invoke<void>("open_game_folder", { romId, sub: sub ?? null }),
   setInstallDir: (path: string | null) => invoke<string>("set_install_dir", { path }),
+  /** `dest` : dossier qui contiendra celui du jeu. */
+  moveGame: (romId: number, dest: string) => invoke<InstalledGame>("move_game", { romId, dest }),
+  systemInfo: () => invoke<SystemInfo>("system_info"),
+  serverPing: () => invoke<number>("server_ping"),
   playGame: (romId: number, saveChoice: SaveChoice) => invoke<void>("play_game", { romId, saveChoice }),
   saveCheck: (romId: number) => invoke<SaveCheck>("save_check", { romId }),
   setSaveLocation: (romId: number, dir: string | null, off: boolean) =>

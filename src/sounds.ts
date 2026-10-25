@@ -20,6 +20,9 @@ let loading: Promise<void> | null = null;
 /** Son demandé avant le chargement (ex. ouverture) : joué dès qu'il arrive. */
 let pending: { name: SoundName; at: number } | null = null;
 
+/** Niveau maximal (curseur à 100 %) : des bruitages discrets. */
+const BASE_LEVEL = 0.5;
+
 interface SoundSettings {
   enabled: boolean;
   volume: number;
@@ -28,9 +31,9 @@ interface SoundSettings {
 function readSettings(): SoundSettings {
   try {
     const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "{}");
-    return { enabled: s.enabled !== false, volume: typeof s.volume === "number" ? s.volume : 0.4 };
+    return { enabled: s.enabled !== false, volume: typeof s.volume === "number" ? s.volume : 0.3 };
   } catch {
-    return { enabled: true, volume: 0.4 };
+    return { enabled: true, volume: 0.3 };
   }
 }
 
@@ -89,7 +92,7 @@ export function play(name: SoundName) {
   if (now - (lastPlayed.get(name) ?? -1e9) < (name === "Error" ? 600 : 60)) return;
   lastPlayed.set(name, now);
   const a = src.cloneNode() as HTMLAudioElement;
-  a.volume = settings.volume;
+  a.volume = settings.volume * BASE_LEVEL;
   a.play().catch(() => undefined);
 }
 

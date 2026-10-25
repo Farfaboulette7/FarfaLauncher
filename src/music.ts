@@ -17,6 +17,9 @@ const LAST_TRACK_KEY = "farfa.music.last";
 const CROSSFADE = 0.8; // secondes
 const MUTE_FADE = 1.5;
 const TRACK_FADE = 1.5;
+/** Niveau maximal (curseur à 100 %) : la musique reste un fond discret. */
+const BASE_LEVEL = 0.5;
+const PAUSE_FADE = 0.6;
 
 interface MusicSettings {
   enabled: boolean;
@@ -35,9 +38,9 @@ interface Playing {
 function readSettings(): MusicSettings {
   try {
     const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "{}");
-    return { enabled: s.enabled !== false, volume: typeof s.volume === "number" ? s.volume : 0.25 };
+    return { enabled: s.enabled !== false, volume: typeof s.volume === "number" ? s.volume : 0.2 };
   } catch {
-    return { enabled: true, volume: 0.25 };
+    return { enabled: true, volume: 0.2 };
   }
 }
 
@@ -50,6 +53,8 @@ let playing: Playing | null = null;
 let wanted: MusicVersion = "normal";
 /** Coupée pendant qu'un jeu tourne. */
 let muted = false;
+/** Mise en pause par l'utilisateur (le morceau reprend où il s'était arrêté). */
+let paused = false;
 let loading: Promise<void> | null = null;
 /** Incrémenté à l'arrêt : un chargement en cours devenu obsolète s'abandonne. */
 let generation = 0;
@@ -71,7 +76,7 @@ export function setMusicSettings(next: Partial<MusicSettings>) {
 }
 
 function targetVolume() {
-  return settings.enabled && !muted ? settings.volume : 0;
+  return settings.enabled && !muted && !paused ? settings.volume * BASE_LEVEL : 0;
 }
 
 function applyVolume(fade: number) {
@@ -148,6 +153,25 @@ export function setMusicMuted(value: boolean) {
   applyVolume(MUTE_FADE);
 }
 
+/** Pause / reprise : fondu, puis l'horloge audio est figée pour reprendre au même endroit. */
+export function setMusicPaused(value: boolean) {
+  if (paused === value) return;
+  paused = value;
+  setState({ paused });
+  if (!ctx) return;
+  const c = ctx;
+  if (value) {
+    applyVolume(PAUSE_FADE);
+    window.setTimeout(() => {
+      if (paused && ctx === c) c.suspend().catch(() => undefined);
+    }, PAUSE_FADE * 1000 + 50);
+  } else {
+    c.resume()
+      .catch(() => undefined)
+      .finally(() => applyVolume(PAUSE_FADE));
+  }
+}
+
 /** Morceau en cours pour toute la session : une reconnexion ne retélécharge rien. */
 let sessionTrackId: string | null = null;
 
@@ -198,7 +222,7 @@ function logFailure(e: unknown) {
 function resumeOnGesture(c: AudioContext) {
   if (c.state !== "suspended") return;
   const resume = () => {
-    c.resume().catch(() => undefined);
+    if (!paused) c.resume().catch(() => undefined);
     window.removeEventListener("pointerdown", resume, true);
     window.removeEventListener("keydown", resume, true);
   };
@@ -215,9 +239,10 @@ export interface MusicState {
   enabled: boolean;
   /** Changement de morceau en cours (téléchargement, décodage). */
   switching: boolean;
+  paused: boolean;
 }
 
-let state: MusicState = { title: null, switching: false, enabled: settings.enabled };
+let state: MusicState = { title: null, switching: false, enabled: settings.enabled, paused: false };
 const listeners = new Set<() => void>();
 
 function setState(next: Partial<MusicState>) {
@@ -284,6 +309,8 @@ export async function nextTrack(): Promise<void> {
     const pair = await loadPair(c, chosen);
     if (gen !== generation || ctx !== c) return;
     if (playing) fadeOutAndStop(playing, TRACK_FADE);
+    // Changer de morceau relance la musique si elle était en pause.
+    setMusicPaused(false);
     track = chosen;
     buffers = pair;
     playing = startVersion(wanted, 0, TRACK_FADE);

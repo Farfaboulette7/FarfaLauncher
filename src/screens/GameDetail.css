@@ -295,3 +295,4 @@
 }
 .gd-facts-cols > section { flex: 1 1 280px; min-width: 0; max-width: 560px; }
 .gd-facts-cols .gd-facts--wide { margin: 0; padding: 0 12px; font-size: var(--fs-sm); gap: 8px 28px; }
+.gd-install-dest { overflow-wrap: anywhere; }

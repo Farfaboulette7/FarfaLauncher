@@ -6,6 +6,7 @@ pub mod saves;
 pub mod library;
 pub mod session;
 pub mod sounds;
+pub mod system;
 
 use tauri::State;
 use tauri_plugin_opener::OpenerExt;

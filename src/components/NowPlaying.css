@@ -23,3 +23,24 @@
   width: 7px;
   height: 7px;
 }
+/* Pause / lecture : petit carré, remplissage de gauche à droite au survol. */
+.now-playing-pause {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  padding: 7px;
+  border: 0;
+  cursor: pointer;
+  color: var(--nier-low);
+  background-color: var(--nier-high-mid);
+  background-image: linear-gradient(var(--nier-low), var(--nier-low));
+  background-repeat: no-repeat;
+  background-size: 0% 100%;
+  transition:
+    background-size var(--nier-sweep) var(--nier-ease),
+    color var(--nier-fast) linear calc(var(--nier-sweep) / 3);
+}
+.now-playing-pause svg { display: block; width: 100%; height: 100%; fill: currentColor; }
+.now-playing-pause:hover,
+.now-playing-pause:focus-visible { outline: none; background-size: 100% 100%; color: var(--nier-high); }
+.now-playing--paused .now-playing-title { opacity: 0.5; }

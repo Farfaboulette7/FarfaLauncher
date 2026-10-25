@@ -249,16 +249,28 @@ body::after {
   border-color: var(--nier-low);
   box-shadow: var(--nier-drop) var(--nier-drop) 0 var(--nier-shadow);
 }
-/* Champ discret : flou au repos, net au survol ou pendant la saisie. */
+/* Champ discret (recherche) : effacé au repos, bien présent au focus. */
 .n-input--soft {
-  opacity: 0.6;
-  filter: blur(1.5px);
-  transition: filter var(--nier-sweep) var(--nier-ease), opacity var(--nier-sweep) var(--nier-ease),
-    border-color var(--nier-fast), box-shadow var(--nier-fast);
+  padding-left: 36px;
+  background-color: transparent;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%2348463d' stroke-width='1.6'%3E%3Ccircle cx='6.5' cy='6.5' r='4.8'/%3E%3Cpath d='M10.2 10.2 15 15'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: 12px center;
+  background-size: 15px;
+  border-color: transparent;
+  border-bottom-color: var(--nier-mid);
+  opacity: 0.7;
+  transition: background-color var(--nier-normal) var(--nier-ease), border-color var(--nier-normal) var(--nier-ease),
+    opacity var(--nier-normal) var(--nier-ease), box-shadow var(--nier-normal) var(--nier-ease);
 }
-.n-input--soft:hover,
+.n-input--soft::placeholder { color: var(--nier-mid); }
+.n-input--soft:hover { opacity: 0.9; border-bottom-color: var(--nier-low); }
 .n-input--soft:focus,
-.n-input--soft:not(:placeholder-shown) { opacity: 1; filter: none; }
+.n-input--soft:not(:placeholder-shown) {
+  opacity: 1;
+  background-color: var(--nier-surface);
+  border-color: var(--nier-low);
+}
 .n-hint { font-size: var(--fs-xs); color: var(--nier-mid); }
 
 /* ---------- Texte tronqué qui défile (composant Marquee) ---------- */
@@ -355,9 +367,9 @@ body::after {
    des boutons au survol (signature NieR) et le défilement
    des titres trop longs (sinon illisibles). */
 @media (prefers-reduced-motion: reduce) {
-  :where(*:not(.intro, .intro *, .hack-stage, .n-marquee-track, .n-btn, .card, .pcard)),
+  :where(*:not(.intro, .intro *, .hack-stage, .n-marquee-track, .n-btn, .card, .pcard, .now-playing-pause, .pdf-leaf, .pdf-leaf *)),
   :where(*:not(.intro, .intro *))::before,
-  :where(*:not(.intro, .intro *))::after {
+  :where(*:not(.intro, .intro *, .pdf-leaf *))::after {
     animation: none !important;
     transition: none !important;
   }

@@ -8,24 +8,114 @@
 .pdf-toolbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
 }
-.pdf-toolbar .n-btn { padding: 4px 14px; }
-.pdf-toolbar .n-btn::before { display: none; }
+.pdf-toolbar .n-btn { padding: 4px 14px; font-size: var(--fs-sm); }
+.pdf-zoom-btn::before { display: none; }
+.pdf-modes { display: flex; gap: 6px; margin-right: 12px; }
 .pdf-zoom { min-width: 60px; text-align: center; font-size: var(--fs-sm); }
-.pdf-pages {
+.pdf-area {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  padding: 24px;
+  background: var(--nier-low-trans);
+}
+.pdf-area--scroll {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 16px;
-  padding: 16px;
-  background: var(--nier-low-trans);
 }
-.pdf-page {
-  flex: none;
+.pdf-page,
+.pdf-canvas { flex: none; display: block; background: #fff; }
+.pdf-canvas { object-fit: contain; }
+.pdf-page { box-shadow: var(--nier-drop) var(--nier-drop) 0 rgba(0, 0, 0, 0.3); }
+
+/* ---------- Livre : double page et page qui tourne ---------- */
+.pdf-area--book { display: flex; }
+.pdf-book-wrap {
+  margin: auto; /* centré, et défilable une fois zoomé */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.pdf-book {
+  position: relative;
+  display: flex;
+  perspective: 2400px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.pdf-side {
+  position: relative;
+  flex: 1 1 0;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+}
+.pdf-side.is-empty { box-shadow: none; cursor: default; }
+/* Pli central : ombre douce de chaque côté de la reliure. */
+.pdf-side--left:not(.is-empty)::after,
+.pdf-side--right:not(.is-empty)::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 12%;
+  pointer-events: none;
+}
+.pdf-side--left::after { right: 0; background: linear-gradient(90deg, transparent, rgba(0, 0, 0, 0.18)); }
+.pdf-side--right::after { left: 0; background: linear-gradient(270deg, transparent, rgba(0, 0, 0, 0.18)); }
+
+.pdf-leaf {
+  position: absolute;
+  top: 0;
+  z-index: 2;
+  transform-style: preserve-3d;
+  animation-duration: 0.7s;
+  animation-timing-function: cubic-bezier(0.45, 0.05, 0.35, 1);
+  animation-fill-mode: forwards;
+  pointer-events: none;
+}
+/* Vers l'avant : la page de droite pivote autour de la reliure vers la gauche. */
+.pdf-leaf--next { left: 50%; transform-origin: left center; animation-name: pdf-flip-next; }
+.pdf-leaf--prev { left: 0; transform-origin: right center; animation-name: pdf-flip-prev; }
+@keyframes pdf-flip-next {
+  from { transform: rotateY(0deg); }
+  to { transform: rotateY(-180deg); }
+}
+@keyframes pdf-flip-prev {
+  from { transform: rotateY(0deg); }
+  to { transform: rotateY(180deg); }
+}
+.pdf-leaf-face {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
   background: #fff;
-  box-shadow: var(--nier-drop) var(--nier-drop) 0 rgba(0, 0, 0, 0.3);
+  overflow: hidden;
 }
+.pdf-leaf-face.is-empty { background: transparent; }
+.pdf-leaf-back { transform: rotateY(180deg); }
+/* Ombre qui se creuse au milieu du mouvement, pour le relief du papier. */
+.pdf-leaf-face::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.25), transparent 40%);
+  opacity: 0;
+  animation: pdf-leaf-shade 0.7s ease-in-out;
+}
+.pdf-leaf--prev .pdf-leaf-face:not(.pdf-leaf-back)::after,
+.pdf-leaf--next .pdf-leaf-back::after { background: linear-gradient(270deg, rgba(0, 0, 0, 0.25), transparent 40%); }
+@keyframes pdf-leaf-shade {
+  50% { opacity: 1; }
+}
+.pdf-book-nav { display: flex; align-items: center; gap: 16px; }
+.pdf-book-nav .n-btn { padding: 4px 16px; }
+.pdf-book-nav .n-btn::before { display: none; }
+.pdf-book-pages { min-width: 160px; text-align: center; font-size: var(--fs-sm); }

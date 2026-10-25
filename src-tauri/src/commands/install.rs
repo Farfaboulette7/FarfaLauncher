@@ -41,8 +41,15 @@ pub fn install_info(state: State<'_, AppState>) -> InstallInfo {
     }
 }
 
+/// `dest` : dossier où créer celui du jeu, pour cette installation seulement
+/// (`None` = dossier des jeux des paramètres).
 #[tauri::command]
-pub fn install_game(app: AppHandle, state: State<'_, AppState>, rom_id: i64) -> AppResult<()> {
+pub fn install_game(app: AppHandle, state: State<'_, AppState>, rom_id: i64, dest: Option<String>) -> AppResult<()> {
+    let install_root = match dest.map(PathBuf::from) {
+        Some(d) if d.is_absolute() => d,
+        Some(_) => return Err(AppError::Internal),
+        None => state.install_root(),
+    };
     let client = state.client()?;
     let cancel = CancellationToken::new();
     {
@@ -59,7 +66,7 @@ pub fn install_game(app: AppHandle, state: State<'_, AppState>, rom_id: i64) -> 
     let job = InstallJob {
         client,
         config_dir: state.config_dir.clone(),
-        install_root: state.install_root(),
+        install_root,
         target: platform::detect(),
         cancel,
         on_progress: Arc::new(move |p| {
@@ -139,6 +146,23 @@ pub async fn uninstall_game(state: State<'_, AppState>, rom_id: i64, keep_saves:
     }
     let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
     install::uninstall(&state.config_dir, st, keep_saves).await
+}
+
+/// Déplace un jeu installé : `dest` est le dossier qui contiendra le sien.
+#[tauri::command]
+pub async fn move_game(state: State<'_, AppState>, rom_id: i64, dest: String) -> AppResult<state::InstalledGame> {
+    let dest = PathBuf::from(dest);
+    if !dest.is_absolute() {
+        return Err(AppError::Internal);
+    }
+    if state.running.lock().unwrap().contains(&rom_id) {
+        return Err(AppError::AlreadyRunning);
+    }
+    if state.installs.lock().unwrap().contains_key(&rom_id) {
+        return Err(AppError::Busy);
+    }
+    let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
+    install::move_game(&state.config_dir, st, dest).await
 }
 
 #[tauri::command]

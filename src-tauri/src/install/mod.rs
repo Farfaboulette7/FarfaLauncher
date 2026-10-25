@@ -287,6 +287,124 @@ pub async fn uninstall(config_dir: &Path, st: InstalledGame, keep_saves: bool) -
     Ok(())
 }
 
+/// Dossier des jeux par défaut : `Jeux` à côté du logiciel installé, s'il est
+/// accessible en écriture ; sinon `~/FarfaLauncher/Jeux` (et toujours en
+/// développement, pour ne pas installer dans `target/`).
+pub fn default_root(home: &Path) -> PathBuf {
+    let fallback = home.join("FarfaLauncher").join("Jeux");
+    if cfg!(debug_assertions) {
+        return fallback;
+    }
+    match app_location() {
+        Some(dir) if is_writable(&dir) => dir.join("Jeux"),
+        Some(dir) => {
+            tracing::info!("{} n'est pas modifiable : jeux dans {}", dir.display(), fallback.display());
+            fallback
+        }
+        None => fallback,
+    }
+}
+
+/// Dossier où le logiciel est installé.
+fn app_location() -> Option<PathBuf> {
+    // AppImage : l'exécutable tourne depuis un montage temporaire en lecture seule.
+    if let Some(p) = std::env::var_os("APPIMAGE") {
+        return PathBuf::from(p).parent().map(Path::to_path_buf);
+    }
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    if cfg!(target_os = "macos") {
+        // …/FarfaLauncher.app/Contents/MacOS → dossier qui contient le .app
+        return dir
+            .ancestors()
+            .find(|a| a.extension().is_some_and(|e| e.eq_ignore_ascii_case("app")))
+            .and_then(Path::parent)
+            .map(Path::to_path_buf);
+    }
+    Some(dir.to_path_buf())
+}
+
+fn is_writable(dir: &Path) -> bool {
+    let probe = dir.join(format!(".farfa-ecriture-{}", std::process::id()));
+    let ok = std::fs::write(&probe, b"").is_ok();
+    let _ = std::fs::remove_file(&probe);
+    ok
+}
+
+/// Déplace un jeu installé dans `dest_parent` (son dossier garde son nom).
+/// Renommage direct sur le même disque, sinon copie puis suppression.
+pub async fn move_game(config_dir: &Path, mut st: InstalledGame, dest_parent: PathBuf) -> AppResult<InstalledGame> {
+    let old = st.game_dir.clone();
+    let name = old.file_name().ok_or(AppError::Internal)?.to_owned();
+    let target = dest_parent.join(&name);
+    if target == old {
+        return Ok(st);
+    }
+    if target.starts_with(&old) {
+        return Err(AppError::MoveIntoItself);
+    }
+    if target.exists() {
+        return Err(AppError::DestinationExists);
+    }
+    let (from, to) = (old.clone(), target.clone());
+    blocking(move || -> AppResult<()> {
+        std::fs::create_dir_all(&dest_parent).map_err(|e| disk_error("création du dossier de destination", e))?;
+        match std::fs::rename(&from, &to) {
+            Ok(()) => return Ok(()),
+            Err(e) if !crosses_devices(&e) => return Err(disk_error("déplacement du jeu", e)),
+            Err(_) => {}
+        }
+        // Autre disque : copie complète, puis suppression de l'original.
+        ensure_space(&to, dir_size(&from))?;
+        if let Err(e) = copy_dir(&from, &to) {
+            let _ = std::fs::remove_dir_all(&to);
+            return Err(e);
+        }
+        if let Err(e) = std::fs::remove_dir_all(&from) {
+            tracing::warn!("copie réussie mais l'ancien dossier {} n'a pas pu être supprimé: {e}", from.display());
+        }
+        Ok(())
+    })
+    .await?;
+    // Sauvegardes rangées dans le dossier du jeu : elles ont suivi.
+    if let Some(rest) = st.saves.dir.as_ref().and_then(|d| d.strip_prefix(&old).ok()).map(Path::to_path_buf) {
+        st.saves.dir = Some(target.join(rest));
+    }
+    st.game_dir = target;
+    state::write_state(config_dir, &st)?;
+    tracing::info!("« {} » déplacé de {} vers {}", st.name, old.display(), st.game_dir.display());
+    Ok(st)
+}
+
+fn crosses_devices(e: &std::io::Error) -> bool {
+    // Windows : ERROR_NOT_SAME_DEVICE (17) ; Unix : EXDEV (18).
+    e.kind() == std::io::ErrorKind::CrossesDevices || (cfg!(windows) && e.raw_os_error() == Some(17)) || (cfg!(unix) && e.raw_os_error() == Some(18))
+}
+
+pub fn dir_size(dir: &Path) -> u64 {
+    let Ok(rd) = std::fs::read_dir(dir) else { return 0 };
+    rd.filter_map(Result::ok)
+        .map(|e| match e.file_type() {
+            Ok(t) if t.is_dir() => dir_size(&e.path()),
+            Ok(t) if t.is_file() => e.metadata().map(|m| m.len()).unwrap_or(0),
+            _ => 0,
+        })
+        .sum()
+}
+
+fn copy_dir(from: &Path, to: &Path) -> AppResult<()> {
+    std::fs::create_dir_all(to).map_err(|e| disk_error("création d'un dossier", e))?;
+    for entry in std::fs::read_dir(from).map_err(|e| disk_error("lecture du dossier du jeu", e))?.filter_map(Result::ok) {
+        let (src, dst) = (entry.path(), to.join(entry.file_name()));
+        if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            copy_dir(&src, &dst)?;
+        } else {
+            std::fs::copy(&src, &dst).map_err(|e| disk_error("copie d'un fichier", e))?;
+        }
+    }
+    Ok(())
+}
+
 /// Supprime tout sauf les dossiers save/saves (et leurs dossiers parents).
 fn remove_all_but_saves(root: &Path, dir: &Path) -> AppResult<bool> {
     let mut kept_any = false;
@@ -400,6 +518,43 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> AppResult<T> + Send + '
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn move_keeps_registry_and_saves() {
+        let base = std::env::temp_dir().join(format!("farfa-move-{}", uuid::Uuid::new_v4()));
+        let (config, old) = (base.join("config"), base.join("a").join("Zelda"));
+        std::fs::create_dir_all(old.join("saves")).unwrap();
+        std::fs::write(old.join("saves/slot.sav"), b"x").unwrap();
+        let st = InstalledGame {
+            rom_id: 7,
+            name: "Zelda".into(),
+            version: None,
+            version_raw: None,
+            target: Target::Windows,
+            archive_name: "z.zip".into(),
+            executable: Some("z.exe".into()),
+            pending_candidates: vec![],
+            roms: vec![],
+            mods_downloaded: vec![],
+            saves: state::SaveSync { dir: Some(old.join("saves")), ..Default::default() },
+            installed_at: 0,
+            updated_at: 0,
+            game_dir: old.clone(),
+        };
+        state::write_state(&config, &st).unwrap();
+
+        let moved = move_game(&config, st, base.join("b")).await.unwrap();
+        let new = base.join("b").join("Zelda");
+        assert_eq!(moved.game_dir, new);
+        assert_eq!(moved.saves.dir.as_deref(), Some(new.join("saves").as_path()));
+        assert!(new.join("saves/slot.sav").exists() && !old.exists());
+        assert_eq!(state::find(&config, 7).unwrap().game_dir, new);
+        // Déjà occupé / dans son propre dossier : refusé.
+        std::fs::create_dir_all(base.join("c").join("Zelda")).unwrap();
+        assert!(matches!(move_game(&config, moved.clone(), base.join("c")).await, Err(AppError::DestinationExists)));
+        assert!(matches!(move_game(&config, moved, new.join("sub")).await, Err(AppError::MoveIntoItself)));
+        std::fs::remove_dir_all(&base).unwrap();
+    }
 
     #[test]
     fn uninstall_keeps_only_saves() {
