@@ -31,7 +31,11 @@ pub struct SaveLocation {
 /// Recomps dont le dossier de données contient bien plus que les sauvegardes
 /// (ROM, mods…) : on ne prend que les fichiers de sauvegarde.
 /// (nom de l'exécutable sans extension, dossier de données, motifs)
-const KNOWN: &[(&str, &str, &[&str])] = &[("sm64coopdx", "sm64coopdx", &["sm64_save_file*.bin"])];
+const KNOWN: &[(&str, &str, &[&str])] = &[
+    ("sm64coopdx", "sm64coopdx", &["sm64_save_file*.bin"]),
+    // %APPDATA%/MHGURecomp/save/save_0/system…
+    ("mhgurecomp", "MHGURecomp/save", &[]),
+];
 
 /// Dossiers où les jeux rangent leurs données utilisateur, par système.
 pub fn data_roots() -> Vec<PathBuf> {

@@ -34,6 +34,9 @@ pub struct InstalledGame {
     /// ROMs copiées à côté de l'exécutable (relatives au dossier du jeu).
     #[serde(default)]
     pub roms: Vec<String>,
+    /// Fichiers de `ROM/` déjà posés, pour ne pas les retélécharger s'ils n'ont pas changé.
+    #[serde(default)]
+    pub rom_sources: Vec<RomSource>,
     /// Archives de mods téléchargées dans `mods_downloads/`.
     #[serde(default)]
     pub mods_downloaded: Vec<String>,
@@ -53,6 +56,22 @@ pub struct InstalledGame {
     /// Dossier du jeu (non stocké dans le fichier, déduit de son emplacement).
     #[serde(skip_deserializing, default)]
     pub game_dir: PathBuf,
+}
+
+/// Un fichier de `ROM/` du serveur et ce qu'il a donné dans le dossier du jeu.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RomSource {
+    /// Chemin sur le serveur, relatif au dossier du jeu (`ROM/x.z64`).
+    pub rel_path: String,
+    pub size: u64,
+    #[serde(default)]
+    pub sha1: Option<String>,
+    #[serde(default)]
+    pub md5: Option<String>,
+    /// Ce qui a été posé, relatif au dossier du jeu : la copie de la ROM, ou
+    /// les dossiers/fichiers de premier niveau d'une archive `.extract.zip`.
+    pub placed: Vec<String>,
 }
 
 /// Lancement direct du jeu, tel que son launcher le fait.
@@ -245,6 +264,7 @@ mod tests {
             executable: Some("game.exe".into()),
             pending_candidates: vec![],
             roms: vec![],
+            rom_sources: vec![],
             mods_downloaded: vec![],
             saves: SaveSync::default(),
             direct_launch: None,

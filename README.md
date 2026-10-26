@@ -128,6 +128,13 @@ l'architecture dans le nom (`windows`/`win32`/`win64`, `linux`, `mac`/`macos` +
 Les archives Android, iOS, consoles, etc. sont ignorées. Si plusieurs archives conviennent,
 la convention `_<Plateforme>` gagne, puis (Linux) AppImage > tar.gz > zip.
 
+**Données de jeu volumineuses** (ex. `exefs`/`romfs` d'un jeu Switch, des dizaines de
+milliers de fichiers) : les mettre dans **une archive `ROM/<nom>.extract.zip`** (zip sans
+compression suffit). Au lieu d'être copiée, elle est extraite à côté de l'exécutable
+(`MHGU-data.extract.zip` contenant `data/exefs` et `data/romfs` → `data/` à côté de
+`mhgurecomp.exe`). Une ROM inchangée sur le serveur (chemin, taille, empreinte) et toujours
+en place n'est pas retéléchargée lors d'une mise à jour de la recomp.
+
 À éviter : des archives **déjà extraites** dans `RECOMP/`. Seuls les fichiers posés
 directement dans `RECOMP/` sont pris en compte, et des milliers de fichiers dans un jeu
 ralentissent fortement RomM.

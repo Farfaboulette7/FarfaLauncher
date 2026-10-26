@@ -40,8 +40,7 @@ pub fn is_protected(rel: &Path) -> bool {
 pub fn uncompressed_size(archive: &Path, kind: ArchiveKind) -> AppResult<u64> {
     match kind {
         ArchiveKind::Zip => {
-            let f = fs::File::open(archive).map_err(|e| log_err(AppError::Disk, "ouverture de l'archive", e))?;
-            let mut zip = zip::ZipArchive::new(f).map_err(|e| log_err(AppError::Extract, "lecture du zip", e))?;
+            let mut zip = open_zip(archive)?;
             let mut total = 0u64;
             for i in 0..zip.len() {
                 if let Ok(entry) = zip.by_index_raw(i) {
@@ -81,13 +80,31 @@ pub fn extract(
     }
 }
 
+/// Ouvre un zip qui commence au début du fichier (cas de toutes nos archives).
+/// La détection par défaut de la bibliothèque relit tout le fichier pour un
+/// zip64 : des dizaines de Go pour une archive de 12 Go. Repli sur elle si
+/// l'archive a des données en tête (auto-extractible…).
+fn open_zip(archive: &Path) -> AppResult<zip::ZipArchive<io::BufReader<fs::File>>> {
+    use zip::read::{ArchiveOffset, Config};
+    let open = || -> AppResult<io::BufReader<fs::File>> {
+        let f = fs::File::open(archive).map_err(|e| log_err(AppError::Disk, "ouverture de l'archive", e))?;
+        Ok(io::BufReader::new(f))
+    };
+    match zip::ZipArchive::with_config(Config { archive_offset: ArchiveOffset::Known(0) }, open()?) {
+        Ok(zip) => Ok(zip),
+        Err(e) => {
+            tracing::info!("zip à décalage inconnu ({e}) : détection complète");
+            zip::ZipArchive::new(open()?).map_err(|e| log_err(AppError::Extract, "lecture du zip", e))
+        }
+    }
+}
+
 fn skip_entry(rel: &Path) -> bool {
     rel.components().any(|c| matches!(c, Component::Normal(s) if s == "__MACOSX" || s == ".DS_Store"))
 }
 
 fn extract_zip(archive: &Path, staging: &Path, cancel: &CancellationToken, progress: &mut impl FnMut(u64, u64)) -> AppResult<()> {
-    let f = fs::File::open(archive).map_err(|e| log_err(AppError::Disk, "ouverture de l'archive", e))?;
-    let mut zip = zip::ZipArchive::new(io::BufReader::new(f)).map_err(|e| log_err(AppError::Extract, "lecture du zip", e))?;
+    let mut zip = open_zip(archive)?;
     let total = zip.len() as u64;
     for i in 0..zip.len() {
         if cancel.is_cancelled() {

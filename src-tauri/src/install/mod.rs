@@ -17,7 +17,7 @@ use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::{log_err, AppError, AppResult};
-use crate::platform::Target;
+use crate::platform::{ArchiveKind, Target};
 use crate::romm::client::RommClient;
 use crate::romm::library::{self, Game, RemoteFile};
 use download::disk_error;
@@ -83,14 +83,20 @@ impl InstallJob {
             game_dir.display()
         );
 
-        // 1. Espace disque (estimation avant téléchargement).
-        let rom_bytes: u64 = game.rom_files.iter().map(|f| f.size).sum();
+        // 1. Espace disque (estimation avant téléchargement). Les ROMs déjà
+        //    posées et inchangées sur le serveur ne sont pas retéléchargées.
+        let old_sources = previous.as_ref().map(|p| p.rom_sources.clone()).unwrap_or_default();
+        let rom_fetch: Vec<&RemoteFile> = game.rom_files.iter().filter(|f| unchanged_rom(&old_sources, f, &game_dir).is_none()).collect();
+        if rom_fetch.len() < game.rom_files.len() {
+            tracing::info!("{} ROM(s) inchangée(s), non retéléchargée(s)", game.rom_files.len() - rom_fetch.len());
+        }
+        let rom_bytes: u64 = rom_fetch.iter().map(|f| f.size).sum();
         let estimate = archive.file.size + rom_bytes * 2 + (archive.file.size as f64 * UNZIP_RATIO_ESTIMATE) as u64;
         ensure_space(&game_dir, estimate)?;
 
         // 2. Téléchargements : archive puis ROMs, progression en octets cumulés.
         let mut files: Vec<(RemoteFile, PathBuf)> = vec![(archive.file.clone(), downloads.join("archive").join(&archive.file.file_name))];
-        for f in &game.rom_files {
+        for f in rom_fetch {
             files.push((f.clone(), downloads.join(rel_to_path(&f.rel_path))));
         }
         let total: u64 = files.iter().map(|(f, _)| f.size).sum();
@@ -170,6 +176,7 @@ impl InstallJob {
             executable: None,
             pending_candidates: Vec::new(),
             roms: previous.as_ref().map(|p| p.roms.clone()).unwrap_or_default(),
+            rom_sources: old_sources,
             mods_downloaded: previous.as_ref().map(|p| p.mods_downloaded.clone()).unwrap_or_default(),
             saves: previous.as_ref().map(|p| p.saves.clone()).unwrap_or_default(),
             direct_launch: None,
@@ -203,33 +210,66 @@ pub async fn finalize(config_dir: &Path, mut st: InstalledGame, executable: &str
     let rom_dir_rel = exe_parent(&exe_rel);
     let downloads = game_dir.join(INTERNAL_DIR).join("downloads");
     let rom_files: Vec<RemoteFile> = game.rom_files.clone();
-    let st_roms_old = st.roms.clone();
+    let old_sources = st.rom_sources.clone();
     let gd = game_dir.clone();
     let exe_for_perm = exe_rel.clone();
-    let roms = blocking(move || -> AppResult<Vec<String>> {
+    let (roms, sources) = blocking(move || -> AppResult<(Vec<String>, Vec<state::RomSource>)> {
         let mut placed = Vec::new();
+        let mut sources = Vec::new();
         for f in &rom_files {
             let staged = downloads.join(rel_to_path(&f.rel_path));
+            if !staged.exists() {
+                // Pas retéléchargée car inchangée : ce qui est en place est gardé.
+                match unchanged_rom(&old_sources, f, &gd) {
+                    Some(s) => {
+                        if !is_extract_archive(&f.file_name) {
+                            placed.extend(s.placed.iter().cloned());
+                        }
+                        sources.push(s);
+                    }
+                    None => tracing::warn!("ROM absente des téléchargements, ignorée: {}", f.rel_path),
+                }
+                continue;
+            }
             // ROM/sous/dossier/x.z64 → <dossier de l'exe>/sous/dossier/x.z64
             let inner = f.rel_path.strip_prefix("ROM/").or_else(|| f.rel_path.strip_prefix("rom/")).unwrap_or(&f.file_name);
             let dest_rel = rom_dir_rel.join(rel_to_path(inner));
             let dest = gd.join(&dest_rel);
-            if let Some(parent) = dest.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| disk_error("dossier des ROMs", e))?;
-            }
-            std::fs::copy(&staged, &dest).map_err(|e| disk_error("copie d'une ROM", e))?;
-            placed.push(path_to_rel(&dest_rel));
+            let out = if is_extract_archive(&f.file_name) {
+                // Données en milliers de fichiers (romfs…) : extraites à côté de l'exécutable.
+                let dir_rel = dest_rel.parent().map(Path::to_path_buf).unwrap_or_default();
+                let staging = gd.join(INTERNAL_DIR).join("staging-rom");
+                extract::extract(&staged, ArchiveKind::Zip, &staging, &CancellationToken::new(), |_, _| {})?;
+                let top: Vec<String> = std::fs::read_dir(&staging)
+                    .map_err(|e| disk_error("lecture de l'archive extraite", e))?
+                    .filter_map(Result::ok)
+                    .map(|e| path_to_rel(&dir_rel.join(e.file_name())))
+                    .collect();
+                let n = extract::merge_into(&staging, &gd.join(&dir_rel))?;
+                let _ = std::fs::remove_dir_all(&staging);
+                let _ = std::fs::remove_file(&staged);
+                tracing::info!("{} extraite : {n} fichier(s) posés", f.rel_path);
+                top
+            } else {
+                if let Some(parent) = dest.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| disk_error("dossier des ROMs", e))?;
+                }
+                std::fs::copy(&staged, &dest).map_err(|e| disk_error("copie d'une ROM", e))?;
+                placed.push(path_to_rel(&dest_rel));
+                vec![path_to_rel(&dest_rel)]
+            };
+            sources.push(state::RomSource { rel_path: f.rel_path.clone(), size: f.size, sha1: f.sha1.clone(), md5: f.md5.clone(), placed: out });
         }
         // ROMs d'une installation précédente restées à un autre endroit : conservées
         // (on ne supprime jamais de fichiers du jeu).
-        let _ = st_roms_old;
         make_executable(&gd.join(&exe_for_perm));
         remove_quarantine(&gd);
         let _ = std::fs::remove_dir_all(&downloads);
-        Ok(placed)
+        Ok((placed, sources))
     })
     .await?;
     st.roms = roms;
+    st.rom_sources = sources;
     st.executable = Some(path_to_rel(&exe_rel));
     st.pending_candidates.clear();
     state::write_state(config_dir, &st)?;
@@ -433,6 +473,29 @@ fn remove_all_but_saves(root: &Path, dir: &Path) -> AppResult<bool> {
     Ok(kept_any)
 }
 
+/// Archive de `ROM/` à extraire à côté de l'exécutable plutôt qu'à copier
+/// telle quelle (ex. `exefs`/`romfs` d'un jeu Switch : des dizaines de milliers
+/// de fichiers, qui rendraient RomM très lent s'ils étaient posés un par un).
+pub fn is_extract_archive(file_name: &str) -> bool {
+    file_name.to_ascii_lowercase().ends_with(".extract.zip")
+}
+
+/// ROM déjà posée lors d'une installation précédente, identique sur le serveur
+/// (chemin, taille, empreintes) et toujours présente sur le disque.
+fn unchanged_rom(sources: &[state::RomSource], f: &RemoteFile, game_dir: &Path) -> Option<state::RomSource> {
+    sources
+        .iter()
+        .find(|s| {
+            s.rel_path == f.rel_path
+                && s.size == f.size
+                && (f.sha1.is_none() || s.sha1 == f.sha1)
+                && (f.md5.is_none() || s.md5 == f.md5)
+                && !s.placed.is_empty()
+                && s.placed.iter().all(|p| game_dir.join(rel_to_path(p)).exists())
+        })
+        .cloned()
+}
+
 fn exe_parent(exe_rel: &Path) -> PathBuf {
     // Pour un bundle `.app`, la « position » de l'exécutable est celle du bundle.
     exe_rel.parent().map(Path::to_path_buf).unwrap_or_default()
@@ -539,6 +602,7 @@ mod tests {
             executable: Some("z.exe".into()),
             pending_candidates: vec![],
             roms: vec![],
+            rom_sources: vec![],
             mods_downloaded: vec![],
             saves: state::SaveSync { dir: Some(old.join("saves")), ..Default::default() },
             direct_launch: None,
@@ -560,6 +624,34 @@ mod tests {
         assert!(matches!(move_game(&config, moved.clone(), base.join("c")).await, Err(AppError::DestinationExists)));
         assert!(matches!(move_game(&config, moved, new.join("sub")).await, Err(AppError::MoveIntoItself)));
         std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn unchanged_roms_are_not_fetched_again() {
+        let root = std::env::temp_dir().join(format!("farfa-roms-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("data/romfs")).unwrap();
+        let f = RemoteFile { id: 1, file_name: "MHGU-data.extract.zip".into(), rel_path: "ROM/MHGU-data.extract.zip".into(), size: 10, sha1: None, md5: None };
+        let src = state::RomSource { rel_path: f.rel_path.clone(), size: 10, sha1: None, md5: None, placed: vec!["data".into()] };
+        assert!(is_extract_archive(&f.file_name) && !is_extract_archive("game.zip"));
+        assert!(unchanged_rom(std::slice::from_ref(&src), &f, &root).is_some());
+        // Autre taille sur le serveur, ou dossier supprimé : à retélécharger.
+        assert!(unchanged_rom(&[state::RomSource { size: 9, ..src.clone() }], &f, &root).is_none());
+        std::fs::remove_dir_all(root.join("data")).unwrap();
+        assert!(unchanged_rom(&[src], &f, &root).is_none());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// Vraie archive : `FARFA_EXTRACT_ZIP=chemin.extract.zip cargo test -- --ignored extract_real`.
+    #[test]
+    #[ignore]
+    fn extract_real_archive() {
+        let Some(zip) = std::env::var_os("FARFA_EXTRACT_ZIP").map(PathBuf::from) else { return };
+        let root = std::env::temp_dir().join(format!("farfa-real-{}", uuid::Uuid::new_v4()));
+        let staging = root.join(INTERNAL_DIR).join("staging-rom");
+        extract::extract(&zip, ArchiveKind::Zip, &staging, &CancellationToken::new(), |_, _| {}).unwrap();
+        let n = extract::merge_into(&staging, &root).unwrap();
+        println!("{n} fichiers posés dans {}", root.display());
+        assert!(n > 0);
     }
 
     #[test]
