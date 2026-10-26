@@ -105,7 +105,10 @@
 .gd-actions .n-panel-header { font-size: var(--fs-sm); padding-block: 6px; }
 .gd-actions .n-panel-body { padding: 14px 16px; }
 .gd-actions .n-btn--primary { font-size: var(--fs-md); padding: 9px 24px; }
-.gd-actions-body { max-height: 52vh; overflow-y: auto; }
+.gd-actions .n-btn .n-spinner { background: currentColor; vertical-align: -1px; margin-right: 6px; }
+/* Hauteur fixe : les boutons qui apparaissent ou disparaissent (installation,
+   jeu lancé, mise à jour…) ne doivent pas redimensionner la boîte au-dessus. */
+.gd-actions-body { height: clamp(210px, 32vh, 270px); overflow-y: auto; }
 .gd-cover--box { background: transparent; box-shadow: none; }
 .gd-title-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; min-width: 0; }
 .gd-title-block { min-width: 0; }

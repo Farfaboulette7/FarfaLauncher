@@ -69,7 +69,7 @@ pub fn find_candidates(game_dir: &Path, target: Target) -> Vec<PathBuf> {
     walk(game_dir, Path::new(""), 0, target, &mut files);
     let mut candidates = match target {
         Target::Windows => files.into_iter().filter(|p| is_windows_game_exe(p)).collect(),
-        Target::Linux | Target::SteamOS => linux_candidates(game_dir, files),
+        Target::Linux | Target::LinuxArch | Target::SteamOS => linux_candidates(game_dir, files),
         Target::MacArm | Target::MacIntel => files,
     };
     // Les moins profonds d'abord, puis par nom.

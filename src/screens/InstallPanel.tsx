@@ -45,7 +45,8 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
     | { kind: "conflict"; localModified: number | null; serverModified: string }
     | null
   >(null);
-  const [launching, setLaunching] = useState(false);
+  /** Étape en cours entre le clic sur « Jouer » et le lancement (libellé du bouton). */
+  const [launching, setLaunching] = useState<string | null>(null);
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<string[]>([]);
   /** Désinstallation ou déplacement en cours (gardé même si on quitte la page). */
@@ -70,26 +71,27 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
 
   async function launch(choice: SaveChoice) {
     setSaveAsk(null);
-    setLaunching(true);
+    setLaunching(choice === "server" ? "Récupération de la sauvegarde du serveur…" : "Lancement…");
     const err = await installs.play(game.id, choice);
-    setLaunching(false);
+    setLaunching(null);
     if (err) setMessage(err);
+    else if (choice === "server") setSaveNotice("Sauvegarde du serveur récupérée (l'ancienne est gardée dans .farfalauncher/backups).");
   }
 
   /** « Jouer » : compare d'abord la sauvegarde locale à celle du serveur. */
   async function startPlay() {
     setMessage(null);
     setSaveNotice(null);
-    setLaunching(true);
+    setLaunching("Vérification des sauvegardes…");
     try {
       const check = await backend.saveCheck(game.id);
-      setLaunching(false);
+      setLaunching(null);
       if (check.status === "unknown") setSaveAsk({ kind: "where", suggestions: check.suggestions, thenPlay: true });
       else if (check.status === "conflict") setSaveAsk({ kind: "conflict", ...check });
       else await launch("unchanged");
     } catch (e) {
       // Sauvegardes indisponibles (droits, serveur…) : on joue quand même.
-      setLaunching(false);
+      setLaunching(null);
       const msg = await onError(e);
       setSaveNotice(isAppError(e) && e.code === "scope_missing" ? msg : `Sauvegardes non vérifiées : ${msg}`);
       await launch("unchanged");
@@ -169,14 +171,20 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
               <button
                 className="n-btn n-btn--primary n-btn--block n-cursor"
                 data-sound="none"
-                disabled={launching}
+                disabled={!!launching}
                 onClick={startPlay}
               >
-                {launching ? "Vérification des sauvegardes…" : "Jouer"}
+                {launching ? (
+                  <>
+                    <span className="n-spinner" /> {launching}
+                  </>
+                ) : (
+                  "Jouer"
+                )}
               </button>
             )}
             {last && <p className="n-hint">{sessionSummary(last)}</p>}
-            {update && runningSince === undefined && !busy && (
+            {update && runningSince === undefined && !busy && !launching && (
               <button className="n-btn n-btn--block gd-update" onClick={() => installs.start(game.id)}>
                 Mettre à jour ({inst.versionRaw ? inst.version : "?"} → {game.serverVersion})
               </button>
@@ -217,7 +225,7 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
         {message && <p className="n-alert">{message}</p>}
         {saveNotice && <p className="n-notice">{saveNotice}</p>}
 
-        {inst && !progress && runningSince === undefined && !busy && (
+        {inst && !progress && runningSince === undefined && !busy && !launching && (
           <div className="gd-inst-actions">
             <button className="n-link" onClick={() => run(() => backend.openGameFolder(game.id))}>
               Ouvrir le dossier du jeu

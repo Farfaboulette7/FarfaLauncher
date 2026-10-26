@@ -119,8 +119,13 @@ roms/portage-<console>/<Nom du jeu>/
 ├── ROM/          → ROM(s) copiées à côté de l'exécutable
 ├── MODS/         → une archive par mod (optionnel)
 └── RECOMP/       → une archive par plateforme : <nom>_<Plateforme>.zip
-                    Plateforme ∈ Windows, Linux, SteamOS, macOS_ARM, macOS_Intel
+                    Plateforme ∈ Windows, Linux, Linux_Arch, SteamOS, macOS_ARM, macOS_Intel
 ```
+
+`Linux_Arch` : build compilée sur Arch Linux (glibc et bibliothèques récentes, ex. la
+`ArchLinux-…zip` de MHGURecomp). Elle n'est proposée que sur Arch et ses dérivées
+(`ID`/`ID_LIKE=arch` dans `/etc/os-release`), jamais sur SteamOS ni sur les autres Linux
+(Bazzite, Fedora, Ubuntu…), qui affichent alors « Non disponible pour votre système ».
 
 Les noms des releases d'origine sont aussi reconnus : le launcher repère le système et
 l'architecture dans le nom (`windows`/`win32`/`win64`, `linux`, `mac`/`macos` +

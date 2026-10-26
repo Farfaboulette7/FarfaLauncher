@@ -47,11 +47,12 @@ export type DeviceAuthPoll =
   | { status: "pending" | "slowDown" | "denied" | "expired" }
   | { status: "approved"; session: SessionInfo };
 
-export type Target = "Windows" | "Linux" | "SteamOS" | "macOS_ARM" | "macOS_Intel";
+export type Target = "Windows" | "Linux" | "Linux_Arch" | "SteamOS" | "macOS_ARM" | "macOS_Intel";
 
 export const TARGET_LABELS: Record<Target, string> = {
   Windows: "Windows",
   Linux: "Linux",
+  Linux_Arch: "Linux (Arch)",
   SteamOS: "SteamOS",
   macOS_ARM: "macOS (Apple Silicon)",
   macOS_Intel: "macOS (Intel)",

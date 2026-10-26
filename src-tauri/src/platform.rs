@@ -1,7 +1,10 @@
 //! Détection du système et choix de l'archive RECOMP correspondante.
 //!
 //! Convention serveur : `RECOMP/<nom>_<Plateforme>.zip` avec
-//! Plateforme ∈ {Windows, Linux, SteamOS, macOS_ARM, macOS_Intel}.
+//! Plateforme ∈ {Windows, Linux, Linux_Arch, SteamOS, macOS_ARM, macOS_Intel}.
+//! `Linux_Arch` : build compilée sur Arch Linux, qui demande une glibc et des
+//! bibliothèques récentes : proposée seulement sur les systèmes de la famille Arch
+//! (hors SteamOS, figé sur une base plus ancienne).
 //! Les noms de releases d'origine sont aussi reconnus (« Jeu-win32-x86_64.zip »,
 //! « Jeu-x86_64.AppImage », « Jeu-macos-arm64.zip », « Jeu-Mac.zip »…), la
 //! convention restant prioritaire quand les deux existent.
@@ -12,6 +15,8 @@ use serde::{Deserialize, Serialize};
 pub enum Target {
     Windows,
     Linux,
+    #[serde(rename = "Linux_Arch")]
+    LinuxArch,
     SteamOS,
     #[serde(rename = "macOS_ARM")]
     MacArm,
@@ -19,7 +24,7 @@ pub enum Target {
     MacIntel,
 }
 
-pub const ALL_TARGETS: [Target; 5] = [Target::Windows, Target::Linux, Target::SteamOS, Target::MacArm, Target::MacIntel];
+pub const ALL_TARGETS: [Target; 6] = [Target::Windows, Target::Linux, Target::LinuxArch, Target::SteamOS, Target::MacArm, Target::MacIntel];
 
 impl Target {
     /// Suffixe officiel dans le nom d'archive.
@@ -27,6 +32,7 @@ impl Target {
         match self {
             Target::Windows => "Windows",
             Target::Linux => "Linux",
+            Target::LinuxArch => "Linux_Arch",
             Target::SteamOS => "SteamOS",
             Target::MacArm => "macOS_ARM",
             Target::MacIntel => "macOS_Intel",
@@ -39,6 +45,7 @@ impl Target {
             Target::SteamOS => &[Target::SteamOS, Target::Linux],
             Target::Windows => &[Target::Windows],
             Target::Linux => &[Target::Linux],
+            Target::LinuxArch => &[Target::LinuxArch, Target::Linux],
             Target::MacArm => &[Target::MacArm],
             Target::MacIntel => &[Target::MacIntel],
         }
@@ -55,17 +62,27 @@ pub fn detect() -> Target {
         } else {
             Target::MacIntel
         }
-    } else if is_steamos() {
-        Target::SteamOS
     } else {
-        Target::Linux
+        let os_release = std::fs::read_to_string("/etc/os-release").unwrap_or_default();
+        if os_release_is_steamos(&os_release) {
+            Target::SteamOS
+        } else if os_release_is_arch(&os_release) {
+            Target::LinuxArch
+        } else {
+            Target::Linux
+        }
     }
 }
 
-fn is_steamos() -> bool {
-    std::fs::read_to_string("/etc/os-release")
-        .map(|s| os_release_is_steamos(&s))
-        .unwrap_or(false)
+fn os_release_value<'a>(content: &'a str, key: &str) -> Option<&'a str> {
+    content.lines().find_map(|l| l.strip_prefix(key)?.strip_prefix('=').map(|v| v.trim().trim_matches('"')))
+}
+
+/// Arch Linux et ses dérivées à jour (CachyOS, EndeavourOS…) ; SteamOS est traité à part.
+fn os_release_is_arch(content: &str) -> bool {
+    let id = os_release_value(content, "ID").unwrap_or_default();
+    let like = os_release_value(content, "ID_LIKE").unwrap_or_default();
+    std::iter::once(id).chain(like.split_whitespace()).any(|v| v.eq_ignore_ascii_case("arch"))
 }
 
 fn os_release_is_steamos(content: &str) -> bool {
@@ -112,6 +129,7 @@ pub struct ArchiveMatch {
 enum Os {
     Windows,
     Linux,
+    LinuxArch,
     SteamOS,
     Mac,
 }
@@ -175,6 +193,8 @@ pub fn archive_matches(file_name: &str) -> Vec<ArchiveMatch> {
 
     let os = if has(&["steamos", "steamdeck", "deck"]) {
         Os::SteamOS
+    } else if has(&["arch", "archlinux"]) {
+        Os::LinuxArch
     } else if has(&["windows", "win", "win32", "win64", "w64", "mingw"]) {
         Os::Windows
     } else if has(&["macos", "mac", "osx", "darwin", "apple"]) {
@@ -197,17 +217,21 @@ pub fn archive_matches(file_name: &str) -> Vec<ArchiveMatch> {
     let explicit = if arch == Arch::Any { 0 } else { 10 };
 
     match (os, arch) {
-        (Os::Windows, Arch::Arm64) | (Os::Linux, Arch::Arm64) | (Os::SteamOS, Arch::Arm64) => Vec::new(),
+        (Os::Windows | Os::Linux | Os::LinuxArch | Os::SteamOS, Arch::Arm64) => Vec::new(),
         (Os::Windows, _) if kind == ArchiveKind::Zip => vec![ArchiveMatch { target: Target::Windows, kind, score: 50 + explicit }],
         (Os::Windows, _) => Vec::new(),
-        (Os::Linux | Os::SteamOS, _) => {
+        (Os::Linux | Os::LinuxArch | Os::SteamOS, _) => {
             // AppImage > tar.gz > zip (un AppImage est directement lançable).
             let pref = match kind {
                 ArchiveKind::AppImage => 20,
                 ArchiveKind::TarGz => 10,
                 ArchiveKind::Zip => 0,
             };
-            let target = if os == Os::SteamOS { Target::SteamOS } else { Target::Linux };
+            let target = match os {
+                Os::SteamOS => Target::SteamOS,
+                Os::LinuxArch => Target::LinuxArch,
+                _ => Target::Linux,
+            };
             vec![ArchiveMatch { target, kind, score: 40 + explicit + pref }]
         }
         (Os::Mac, _) if kind != ArchiveKind::Zip => Vec::new(),
@@ -233,6 +257,7 @@ mod tests {
         assert_eq!(targets("sm64coopdx_Windows.zip"), [Target::Windows]);
         assert_eq!(targets("sm64coopdx_Linux.zip"), [Target::Linux]);
         assert_eq!(targets("sm64coopdx_SteamOS.zip"), [Target::SteamOS]);
+        assert_eq!(targets("MHGURecomp_Linux_Arch.zip"), [Target::LinuxArch]);
         assert_eq!(targets("sm64coopdx_macOS_ARM.zip"), [Target::MacArm]);
         assert_eq!(targets("sm64coopdx_macOS_Intel.zip"), [Target::MacIntel]);
         assert_eq!(archive_matches("sm64coopdx_Windows.zip")[0].score, 100);
@@ -265,6 +290,7 @@ mod tests {
         assert_eq!(targets("Paperboat-Mulberry-Delta-Linux.zip"), [Target::Linux]);
         assert_eq!(targets("gen1recomp-0.3.95-windows.zip"), [Target::Windows]);
         assert_eq!(targets("gen1recomp-0.3.95-macos.zip"), [Target::MacArm, Target::MacIntel]);
+        assert_eq!(targets("ArchLinux-MHGURecomp.0.10.0.zip"), [Target::LinuxArch]);
     }
 
     #[test]
@@ -306,5 +332,15 @@ mod tests {
         assert!(os_release_is_steamos("NAME=\"SteamOS\"\nID=steamos\nID_LIKE=arch\n"));
         assert!(os_release_is_steamos("ID=\"steamos\""));
         assert!(!os_release_is_steamos("ID=arch\nID_LIKE=steamos"));
+    }
+
+    #[test]
+    fn arch_builds_only_on_arch() {
+        assert!(os_release_is_arch("ID=arch\n"));
+        assert!(os_release_is_arch("ID=cachyos\nID_LIKE=\"arch\""));
+        assert!(!os_release_is_arch("ID=bazzite\nID_LIKE=\"fedora\""));
+        assert!(!os_release_is_arch("ID=archlike\n"));
+        assert_eq!(Target::Linux.candidates(), &[Target::Linux]);
+        assert!(!Target::SteamOS.candidates().contains(&Target::LinuxArch));
     }
 }
