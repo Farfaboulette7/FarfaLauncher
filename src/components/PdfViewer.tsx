@@ -30,6 +30,15 @@ export function PdfViewer({ path }: { path: string }) {
   const [shapes, setShapes] = useState<Shape[] | null>(null);
   const area = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
+  /** Plein écran : le même lecteur (page en cours, animation) occupe la fenêtre. */
+  const [full, setFull] = useState(false);
+
+  useEffect(() => {
+    if (!full) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setFull(false);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [full]);
 
   useEffect(() => {
     let cancelled = false;
@@ -91,7 +100,7 @@ export function PdfViewer({ path }: { path: string }) {
   const scrollPageW = Math.max(0, Math.min(size.w, 820)) * zoom;
 
   return (
-    <div className="pdf">
+    <div className={`pdf${full ? " pdf--full" : ""}`} role={full ? "dialog" : undefined} aria-modal={full || undefined}>
       <div className="pdf-toolbar">
         <div className="pdf-modes" role="group" aria-label="Affichage">
           <button className="n-btn" aria-pressed={mode === "book"} onClick={() => changeMode("book")}>
@@ -114,23 +123,37 @@ export function PdfViewer({ path }: { path: string }) {
           </button>
         )}
         {doc && <span className="n-hint">{doc.numPages} pages</span>}
+        {full && <span className="n-hint pdf-full-hint">Échap pour fermer</span>}
       </div>
-      <div className={`pdf-area pdf-area--${mode}`} ref={area}>
-        {!doc && (
-          <p>
-            <span className="n-spinner" /> Chargement du livret…
-          </p>
-        )}
-        {doc && shapes && size.w > 0 && mode === "book" && (
-          <Book doc={doc} shapes={shapes} pageW={sideH / sideRatio} pageH={sideH} />
-        )}
-        {doc &&
-          shapes &&
-          size.w > 0 &&
-          mode === "scroll" &&
-          shapes.map((s, i) => (
-            <LazyPage key={i} doc={doc} index={i + 1} width={scrollPageW} height={(scrollPageW * s.h) / s.w} />
-          ))}
+      {/* Bouton hors de la zone défilante : il reste dans le coin. */}
+      <div className="pdf-stage">
+        <button
+          className="gd-zoom pdf-fullscreen"
+          title={full ? "Quitter le plein écran" : "Agrandir le livret"}
+          aria-label={full ? "Quitter le plein écran" : "Agrandir le livret"}
+          onClick={() => setFull((f) => !f)}
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            {full ? <path d="M6 1v5H1M15 6h-5V1M10 15v-5h5M1 10h5v5" /> : <path d="M1 6V1h5M10 1h5v5M15 10v5h-5M6 15H1v-5" />}
+          </svg>
+        </button>
+        <div className={`pdf-area pdf-area--${mode}`} ref={area}>
+          {!doc && (
+            <p>
+              <span className="n-spinner" /> Chargement du livret…
+            </p>
+          )}
+          {doc && shapes && size.w > 0 && mode === "book" && (
+            <Book doc={doc} shapes={shapes} pageW={sideH / sideRatio} pageH={sideH} />
+          )}
+          {doc &&
+            shapes &&
+            size.w > 0 &&
+            mode === "scroll" &&
+            shapes.map((s, i) => (
+              <LazyPage key={i} doc={doc} index={i + 1} width={scrollPageW} height={(scrollPageW * s.h) / s.w} />
+            ))}
+        </div>
       </div>
     </div>
   );

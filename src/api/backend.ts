@@ -236,6 +236,8 @@ export interface SaveSync {
   off: boolean;
   syncedHash: string | null;
   syncedServer: string | null;
+  /** Introuvables même après une partie : on demande à l'utilisateur. */
+  searchedAfterPlay: boolean;
 }
 
 /** Réponse de la vérification des sauvegardes avant de jouer. */

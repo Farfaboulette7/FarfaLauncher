@@ -91,7 +91,9 @@ pub async fn play_game(app: AppHandle, state: State<'_, AppState>, rom_id: i64, 
             tracing::info!("session de {} s ignorée (moins de {MIN_SESSION_SECS} s)", (ended - started).whole_seconds());
         }
         // Même pour une session courte : le joueur a pu sauvegarder.
-        let (save, save_error) = saves::after_play(&state, state.client().ok(), rom_id).await;
+        let (save, save_error) = saves::after_play(&state, state.client().ok(), rom_id, std::time::SystemTime::from(started)).await;
+        // Dossier des sauvegardes peut-être trouvé à la sortie du jeu : état à jour.
+        let game = game.or_else(|| state::find(&state.config_dir, rom_id));
         let _ = app.emit("game-stopped", GameStopped { rom_id, duration_ms: session.duration_ms, recorded, pending, save, save_error, game });
     });
     Ok(())

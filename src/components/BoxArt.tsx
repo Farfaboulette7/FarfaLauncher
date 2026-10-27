@@ -5,11 +5,17 @@ import "./BoxArt.css";
 
 /** Angle de présentation : la tranche (côté gauche) bien visible. */
 const REST = { rx: -8, ry: 28 };
+/** Rotation automatique, comme RomM (0,18° par image à 60 i/s). */
+const AUTO_SPIN_DEG_PER_S = 0.18 * 60;
+/** Pause de la rotation automatique après une manipulation. */
+const IDLE_RESUME_MS = 2000;
 
 interface Props {
   game: Game;
   /** Fiche du jeu : la boîte se tourne à la souris. */
   interactive?: boolean;
+  /** La boîte tourne lentement sur elle-même quand on n'y touche pas. */
+  autoSpin?: boolean;
   /** Prévenu quand l'image affichée est une boîte (3D construite ou détourée). */
   onKind?: (kind: "box" | "flat" | null) => void;
 }
@@ -19,7 +25,7 @@ interface Props {
  * boîte, on construit une vraie boîte 3D en CSS, comme son interface web ;
  * sinon l'image de boîte 3D détourée, sinon la jaquette à plat.
  */
-export function BoxArt({ game, interactive = false, onKind }: Props) {
+export function BoxArt({ game, interactive = false, autoSpin = false, onKind }: Props) {
   const faces = game.boxFaces;
   const front = useCachedImage(faces?.front);
   const side = useCachedImage(faces?.side);
@@ -32,7 +38,7 @@ export function BoxArt({ game, interactive = false, onKind }: Props) {
 
   if (!facesFailed) {
     if (!front.src || !side.src) return <span className="n-spinner boxart-wait" />;
-    return <Box3D front={front.src} side={side.src} back={back.src} interactive={interactive} />;
+    return <Box3D front={front.src} side={side.src} back={back.src} interactive={interactive} autoSpin={autoSpin} />;
   }
   if (flat.src) return <img className={flat.is3d ? "boxart-cutout" : "boxart-flat"} src={flat.src} alt="" draggable={false} />;
   return null;
@@ -52,14 +58,44 @@ function useRatio(src: string | null): number | null {
   return ratio;
 }
 
-function Box3D({ front, side, back, interactive }: { front: string; side: string; back: string | null; interactive: boolean }) {
+interface Box3DProps {
+  front: string;
+  side: string;
+  back: string | null;
+  interactive: boolean;
+  autoSpin: boolean;
+}
+
+function Box3D({ front, side, back, interactive, autoSpin }: Box3DProps) {
   const wrap = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
   const [angle, setAngle] = useState(REST);
   const drag = useRef<{ x: number; y: number; rx: number; ry: number } | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [spinning, setSpinning] = useState(false);
+  /** Dernière manipulation (0 : la boîte tourne dès l'affichage). */
+  const lastInput = useRef(0);
   const frontRatio = useRatio(front);
   const sideRatio = useRatio(side);
+
+  useEffect(() => {
+    if (!autoSpin) return;
+    // Pas coupée par « animations réduites » : souvent désactivées par Windows
+    // sans que l'utilisateur l'ait demandé (AtlasOS…).
+    let raf = 0;
+    let prev = performance.now();
+    const tick = (now: number) => {
+      // Borné : un onglet remis au premier plan ne fait pas un bond.
+      const dt = Math.min(now - prev, 50) / 1000;
+      prev = now;
+      const on = !drag.current && now - lastInput.current > IDLE_RESUME_MS;
+      setSpinning(on);
+      if (on) setAngle((a) => ({ ...a, ry: a.ry + AUTO_SPIN_DEG_PER_S * dt }));
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [autoSpin]);
 
   useLayoutEffect(() => {
     const el = wrap.current;
@@ -88,6 +124,7 @@ function Box3D({ front, side, back, interactive }: { front: string; side: string
     if (!interactive) return;
     e.currentTarget.setPointerCapture(e.pointerId);
     drag.current = { x: e.clientX, y: e.clientY, ...angle };
+    lastInput.current = performance.now();
     setDragging(true);
   }
   function onMove(e: ReactPointerEvent) {
@@ -100,7 +137,14 @@ function Box3D({ front, side, back, interactive }: { front: string; side: string
   }
   function onUp() {
     drag.current = null;
+    lastInput.current = performance.now();
     setDragging(false);
+  }
+  function reset() {
+    if (!interactive) return;
+    lastInput.current = performance.now();
+    // Vers l'angle de repos le plus proche, sans dérouler les tours accumulés.
+    setAngle((a) => ({ rx: REST.rx, ry: REST.ry + 360 * Math.round((a.ry - REST.ry) / 360) }));
   }
 
   return (
@@ -111,13 +155,13 @@ function Box3D({ front, side, back, interactive }: { front: string; side: string
       onPointerMove={onMove}
       onPointerUp={onUp}
       onPointerCancel={onUp}
-      onDoubleClick={() => interactive && setAngle(REST)}
+      onDoubleClick={reset}
       title={interactive ? "Glissez pour tourner la boîte · double-clic pour la remettre" : undefined}
     >
       {dims && (
         <div className="b3-scene" style={{ perspective: `${dims.H * 4}px` }}>
           <div
-            className={`b3-stage${dragging ? " b3-stage--dragging" : ""}`}
+            className={`b3-stage${dragging || spinning ? " b3-stage--dragging" : ""}`}
             style={
               {
                 width: dims.W,

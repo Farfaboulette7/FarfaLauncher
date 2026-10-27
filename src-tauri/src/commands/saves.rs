@@ -4,6 +4,7 @@
 //! - après la partie, la sauvegarde locale est envoyée si elle a changé.
 
 use std::path::PathBuf;
+use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -53,20 +54,42 @@ pub fn location(st: &InstalledGame) -> Option<SaveLocation> {
     st.saves.dir.clone().map(|dir| SaveLocation { dir, patterns: st.saves.patterns.clone() })
 }
 
+/// Exécutables du jeu, relatifs à son dossier : celui choisi, puis le vrai
+/// jeu démarré par son launcher s'il a été relevé.
+fn exes(st: &InstalledGame) -> Vec<PathBuf> {
+    st.executable.iter().chain(st.direct_launch.iter().map(|d| &d.exe)).map(|e| rel_to_path(e)).collect()
+}
+
 /// Emplacement connu ou deviné (et mémorisé) des sauvegardes d'un jeu.
 fn resolve(config_dir: &std::path::Path, st: &mut InstalledGame) -> Option<SaveLocation> {
     if let Some(loc) = location(st) {
         return Some(loc);
     }
-    let exe = st.executable.clone()?;
-    let loc = saves::detect(&st.game_dir, &rel_to_path(&exe))?;
-    tracing::info!("sauvegardes de « {} » trouvées dans {}", st.name, loc.dir.display());
+    let exes = exes(st);
+    if exes.is_empty() {
+        return None;
+    }
+    let loc = saves::detect(&st.game_dir, &exes, &st.name)?;
+    tracing::info!("sauvegardes de « {} » trouvées dans {} {:?}", st.name, loc.dir.display(), loc.patterns);
     st.saves.dir = Some(loc.dir.clone());
     st.saves.patterns = loc.patterns.clone();
+    st.saves.searched_after_play = false;
     if let Err(e) = state::write_state(config_dir, st) {
         tracing::error!("emplacement des sauvegardes non mémorisé: {}", e.code());
     }
     Some(loc)
+}
+
+/// Synchronisation coupée sans dossier : la réactive si les sauvegardes sont
+/// désormais trouvées.
+fn reenable_if_found(config_dir: &std::path::Path, st: &mut InstalledGame) -> bool {
+    st.saves.off = false;
+    if resolve(config_dir, st).is_some() {
+        tracing::info!("« {} » : sauvegardes trouvées, synchronisation réactivée", st.name);
+        return true;
+    }
+    st.saves.off = true;
+    false
 }
 
 fn server_unavailable(e: &AppError) -> bool {
@@ -77,11 +100,27 @@ fn server_unavailable(e: &AppError) -> bool {
 pub async fn save_check(state: State<'_, AppState>, rom_id: i64) -> AppResult<SaveCheck> {
     let mut st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
     if st.saves.off {
-        return Ok(SaveCheck::Off);
+        // Coupée faute de dossier trouvé : on retente, la détection a pu
+        // progresser (ou le jeu a créé ses sauvegardes depuis).
+        if st.saves.dir.is_some() || !reenable_if_found(&state.config_dir, &mut st) {
+            return Ok(SaveCheck::Off);
+        }
     }
     let Some(loc) = resolve(&state.config_dir, &mut st) else {
-        let exe = st.executable.clone().map(|e| rel_to_path(&e)).unwrap_or_default();
-        let suggestions = saves::suggestions(&st.game_dir, &exe, &st.name).iter().map(|p| p.to_string_lossy().into_owned()).collect();
+        // Jamais cherchées après une partie : le jeu les crée souvent au premier
+        // lancement. On joue, et on cherche à nouveau à la sortie — sauf s'il
+        // y a une sauvegarde sur le serveur à poser avant de jouer.
+        if !st.saves.searched_after_play {
+            let on_server = match state.client() {
+                Ok(client) => matches!(server::find(&client, rom_id).await, Ok(Some(_))),
+                Err(_) => false,
+            };
+            if !on_server {
+                tracing::info!("« {} » : sauvegardes pas encore trouvées, nouvelle recherche après la partie", st.name);
+                return Ok(SaveCheck::Ready);
+            }
+        }
+        let suggestions = saves::suggestions(&st.game_dir, &exes(&st), &st.name).iter().map(|p| p.to_string_lossy().into_owned()).collect();
         return Ok(SaveCheck::Unknown { suggestions });
     };
     let Ok(client) = state.client() else { return Ok(SaveCheck::Ready) };
@@ -129,6 +168,7 @@ pub fn set_save_location(state: State<'_, AppState>, rom_id: i64, dir: Option<St
     st.saves.off = off;
     st.saves.synced_hash = None;
     st.saves.synced_server = None;
+    st.saves.searched_after_play = false;
     state::write_state(&state.config_dir, &st)?;
     tracing::info!("sauvegardes de « {} » : {:?} (désactivé: {off})", st.name, st.saves.dir);
     Ok(st)
@@ -197,9 +237,51 @@ pub enum SaveUpload {
 }
 
 /// Après la partie : envoie la sauvegarde si elle a changé depuis le dernier échange.
-pub async fn after_play(state: &AppState, client: Option<RommClient>, rom_id: i64) -> (SaveUpload, Option<AppError>) {
+pub async fn after_play(state: &AppState, client: Option<RommClient>, rom_id: i64, started: SystemTime) -> (SaveUpload, Option<AppError>) {
     let Some(mut st) = state::find(&state.config_dir, rom_id) else { return (SaveUpload::Off, None) };
-    let Some(loc) = location(&st).filter(|_| !st.saves.off) else { return (SaveUpload::Off, None) };
+    // Coupée faute de dossier (pas par choix d'un dossier) : on cherche quand même.
+    if st.saves.off && st.saves.dir.is_some() {
+        return (SaveUpload::Off, None);
+    }
+    // Pas encore trouvées : le jeu vient peut-être de les créer, sous un nom
+    // reconnaissable ou non (fichiers écrits pendant la partie).
+    let found = match resolve(&state.config_dir, &mut st) {
+        Some(loc) => {
+            if st.saves.off {
+                st.saves.off = false;
+                tracing::info!("« {} » : sauvegardes trouvées, synchronisation réactivée", st.name);
+                if let Err(e) = state::write_state(&state.config_dir, &st) {
+                    tracing::error!("synchronisation non réactivée: {}", e.code());
+                }
+            }
+            Some(loc)
+        }
+        None => {
+            let (dir, exes, name) = (st.game_dir.clone(), exes(&st), st.name.clone());
+            let loc = tauri::async_runtime::spawn_blocking(move || saves::detect_by_activity(&dir, &exes, &name, started)).await.ok().flatten();
+            if let Some(loc) = &loc {
+                tracing::info!("« {} » : sauvegardes repérées pendant la partie dans {} {:?}", st.name, loc.dir.display(), loc.patterns);
+                st.saves.dir = Some(loc.dir.clone());
+                st.saves.patterns = loc.patterns.clone();
+                st.saves.off = false;
+                st.saves.searched_after_play = false;
+                if let Err(e) = state::write_state(&state.config_dir, &st) {
+                    tracing::error!("emplacement des sauvegardes non mémorisé: {}", e.code());
+                }
+            }
+            loc
+        }
+    };
+    let Some(loc) = found else {
+        if !st.saves.off && !st.saves.searched_after_play {
+            st.saves.searched_after_play = true;
+            if let Err(e) = state::write_state(&state.config_dir, &st) {
+                tracing::error!("recherche des sauvegardes non mémorisée: {}", e.code());
+            }
+            tracing::info!("« {} » : sauvegardes toujours introuvables après la partie", st.name);
+        }
+        return (SaveUpload::Off, None);
+    };
     let res: AppResult<SaveUpload> = async {
         let loc2 = loc.clone();
         let (hash, zip) = tauri::async_runtime::spawn_blocking(move || -> AppResult<(Option<String>, Vec<u8>)> {

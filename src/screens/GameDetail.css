@@ -169,6 +169,12 @@
   -webkit-mask: linear-gradient(to bottom, transparent, #000 28px);
   mask: linear-gradient(to bottom, transparent, #000 28px);
 }
+/* Un masque enferme les éléments `fixed` dans le panneau : retiré pendant le
+   plein écran du livret. */
+.gd-content:has(.pdf--full) {
+  -webkit-mask: none;
+  mask: none;
+}
 .gd-summary {
   margin: 0;
   max-width: 75ch;

@@ -15,8 +15,16 @@
 .pdf-zoom-btn::before { display: none; }
 .pdf-modes { display: flex; gap: 6px; margin-right: 12px; }
 .pdf-zoom { min-width: 60px; text-align: center; font-size: var(--fs-sm); }
+.pdf-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.pdf-stage:hover .pdf-fullscreen { opacity: 1; }
 .pdf-area {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow: auto;
   padding: 24px;
@@ -119,3 +127,20 @@
 .pdf-book-nav .n-btn { padding: 4px 16px; }
 .pdf-book-nav .n-btn::before { display: none; }
 .pdf-book-pages { min-width: 160px; text-align: center; font-size: var(--fs-sm); }
+
+/* ---------- Plein écran : le même lecteur, sur toute la fenêtre ---------- */
+.pdf--full {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  height: auto;
+  padding: 24px 40px;
+  background: rgba(40, 38, 33, 0.92);
+  animation: gd-fade var(--nier-normal) var(--nier-ease);
+}
+.pdf--full .pdf-area { background: transparent; }
+.pdf--full .pdf-zoom,
+.pdf--full .n-hint,
+.pdf--full .n-link,
+.pdf--full .pdf-book-pages { color: var(--nier-high); }
+.pdf-full-hint { margin-left: auto; }

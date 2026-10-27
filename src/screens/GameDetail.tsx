@@ -43,7 +43,7 @@ export function GameDetail({ game, platform, target, installs, favorite, onToggl
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !document.querySelector(".lightbox, .gd-boxzoom, .dialog-backdrop")) onBack();
+      if (e.key === "Escape" && !document.querySelector(".lightbox, .gd-boxzoom, .pdf--full, .dialog-backdrop")) onBack();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -83,7 +83,7 @@ export function GameDetail({ game, platform, target, installs, favorite, onToggl
       <div className="gd-body">
         <aside className="gd-side">
           <div className={`gd-cover${coverKind ? ` gd-cover--${coverKind}` : ""}`}>
-            <BoxArt game={game} interactive onKind={setCoverKind} />
+            <BoxArt game={game} interactive autoSpin onKind={setCoverKind} />
             {coverKind === null && !game.boxFaces && <span>{game.name}</span>}
             {coverKind !== null && (
               <button
@@ -145,7 +145,7 @@ function BoxZoom({ game, kind, onClose }: { game: Game; kind: "box" | "flat"; on
   return (
     <div className={`gd-boxzoom gd-boxzoom--${kind}`} onClick={onClose} role="dialog" aria-modal="true" aria-label={game.name}>
       <div className="gd-boxzoom-art" onClick={kind === "box" ? (e) => e.stopPropagation() : undefined}>
-        <BoxArt game={game} interactive />
+        <BoxArt game={game} interactive autoSpin />
       </div>
       <span className="lightbox-count">{kind === "box" ? "Glisser pour tourner · " : ""}Échap ou clic pour fermer</span>
     </div>

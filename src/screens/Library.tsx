@@ -52,10 +52,33 @@ const TABS: { id: Tab; label: string }[] = [
 
 /** Nombre de jeux affichés dans « Récent ». */
 const RECENT_COUNT = 24;
-/** Un jeu reste « nouveau » (badge NEW, compteur des plateformes) pendant 7 jours. */
-const NEW_FOR_MS = 7 * 24 * 3600 * 1000;
+/** Un jeu reste « nouveau » (badge NEW, compteur des plateformes) un jour,
+ *  ou jusqu'à ce que sa fiche soit ouverte. */
+const NEW_FOR_MS = 24 * 3600 * 1000;
+/** Jeux nouveaux déjà ouverts : id → date d'ouverture (ms). */
+const SEEN_KEY = "farfa.seenGames";
 
-function isNew(game: Game): boolean {
+function loadSeen(): Map<number, number> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(SEEN_KEY) ?? "{}") as Record<string, number>;
+    return new Map(Object.entries(raw).map(([id, at]) => [Number(id), at]));
+  } catch {
+    return new Map();
+  }
+}
+
+function saveSeen(seen: Map<number, number>) {
+  // Au-delà de la durée « nouveau », inutile de s'en souvenir.
+  const keep = [...seen].filter(([, at]) => Date.now() - at < NEW_FOR_MS * 2);
+  try {
+    localStorage.setItem(SEEN_KEY, JSON.stringify(Object.fromEntries(keep)));
+  } catch {
+    // tant pis : le badge reviendra jusqu'à la fin de la journée
+  }
+}
+
+function isNew(game: Game, seen: Map<number, number>): boolean {
+  if (seen.has(game.id)) return false;
   const t = Date.parse(game.createdAt);
   return !isNaN(t) && Date.now() - t < NEW_FOR_MS;
 }
@@ -84,6 +107,7 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
   const [tab, setTab] = useState<Tab>("recent");
   const [platformId, setPlatformId] = useState<number | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [seen, setSeen] = useState(loadSeen);
   const [showSettings, setShowSettings] = useState(false);
   const [hack, setHack] = useState<Hack | null>(null);
   /** Centre de la jaquette d'où l'on est parti (point de retour du zoom). */
@@ -188,10 +212,10 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
       (snapshot?.platforms ?? [])
         .map((p) => {
           const own = allGames.filter((g) => g.platformId === p.id);
-          return { platform: p, count: own.length, fresh: own.filter(isNew).length };
+          return { platform: p, count: own.length, fresh: own.filter((g) => isNew(g, seen)).length };
         })
         .filter((p) => p.count > 0),
-    [snapshot, allGames],
+    [snapshot, allGames, seen],
   );
   const platform = snapshot?.platforms.find((p) => p.id === platformId) ?? null;
   // Écran révélé à chaque retour dessus, la grille à chaque changement de vue.
@@ -234,6 +258,11 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
     const r = from.getBoundingClientRect();
     openedFrom.current = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
     lastSelected.current = id;
+    if (!seen.has(id)) {
+      const next = new Map(seen).set(id, Date.now());
+      setSeen(next);
+      saveSeen(next);
+    }
     setMusicVersion("eightBit"); // le fondu musical part avec le zoom
     transition(openedFrom.current, "out", "in", () => setSelectedId(id));
   }
@@ -420,7 +449,7 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
               <ul className="lib-grid">
                 {list.map((g) => (
                   <li key={g.id}>
-                    <GameCard game={g} installs={installs} favorite={favorites.ids.has(g.id)} onOpen={(el) => openGame(g.id, el)} />
+                    <GameCard game={g} fresh={isNew(g, seen)} installs={installs} favorite={favorites.ids.has(g.id)} onOpen={(el) => openGame(g.id, el)} />
                   </li>
                 ))}
               </ul>
@@ -483,16 +512,17 @@ function PlatformCard({ platform, count, fresh, onOpen }: { platform: Platform; 
 
 function GameCard({
   game,
+  fresh,
   installs,
   favorite,
   onOpen,
 }: {
   game: Game;
+  fresh: boolean;
   installs: InstallsState;
   favorite: boolean;
   onOpen: (el: HTMLElement) => void;
 }) {
-  const fresh = isNew(game);
   const inst = installs.installed.get(game.id);
   const busy = installs.progress.has(game.id);
   const badge = busy

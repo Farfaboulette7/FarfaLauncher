@@ -279,6 +279,7 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
           name={game.name}
           suggestions={saveAsk.suggestions}
           current={inst?.saves.dir ?? null}
+          installDir={inst ? exeDir(inst.gameDir, inst.executable) : null}
           playing={saveAsk.thenPlay}
           onClose={() => setSaveAsk(null)}
           onChoose={(dir, off) => chooseSaveDir(dir, off, saveAsk.thenPlay)}
@@ -493,6 +494,14 @@ function parentDir(p: string): string {
   return p.replace(/[\\/][^\\/]+[\\/]?$/, "") || p;
 }
 
+/** Dossier de l'exécutable du jeu (à défaut, le dossier du jeu). */
+function exeDir(gameDir: string, executable: string | null): string {
+  if (!executable) return gameDir;
+  const sep = gameDir.includes("\\") ? "\\" : "/";
+  const rel = executable.split("/").slice(0, -1);
+  return rel.length ? [gameDir.replace(/[\\/]+$/, ""), ...rel].join(sep) : gameDir;
+}
+
 function shortPath(p: string): string {
   const parts = p.split(/[\\/]/).filter(Boolean);
   return parts.length > 3 ? `…/${parts.slice(-3).join("/")}` : p;
@@ -548,6 +557,7 @@ function SaveDirDialog({
   name,
   suggestions,
   current,
+  installDir,
   playing,
   onClose,
   onChoose,
@@ -555,6 +565,8 @@ function SaveDirDialog({
   name: string;
   suggestions: string[];
   current: string | null;
+  /** Dossier où la recomp est installée : ouvert par défaut. */
+  installDir: string | null;
   playing: boolean;
   onClose: () => void;
   onChoose: (dir: string | null, off: boolean) => void;
@@ -564,7 +576,7 @@ function SaveDirDialog({
       directory: true,
       multiple: false,
       title: `Dossier des sauvegardes de ${name}`,
-      defaultPath: suggestions[0] ?? current ?? undefined,
+      defaultPath: current ?? installDir ?? undefined,
     });
     if (typeof dir === "string") onChoose(dir, false);
   }

@@ -109,6 +109,10 @@ pub struct SaveSync {
     /// Date (`updated_at`) de la sauvegarde serveur à ce moment-là.
     #[serde(default)]
     pub synced_server: Option<String>,
+    /// Introuvables même après une partie : on demande à l'utilisateur.
+    /// (Avant la première partie, le jeu n'a souvent encore rien créé.)
+    #[serde(default)]
+    pub searched_after_play: bool,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
