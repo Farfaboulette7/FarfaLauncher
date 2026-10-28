@@ -23,6 +23,8 @@ use crate::install::state::DirectLaunch;
 
 /// Intervalle de surveillance des processus.
 const POLL: Duration = Duration::from_secs(2);
+/// Intervalle tant que la fenêtre du jeu n'est pas apparue.
+const WINDOW_POLL: Duration = Duration::from_millis(300);
 /// Jeu fermé plus vite que ça : sa sortie (erreurs) est recopiée dans nos logs.
 const QUICK_EXIT: Duration = Duration::from_secs(15);
 /// Sortie du dernier lancement, dans le dossier interne du jeu.
@@ -49,9 +51,12 @@ pub struct Launch<'a> {
     pub cwd: Option<PathBuf>,
     /// Relever le jeu que ce programme démarre (c'est peut-être un launcher).
     pub learn: bool,
+    /// Jeu Windows sous Linux : lancé avec Proton.
+    pub runner: Option<&'a crate::pc::proton::Runner>,
 }
 
-/// Lance le programme dans le dossier du jeu.
+/// Lance le programme dans le dossier du jeu (`launch.exe` peut aussi être
+/// absolu : client installé hors du jeu, comme Plutonium).
 pub fn spawn(game_dir: &Path, launch: Launch<'_>) -> AppResult<RunningGame> {
     let exe = game_dir.join(&launch.exe);
     if !exe.exists() {
@@ -61,8 +66,15 @@ pub fn spawn(game_dir: &Path, launch: Launch<'_>) -> AppResult<RunningGame> {
         Some(rel) if game_dir.join(rel).is_dir() => game_dir.join(rel),
         _ => exe.parent().unwrap_or(game_dir).to_path_buf(),
     };
-    let mut cmd = build_command(&exe);
-    cmd.args(direct::expand_args(launch.args, game_dir));
+    let args = direct::expand_args(launch.args, game_dir);
+    let mut cmd = match launch.runner {
+        Some(r) => r.command(&exe, &args),
+        None => {
+            let mut c = build_command(&exe);
+            c.args(&args);
+            c
+        }
+    };
     cmd.current_dir(&work_dir);
     crate::external::use_system_env(&mut cmd);
     for (k, v) in launch.env {
@@ -117,8 +129,16 @@ fn build_command(exe: &Path) -> Command {
 impl RunningGame {
     /// Attend la fin du jeu et de tous ses processus (bloquant : à appeler
     /// dans `spawn_blocking`). Renvoie le jeu démarré par un launcher, s'il y en a eu un.
-    pub fn wait(mut self) -> Option<DirectLaunch> {
+    /// `on_window` : appelé une fois, quand une fenêtre du jeu apparaît (Windows ;
+    /// ailleurs, jamais).
+    pub fn wait(mut self, mut on_window: impl FnMut()) -> Option<DirectLaunch> {
+        // Surveillance rapprochée tant que la fenêtre du jeu n'est pas là.
+        let mut window_seen = !cfg!(windows);
         loop {
+            if !window_seen && self.has_window() {
+                window_seen = true;
+                on_window();
+            }
             if self.watcher.is_some() {
                 let pids = self.process_ids();
                 if let Some(w) = self.watcher.as_mut() {
@@ -130,7 +150,7 @@ impl RunningGame {
             if !main_alive && !self.descendants_alive() {
                 break;
             }
-            std::thread::sleep(POLL);
+            std::thread::sleep(if window_seen { POLL } else { WINDOW_POLL });
         }
         let status = self.child.try_wait().ok().flatten();
         tracing::info!("jeu fermé (pid {}, {})", self.child.id(), status.map(|s| s.to_string()).unwrap_or_else(|| "état inconnu".into()));
@@ -148,6 +168,17 @@ impl RunningGame {
     #[cfg(windows)]
     fn process_ids(&self) -> Vec<u32> {
         self.job.process_ids()
+    }
+
+    /// Une fenêtre visible appartient-elle à la partie ?
+    #[cfg(windows)]
+    fn has_window(&self) -> bool {
+        windows_job::visible_window(&self.job.process_ids())
+    }
+
+    #[cfg(not(windows))]
+    fn has_window(&self) -> bool {
+        false
     }
 
     #[cfg(target_os = "linux")]
@@ -310,6 +341,33 @@ mod windows_job {
         }
     }
 
+    /// Une fenêtre visible appartient-elle à l'un de ces processus ?
+    pub fn visible_window(pids: &[u32]) -> bool {
+        use windows_sys::Win32::Foundation::{HWND, LPARAM};
+        use windows_sys::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowThreadProcessId, IsWindowVisible};
+
+        struct Search<'a> {
+            pids: &'a [u32],
+            found: bool,
+        }
+        unsafe extern "system" fn visit(hwnd: HWND, data: LPARAM) -> i32 {
+            let search = unsafe { &mut *(data as *mut Search) };
+            let mut pid = 0u32;
+            unsafe { GetWindowThreadProcessId(hwnd, &mut pid) };
+            if unsafe { IsWindowVisible(hwnd) } != 0 && search.pids.contains(&pid) {
+                search.found = true;
+                return 0; // fin de l'énumération
+            }
+            1
+        }
+        if pids.is_empty() {
+            return false;
+        }
+        let mut search = Search { pids, found: false };
+        unsafe { EnumWindows(Some(visit), &mut search as *mut Search as LPARAM) };
+        search.found
+    }
+
     impl Drop for Job {
         fn drop(&mut self) {
             unsafe { CloseHandle(self.0) };
@@ -341,7 +399,7 @@ mod tests {
         let job = windows_job::Job::create().unwrap();
         job.assign(&child).unwrap();
         let watcher = Some(direct::Watcher::new(&dir, Path::new("cmd.exe")));
-        let learned = RunningGame { child, started: Instant::now(), run_log: None, watcher, job }.wait();
+        let learned = RunningGame { child, started: Instant::now(), run_log: None, watcher, job }.wait(|| {});
         // ping hors du dossier et trop bref : ce n'est pas un jeu.
         assert_eq!(learned, None);
         assert!(started.elapsed() >= Duration::from_secs(3), "{:?}", started.elapsed());
@@ -357,8 +415,8 @@ mod tests {
         std::fs::create_dir_all(game_dir.join("bin")).unwrap();
         std::fs::copy(r"C:\Windows\System32\PING.EXE", game_dir.join("bin/Jeu.exe")).unwrap();
         std::fs::write(game_dir.join("launcher.cmd"), "@set \"FARFA_TEST=%~dp0x\"\r\n@\"%~dp0bin\\Jeu.exe\" -n 25 127.0.0.1 > NUL\r\n").unwrap();
-        let launch = Launch { exe: "launcher.cmd".into(), args: &[], env: &[], cwd: None, learn: true };
-        let learned = spawn(&game_dir, launch).unwrap().wait().expect("jeu relevé");
+        let launch = Launch { exe: "launcher.cmd".into(), args: &[], env: &[], cwd: None, learn: true, runner: None };
+        let learned = spawn(&game_dir, launch).unwrap().wait(|| {}).expect("jeu relevé");
         assert_eq!(learned.exe, "bin/Jeu.exe");
         assert_eq!(learned.args, ["-n", "25", "127.0.0.1"]);
         // Le launcher est resté à la racine du jeu : le jeu y sera lancé aussi.

@@ -37,6 +37,8 @@ struct RawPage {
 pub struct RawRom {
     id: i64,
     platform_id: i64,
+    #[serde(default)]
+    platform_fs_slug: String,
     name: Option<String>,
     fs_name: String,
     full_path: String,
@@ -187,6 +189,9 @@ pub struct Game {
     pub my_archive: Option<PlatformArchive>,
     pub rom_files: Vec<RemoteFile>,
     pub mods: Vec<RemoteFile>,
+    /// Jeu de la plateforme « Ordinateur » (installateurs, jeu prêt à lancer…).
+    #[serde(default)]
+    pub pc: Option<crate::pc::PcGame>,
     pub version_file: Option<RemoteFile>,
     /// Contenu de VERSION.txt côté serveur.
     pub server_version: Option<String>,
@@ -210,15 +215,16 @@ pub async fn list_platforms(client: &RommClient) -> AppResult<Vec<Platform>> {
     let base = client.base();
     let mut platforms: Vec<Platform> = raws
         .into_iter()
-        .filter(|p| is_portage(&p.fs_slug))
+        .filter(|p| is_portage(&p.fs_slug) || crate::pc::is_pc_folder(&p.fs_slug))
         .map(|p| {
+            let pc = crate::pc::is_pc_folder(&p.fs_slug);
             let icon_urls = [&p.fs_slug, &p.slug]
                 .iter()
                 .flat_map(|s| ["svg", "ico"].map(|ext| format!("{base}/assets/platforms/{}.{ext}", s.to_lowercase())))
                 .collect();
             Platform {
                 id: p.id,
-                name: p.custom_name.filter(|n| !n.trim().is_empty()).unwrap_or(p.name),
+                name: if pc { "Ordinateur".to_string() } else { p.custom_name.filter(|n| !n.trim().is_empty()).unwrap_or(p.name) },
                 slug: p.slug,
                 fs_slug: p.fs_slug,
                 rom_count: p.rom_count,
@@ -234,6 +240,17 @@ pub async fn list_platforms(client: &RommClient) -> AppResult<Vec<Platform>> {
     Ok(platforms)
 }
 
+/// Jeu de la plateforme « Ordinateur » : d'après RomM, sinon d'après son
+/// chemin (`roms/ordinateur/<jeu>`).
+fn is_pc_rom(r: &RawRom) -> bool {
+    if !r.platform_fs_slug.is_empty() {
+        return crate::pc::is_pc_folder(&r.platform_fs_slug);
+    }
+    let path = r.full_path.replace('\\', "/");
+    // `roms/ordinateur/<jeu>` ou `ordinateur/roms/<jeu>` selon la structure du serveur.
+    path.trim_end_matches('/').rsplit('/').skip(1).take(2).any(crate::pc::is_pc_folder)
+}
+
 fn is_portage(fs_slug: &str) -> bool {
     fs_slug.to_ascii_lowercase().starts_with(PLATFORM_PREFIX)
 }
@@ -247,7 +264,10 @@ pub async fn list_games(client: &RommClient, platforms: &[Platform], me: Target)
         list_platform_games(client, p.id, &mut raws).await?;
     }
     let base = client.base().to_string();
-    let mut games: Vec<Game> = raws.into_iter().map(|r| to_game(r, &base, me, false)).collect();
+    // Même jeu en version Windows et Linux : seule la version native de ce système est montrée.
+    let pc_folders: Vec<(i64, String)> = raws.iter().filter(|r| is_pc_rom(r)).map(|r| (r.id, r.fs_name.clone())).collect();
+    let hidden = crate::pc::hidden_duplicates(&pc_folders, me);
+    let mut games: Vec<Game> = raws.into_iter().filter(|r| !hidden.contains(&r.id)).map(|r| to_game(r, &base, me, false)).collect();
     games.sort_by_key(|g| g.name.to_lowercase());
     let with_box = games.iter().filter(|g| g.box_faces.is_some() || g.box3d_url.is_some()).count();
     tracing::info!("{} jeux sur {} plateformes, {with_box} avec une boîte 3D", games.len(), platforms.len());
@@ -282,6 +302,7 @@ impl Game {
         self.my_archive = old.my_archive.clone();
         self.rom_files = old.rom_files.clone();
         self.mods = old.mods.clone();
+        self.pc = old.pc.clone();
         self.version_file = old.version_file.clone();
         self.server_version = old.server_version.clone();
         self.server_version_raw = old.server_version_raw.clone();
@@ -392,6 +413,7 @@ fn top_folder(rel: &str) -> Option<String> {
 }
 
 fn to_game(r: RawRom, base: &str, me: Target, details_loaded: bool) -> Game {
+    let pc_rom = is_pc_rom(&r);
     let files: Vec<(RemoteFile, Option<String>)> = r
         .files
         .into_iter()
@@ -412,6 +434,12 @@ fn to_game(r: RawRom, base: &str, me: Target, details_loaded: bool) -> Game {
         })
         .collect();
 
+    let pc = if pc_rom {
+        let all: Vec<RemoteFile> = files.iter().map(|(f, _)| f.clone()).collect();
+        crate::pc::classify(&r.fs_name, &all, me)
+    } else {
+        None
+    };
     let mut archives = Vec::new();
     let mut rom_files = Vec::new();
     let mut mods = Vec::new();
@@ -419,6 +447,8 @@ fn to_game(r: RawRom, base: &str, me: Target, details_loaded: bool) -> Game {
     let mut version_file = None;
     for (f, category) in files {
         match top_folder(&f.rel_path).as_deref() {
+            // Jeu PC : ses fichiers sont décrits par `pc` (livrets gardés).
+            Some("recomp" | "rom" | "mods") | None if pc.is_some() => {}
             Some("recomp") => {
                 // Seules les archives posées directement dans RECOMP/ comptent.
                 if f.rel_path.matches('/').count() != 1 {
@@ -468,10 +498,11 @@ fn to_game(r: RawRom, base: &str, me: Target, details_loaded: bool) -> Game {
             .find_map(|m| pick(m).as_deref().filter(|p| !p.is_empty()))
             .map(|p| resource_url(base, p, &r.updated_at))
     };
-    let box3d_url = media_url(|m| &m.box3d_path);
+    let box3d_url = media_url(|m| &m.box3d_path).filter(|_| !pc_rom);
     let cover_url = r.path_cover_large.clone().filter(|p| !p.is_empty()).map(|p| absolute(base, &p));
     // Sans tranche, pas de boîte 3D : la jaquette s'affiche à plat.
-    let box_faces = media_url(|m| &m.box2d_side_path).and_then(|side| {
+    // Jeux PC : rarement une vraie boîte, la jaquette de RomM s'affiche à plat.
+    let box_faces = media_url(|m| &m.box2d_side_path).filter(|_| !pc_rom).and_then(|side| {
         let front = media_url(|m| &m.box2d_path).or_else(|| cover_url.clone())?;
         Some(BoxFaces { front, side, back: media_url(|m| &m.box2d_back_path) })
     });
@@ -501,6 +532,7 @@ fn to_game(r: RawRom, base: &str, me: Target, details_loaded: bool) -> Game {
         my_archive,
         rom_files,
         mods,
+        pc,
         version_file,
         server_version: None,
         server_version_raw: None,

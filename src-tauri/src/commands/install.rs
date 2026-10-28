@@ -10,6 +10,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::error::{log_err, AppError, AppResult};
 use crate::install::{self, detect, path_to_rel, state, InstallJob, InstallOutcome};
+use crate::pc::{cod, proton};
 use crate::platform;
 use crate::romm::library::{self, Game};
 use crate::state::AppState;
@@ -41,9 +42,10 @@ pub fn install_info(state: State<'_, AppState>) -> InstallInfo {
 }
 
 /// `dest` : dossier où créer celui du jeu, pour cette installation seulement
-/// (`None` = dossier des jeux des paramètres).
+/// (`None` = dossier des jeux des paramètres). `proton` : version de Proton
+/// pour un jeu Windows sous Linux (`None` = la recommandée).
 #[tauri::command]
-pub fn install_game(app: AppHandle, state: State<'_, AppState>, rom_id: i64, dest: Option<String>) -> AppResult<()> {
+pub fn install_game(app: AppHandle, state: State<'_, AppState>, rom_id: i64, dest: Option<String>, proton: Option<String>) -> AppResult<()> {
     let install_root = match dest.map(PathBuf::from) {
         Some(d) if d.is_absolute() => d,
         Some(_) => return Err(AppError::Internal),
@@ -68,6 +70,7 @@ pub fn install_game(app: AppHandle, state: State<'_, AppState>, rom_id: i64, des
         install_root,
         target: platform::detect(),
         cancel,
+        proton,
         on_progress: Arc::new(move |p| {
             let _ = emitter.emit("install-progress", p);
         }),
@@ -98,11 +101,19 @@ pub fn cancel_install(state: State<'_, AppState>, rom_id: i64) {
     }
 }
 
+/// Système des exécutables d'un jeu : un jeu Windows sous Proton a des `.exe`.
+fn exe_target(st: &state::InstalledGame) -> platform::Target {
+    match &st.pc {
+        Some(pc) if pc.os == crate::pc::PcOs::Windows => platform::Target::Windows,
+        _ => platform::detect(),
+    }
+}
+
 /// Candidats exécutables d'un jeu installé (pour le changer depuis la fiche).
 #[tauri::command]
 pub fn executable_candidates(state: State<'_, AppState>, rom_id: i64) -> AppResult<Vec<String>> {
     let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
-    Ok(detect::find_candidates(&st.game_dir, platform::detect()).iter().map(|p| path_to_rel(p)).collect())
+    Ok(detect::find_candidates(&st.game_dir, exe_target(&st)).iter().map(|p| path_to_rel(p)).collect())
 }
 
 /// Choix de l'exécutable : termine une installation en attente, ou change
@@ -110,7 +121,7 @@ pub fn executable_candidates(state: State<'_, AppState>, rom_id: i64) -> AppResu
 #[tauri::command]
 pub async fn choose_executable(state: State<'_, AppState>, rom_id: i64, executable: String) -> AppResult<state::InstalledGame> {
     let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
-    let candidates: Vec<String> = detect::find_candidates(&st.game_dir, platform::detect()).iter().map(|p| path_to_rel(p)).collect();
+    let candidates: Vec<String> = detect::find_candidates(&st.game_dir, exe_target(&st)).iter().map(|p| path_to_rel(p)).collect();
     if !candidates.contains(&executable) {
         return Err(AppError::NoExecutable);
     }
@@ -167,6 +178,29 @@ pub fn open_game_folder(app: AppHandle, state: State<'_, AppState>, rom_id: i64,
         std::fs::create_dir_all(&dir).map_err(|e| log_err(AppError::Disk, "création du dossier des mods", e))?;
     }
     crate::external::open_path(&app, &dir.to_string_lossy(), "ouverture du dossier du jeu")
+}
+
+/// Versions de Proton installées et téléchargeables (la recommandée en premier).
+#[tauri::command]
+pub async fn proton_versions(state: State<'_, AppState>) -> AppResult<Vec<proton::ProtonVersion>> {
+    Ok(proton::list(&proton::tools_dir(&state.config_dir)).await)
+}
+
+/// Change la version de Proton d'un jeu installé (téléchargée au prochain lancement).
+#[tauri::command]
+pub fn set_proton_version(state: State<'_, AppState>, rom_id: i64, version: Option<String>) -> AppResult<state::InstalledGame> {
+    let mut st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
+    let setup = st.pc.as_mut().and_then(|p| p.proton.as_mut()).ok_or(AppError::Internal)?;
+    setup.version = version;
+    state::write_state(&state.config_dir, &st)?;
+    Ok(st)
+}
+
+/// Modes de jeu d'un Call of Duty installé.
+#[tauri::command]
+pub fn cod_modes(state: State<'_, AppState>, rom_id: i64) -> AppResult<Vec<cod::ModeInfo>> {
+    let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
+    Ok(st.pc.and_then(|p| p.cod).map(|c| c.modes()).unwrap_or_default())
 }
 
 #[tauri::command]

@@ -1,0 +1,90 @@
+/* Écran « Lancement en cours », repris de NieRDeck (NierLaunchOverlay). */
+.launch-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: grid;
+  place-items: center;
+  font-family: var(--nier-font);
+  letter-spacing: var(--nier-tracking);
+  color: var(--nier-low);
+  background-color: rgba(209, 205, 183, 0.55);
+  backdrop-filter: blur(16px) sepia(0.25);
+  animation: launch-in 300ms ease-out both;
+}
+.launch-overlay[data-closing="true"] {
+  animation: launch-out 400ms ease-in both;
+}
+.launch-panel {
+  display: flex;
+  align-items: center;
+  gap: 34px;
+  min-width: min(620px, 90vw);
+  max-width: 80vw;
+  padding: 30px 40px;
+  background-color: var(--nier-bg);
+  background-image:
+    linear-gradient(to right, var(--nier-grid-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--nier-grid-line) 1px, transparent 1px);
+  background-size: var(--nier-grid-size) var(--nier-grid-size);
+  border: var(--nier-line) solid var(--nier-low);
+  box-shadow: var(--nier-drop) var(--nier-drop) 0 var(--nier-shadow);
+}
+.launch-emblem {
+  flex: none;
+  width: 150px;
+  height: 100px;
+  animation: launch-pulse 2s ease-in-out infinite;
+}
+.launch-text {
+  flex: 1;
+  min-width: 0;
+}
+.launch-heading {
+  font-size: var(--fs-sm);
+  text-transform: uppercase;
+  letter-spacing: var(--nier-tracking-title);
+  color: var(--nier-mid);
+}
+.launch-title {
+  margin: 6px 0 16px;
+  font-size: var(--fs-xl, 30px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.launch-bar {
+  position: relative;
+  height: 8px;
+  overflow: hidden;
+  border: var(--nier-line) solid var(--nier-low);
+}
+.launch-bar span {
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  width: 30%;
+  background-color: var(--nier-low);
+  animation: launch-bar 1.4s ease-in-out infinite;
+}
+.launch-hint {
+  margin-top: 16px;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  animation: launch-in 300ms ease-out both;
+}
+@keyframes launch-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes launch-out {
+  to { opacity: 0; }
+}
+@keyframes launch-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+@keyframes launch-bar {
+  0% { left: -30%; }
+  100% { left: 100%; }
+}

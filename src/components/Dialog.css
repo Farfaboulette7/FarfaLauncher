@@ -66,3 +66,21 @@
   white-space: pre-wrap;
   background: var(--nier-high-mid);
 }
+/* Modes d'un Call of Duty : nom puis boutons. */
+.cod-modes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cod-modes li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--nier-high-mid);
+}
+.cod-mode-name { flex: 1 1 120px; }

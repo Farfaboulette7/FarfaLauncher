@@ -6,6 +6,7 @@ mod external;
 mod install;
 mod launch;
 mod logging;
+mod pc;
 mod platform;
 mod romm;
 mod saves;
@@ -37,6 +38,7 @@ pub fn run() {
                 // Garde le writer de logs vivant pendant toute l'exécution.
                 app.manage(guard);
             }
+            saves::set_prefixes_dir(pc::proton::prefixes_dir(&config_dir));
             app.manage(state::AppState::new(config_dir, log_dir, cache_dir, default_install_root));
             Ok(())
         })
@@ -80,6 +82,9 @@ pub fn run() {
             commands::install::open_game_folder,
             commands::install::set_install_dir,
             commands::install::move_game,
+            commands::install::proton_versions,
+            commands::install::set_proton_version,
+            commands::install::cod_modes,
             commands::launch::running_games,
             commands::launch::play_game,
             commands::launch::set_prefer_launcher,

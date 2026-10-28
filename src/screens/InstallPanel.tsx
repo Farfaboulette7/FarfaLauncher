@@ -1,11 +1,17 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   backend,
+  CodChoice,
+  CodModeInfo,
+  downloadSize,
   formatPlaytime,
   hasUpdate,
   formatSize,
   Game,
+  isAvailable,
+  PcKind,
+  ProtonVersion,
   GameStopped,
   InstallPhase,
   isAppError,
@@ -15,13 +21,17 @@ import {
 } from "../api/backend";
 import { InstallsState } from "../hooks/useInstalls";
 import { Dialog } from "../components/Dialog";
+import { LaunchOverlay } from "../components/LaunchOverlay";
 
 const PHASE_LABELS: Record<InstallPhase, string> = {
   prepare: "Préparation…",
+  proton: "Téléchargement de Proton",
   download: "Téléchargement",
   verify: "Vérification…",
   backup: "Sauvegarde des saves…",
   extract: "Extraction",
+  installer: "Installation",
+  client: "Téléchargement du client",
   finalize: "Finalisation…",
 };
 
@@ -38,7 +48,13 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
   const progress = installs.progress.get(game.id);
   const error = installs.errors.get(game.id);
   const [message, setMessage] = useState<string | null>(null);
-  const [dialog, setDialog] = useState<"exe" | "uninstall" | null>(null);
+  const [dialog, setDialog] = useState<"exe" | "uninstall" | "proton" | "cod" | null>(null);
+  /** Version de Proton choisie avant l'installation (`null` : la recommandée). */
+  const [protonChoice, setProtonChoice] = useState<string | null>(null);
+  /** Mode du Call of Duty pour la partie en cours de lancement. */
+  const codChoice = useRef<CodChoice | null>(null);
+  /** Écran « Lancement en cours » ; `started` : le jeu est lancé, on attend sa fenêtre. */
+  const [overlay, setOverlay] = useState<{ started: boolean } | null>(null);
   /** Question sur les sauvegardes avant de jouer. */
   const [saveAsk, setSaveAsk] = useState<
     | { kind: "where"; suggestions: string[]; thenPlay: boolean }
@@ -71,11 +87,24 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
 
   async function launch(choice: SaveChoice) {
     setSaveAsk(null);
-    setLaunching(choice === "server" ? "Récupération de la sauvegarde du serveur…" : "Lancement…");
-    const err = await installs.play(game.id, choice);
+    setLaunching(
+      choice === "server" ? "Récupération de la sauvegarde du serveur…" : inst?.pc?.proton || inst?.pc?.cod ? "Préparation du jeu…" : "Lancement…",
+    );
+    setOverlay({ started: false });
+    const err = await installs.play(game.id, choice, codChoice.current);
     setLaunching(null);
+    setOverlay((o) => (err ? null : o && { started: true }));
     if (err) setMessage(err);
     else if (choice === "server") setSaveNotice("Sauvegarde du serveur récupérée (l'ancienne est gardée dans .farfalauncher/backups).");
+  }
+
+  /** « Jouer » : un Call of Duty demande d'abord son mode. */
+  function onPlay() {
+    if (inst?.pc?.cod) setDialog("cod");
+    else {
+      codChoice.current = null;
+      startPlay();
+    }
   }
 
   /** « Jouer » : compare d'abord la sauvegarde locale à celle du serveur. */
@@ -152,8 +181,8 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
       <div className="n-panel-header">{inst?.executable ? "Jeu installé" : "Installation"}</div>
       <div className="n-panel-body gd-actions-body">
         {progress ? (
-          <ProgressView phase={progress.phase} done={progress.done} total={progress.total} onCancel={() => backend.cancelInstall(game.id)} />
-        ) : !game.myArchive && !game.detailsLoaded ? (
+          <ProgressView phase={progress.phase} done={progress.done} total={progress.total} verifying={!!progress.verifying} onCancel={() => backend.cancelInstall(game.id)} />
+        ) : !isAvailable(game) && !game.detailsLoaded ? (
           <p>
             <span className="n-spinner" /> Lecture des fichiers sur le serveur…
           </p>
@@ -172,7 +201,7 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
                 className="n-btn n-btn--primary n-btn--block n-cursor"
                 data-sound="none"
                 disabled={!!launching}
-                onClick={startPlay}
+                onClick={onPlay}
               >
                 {launching ? (
                   <>
@@ -197,11 +226,25 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
               Choisir l'exécutable
             </button>
           </>
-        ) : game.myArchive ? (
+        ) : isAvailable(game) ? (
           <>
-            <button className="n-btn n-btn--primary n-btn--block" onClick={() => installs.start(game.id, installDir ?? undefined)}>
+            <button
+              className="n-btn n-btn--primary n-btn--block"
+              onClick={() => installs.start(game.id, installDir ?? undefined, game.pc?.proton ? protonChoice : null)}
+            >
               Installer
             </button>
+            {game.pc?.proton && (
+              <p className="n-hint">
+                Jeu Windows lancé avec Proton : {protonChoice ?? "version recommandée"}{" "}
+                <button className="n-link" onClick={() => setDialog("proton")}>
+                  Changer…
+                </button>
+              </p>
+            )}
+            {game.pc?.kind === "gogInstaller" && !game.pc.proton && (
+              <p className="n-hint">L'installateur GOG demandera l'autorisation de Windows.</p>
+            )}
             <p className="n-hint gd-install-dest" title={installDir ?? installs.installRoot ?? undefined}>
               {formatSize(downloadSize(game))}
               {(installDir ?? installs.installRoot) && ` · dans ${installDir ?? installs.installRoot}`}
@@ -230,9 +273,14 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
             <button className="n-link" onClick={() => run(() => backend.openGameFolder(game.id))}>
               Ouvrir le dossier du jeu
             </button>
-            {inst.executable && (
+            {inst.executable && !inst.pc?.cod && (
               <button className="n-link" onClick={openExeChoice}>
                 Changer l'exécutable
+              </button>
+            )}
+            {inst.pc?.proton && (
+              <button className="n-link" onClick={() => setDialog("proton")}>
+                Version de Proton…
               </button>
             )}
             {inst.directLaunch && (
@@ -260,6 +308,40 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
         )}
       </div>
 
+      {overlay && (
+        <LaunchOverlay
+          romId={game.id}
+          name={game.name}
+          step={launching && launching !== "Lancement…" ? launching : null}
+          started={overlay.started}
+          onDone={() => setOverlay(null)}
+        />
+      )}
+      {dialog === "proton" && (
+        <ProtonDialog
+          current={inst?.pc?.proton ? inst.pc.proton.version : protonChoice}
+          onClose={() => setDialog(null)}
+          onChoose={async (version) => {
+            if (inst?.pc?.proton) {
+              const updated = await run(() => backend.setProtonVersion(game.id, version));
+              if (updated) installs.setInstalled(updated);
+            } else setProtonChoice(version);
+            setDialog(null);
+          }}
+        />
+      )}
+      {dialog === "cod" && inst && (
+        <CodModeDialog
+          romId={game.id}
+          name={game.name}
+          onClose={() => setDialog(null)}
+          onChoose={(choice) => {
+            setDialog(null);
+            codChoice.current = choice;
+            startPlay();
+          }}
+        />
+      )}
       {dialog === "exe" && inst && (
         <ExeChoiceDialog
           candidates={candidates}
@@ -310,9 +392,12 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
   );
 }
 
-function downloadSize(game: Game): number {
-  return game.myArchive ? game.myArchive.file.size + game.romFiles.reduce((s, f) => s + f.size, 0) : 0;
-}
+const PC_KIND_LABELS: Record<PcKind, string> = {
+  portable: "jeu prêt à lancer",
+  archive: "archive",
+  gogInstaller: "installateur GOG",
+  cod: "jeu + client communautaire",
+};
 
 /** Détails de l'installation, affichés dans l'onglet « Informations ». */
 export function InstallFacts({ game, installs }: { game: Game; installs: InstallsState }) {
@@ -349,7 +434,19 @@ export function InstallFacts({ game, installs }: { game: Game; installs: Install
           </dd>
         </>
       )}
-      {!inst && game.myArchive && (
+      {game.pc && (
+        <>
+          <dt>Type</dt>
+          <dd>{PC_KIND_LABELS[game.pc.kind]}</dd>
+        </>
+      )}
+      {inst?.pc?.proton && (
+        <>
+          <dt>Proton</dt>
+          <dd>{inst.pc.proton.version ?? "version recommandée"}</dd>
+        </>
+      )}
+      {!inst && isAvailable(game) && (
         <>
           <dt>Téléchargement</dt>
           <dd>{formatSize(downloadSize(game))}</dd>
@@ -358,7 +455,13 @@ export function InstallFacts({ game, installs }: { game: Game; installs: Install
       <dt>Plateformes</dt>
       <dd>
         <ul className="gd-platforms">
-          {game.archives.length === 0 && <li className="n-hint">aucune</li>}
+          {game.pc && (
+            <li className={game.pc.runnable ? "is-mine" : undefined}>
+              {game.pc.os === "linux" ? "Linux" : "Windows"}
+              {game.pc.proton && " (via Proton)"}
+            </li>
+          )}
+          {!game.pc && game.archives.length === 0 && <li className="n-hint">aucune</li>}
           {game.archives.map((a) => (
             <li key={a.target} className={a.target === game.myArchive?.target ? "is-mine" : undefined}>
               {TARGET_LABELS[a.target]}
@@ -370,19 +473,46 @@ export function InstallFacts({ game, installs }: { game: Game; installs: Install
   );
 }
 
-function ProgressView({ phase, done, total, onCancel }: { phase: InstallPhase; done: number; total: number; onCancel: () => void }) {
-  const pct = total > 0 ? Math.min(100, (done / total) * 100) : null;
-  const detail = phase === "download" && total > 0 ? `${formatSize(done)} / ${formatSize(total)}` : pct !== null ? `${Math.round(pct)} %` : "";
+function ProgressView({
+  phase,
+  done,
+  total,
+  verifying,
+  onCancel,
+}: {
+  phase: InstallPhase;
+  done: number;
+  total: number;
+  verifying: boolean;
+  onCancel: () => void;
+}) {
+  const installing = phase === "installer";
+  // Installateur : estimation d'après la place prise, jamais 100 % avant la fin.
+  const pct = total > 0 ? Math.min(installing ? 99 : 100, (done / total) * 100) : null;
+  const bytes = phase === "download" || phase === "proton" || phase === "client";
+  const detail = installing
+    ? done > 0
+      ? `${formatSize(done)} installés`
+      : ""
+    : bytes && total > 0
+      ? `${formatSize(done)} / ${formatSize(total)}`
+      : pct !== null
+        ? `${Math.round(pct)} %`
+        : "";
   return (
     <div className="gd-progress">
       <div className="gd-progress-label">
-        <span>{PHASE_LABELS[phase]}</span>
+        <span>
+          {PHASE_LABELS[phase]}
+          {verifying && <span className="n-hint"> · vérification</span>}
+        </span>
         <span>{detail}</span>
       </div>
       <div className="gd-progress-bar" role="progressbar" aria-valuenow={pct ?? undefined} aria-valuemin={0} aria-valuemax={100}>
         <div className={pct === null ? "is-indeterminate" : undefined} style={pct === null ? undefined : { width: `${pct}%` }} />
       </div>
-      {phase !== "finalize" && (
+      {installing && <p className="n-hint">Installation en cours, elle ne peut plus être annulée.</p>}
+      {phase !== "finalize" && !installing && (
         <button className="n-link" onClick={onCancel}>
           Annuler
         </button>
@@ -441,6 +571,142 @@ function ExeChoiceDialog({
             </li>
           ))}
         </ul>
+      )}
+    </Dialog>
+  );
+}
+
+function ProtonDialog({
+  current,
+  onClose,
+  onChoose,
+}: {
+  current: string | null;
+  onClose: () => void;
+  onChoose: (version: string | null) => Promise<void>;
+}) {
+  const [versions, setVersions] = useState<ProtonVersion[] | null>(null);
+  const [choice, setChoice] = useState<string | null>(current);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    backend
+      .protonVersions()
+      .then(setVersions)
+      .catch(() => setVersions([]));
+  }, []);
+  const where = (v: ProtonVersion) =>
+    v.source === "remote" ? `à télécharger${v.size ? ` (${formatSize(v.size)})` : ""}` : v.source === "steam" ? "installée par Steam" : "installée";
+  return (
+    <Dialog
+      title="Version de Proton"
+      onClose={onClose}
+      actions={
+        <>
+          <button className="n-btn" onClick={onClose}>
+            Annuler
+          </button>
+          <button
+            className="n-btn"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              await onChoose(choice);
+              setBusy(false);
+            }}
+          >
+            Valider
+          </button>
+        </>
+      }
+    >
+      <p>Proton fait tourner les jeux Windows sous Linux. Changez de version si le jeu ne démarre pas ou fonctionne mal.</p>
+      <ul className="choice-list">
+        <li>
+          <label>
+            <input type="radio" name="proton" checked={choice === null} onChange={() => setChoice(null)} />
+            Recommandée (la plus récente de GE-Proton)
+          </label>
+        </li>
+        {versions === null && (
+          <li className="n-hint">
+            <span className="n-spinner" /> Recherche des versions…
+          </li>
+        )}
+        {versions?.map((v) => (
+          <li key={v.name}>
+            <label>
+              <input type="radio" name="proton" checked={choice === v.name} onChange={() => setChoice(v.name)} />
+              {v.name} · {where(v)}
+              {v.recommended && " · recommandée"}
+            </label>
+          </li>
+        ))}
+      </ul>
+    </Dialog>
+  );
+}
+
+function CodModeDialog({
+  romId,
+  name,
+  onClose,
+  onChoose,
+}: {
+  romId: number;
+  name: string;
+  onClose: () => void;
+  onChoose: (choice: CodChoice) => void;
+}) {
+  const [modes, setModes] = useState<CodModeInfo[] | null>(null);
+  useEffect(() => {
+    backend
+      .codModes(romId)
+      .then(setModes)
+      .catch(() => setModes([]));
+  }, [romId]);
+  return (
+    <Dialog
+      title={name}
+      onClose={onClose}
+      actions={
+        <button className="n-btn" onClick={onClose}>
+          Annuler
+        </button>
+      }
+    >
+      <p>Quel mode lancer ?</p>
+      {modes === null ? (
+        <p className="n-hint">
+          <span className="n-spinner" />
+        </p>
+      ) : (
+        <ul className="cod-modes">
+          {modes.map((m) => (
+            <li key={m.mode}>
+              <span className="cod-mode-name">{m.label}</span>
+              {m.plutonium ? (
+                <>
+                  <button className="n-btn" onClick={() => onChoose({ mode: m.mode, online: true })}>
+                    En ligne
+                  </button>
+                  <button className="n-btn" onClick={() => onChoose({ mode: m.mode, online: false })}>
+                    Hors ligne (LAN)
+                  </button>
+                </>
+              ) : (
+                <button className="n-btn" autoFocus={m.mode === "sp"} onClick={() => onChoose({ mode: m.mode, online: false })}>
+                  Jouer
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {modes?.some((m) => m.plutonium) && (
+        <p className="n-hint">
+          En ligne : Plutonium demande de se connecter à son compte la première fois (sa fenêtre s'ouvre). Hors ligne : sans
+          compte, en solo ou en réseau local, avec des bots.
+        </p>
       )}
     </Dialog>
   );

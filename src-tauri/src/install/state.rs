@@ -53,6 +53,9 @@ pub struct InstalledGame {
     /// Horodatages Unix (secondes).
     pub installed_at: u64,
     pub updated_at: u64,
+    /// Jeu de la plateforme « Ordinateur ».
+    #[serde(default)]
+    pub pc: Option<crate::pc::PcInstall>,
     /// Dossier du jeu (non stocké dans le fichier, déduit de son emplacement).
     #[serde(skip_deserializing, default)]
     pub game_dir: PathBuf,
@@ -276,6 +279,7 @@ mod tests {
             installed_at: 1,
             updated_at: 1,
             game_dir: game_dir.clone(),
+            pc: None,
         };
         write_state(&config, &st).unwrap();
 

@@ -13,6 +13,7 @@ import {
   InstalledGame,
   InstallProgress,
   SaveChoice,
+  CodChoice,
 } from "../api/backend";
 
 /** Opération en cours sur un jeu installé, qui empêche de le lancer. */
@@ -25,7 +26,7 @@ export interface InstallsState {
   /** Dernière erreur d'installation par jeu (effacée au prochain essai). */
   errors: Map<number, AppError>;
   reload: () => Promise<void>;
-  start: (romId: number, dest?: string) => Promise<void>;
+  start: (romId: number, dest?: string, proton?: string | null) => Promise<void>;
   setInstalled: (game: InstalledGame) => void;
   remove: (romId: number) => void;
   /** Désinstallations et déplacements en cours. */
@@ -35,7 +36,7 @@ export interface InstallsState {
   running: Map<number, number>;
   /** Dernière session terminée par jeu. */
   lastSession: Map<number, GameStopped>;
-  play: (romId: number, saveChoice?: SaveChoice) => Promise<string | null>;
+  play: (romId: number, saveChoice?: SaveChoice, cod?: CodChoice | null) => Promise<string | null>;
 }
 
 /** État des installations, tenu à jour par les événements du Rust. */
@@ -101,7 +102,7 @@ export function useInstalls(onAuthError: (e: unknown) => Promise<string>): Insta
   }, [reload, onAuthError]);
 
   const start = useCallback(
-    async (romId: number, dest?: string) => {
+    async (romId: number, dest?: string, proton?: string | null) => {
       setErrors((m) => {
         const next = new Map(m);
         next.delete(romId);
@@ -109,7 +110,7 @@ export function useInstalls(onAuthError: (e: unknown) => Promise<string>): Insta
       });
       setProgress((p) => new Map(p).set(romId, { romId, phase: "prepare", done: 0, total: 0 }));
       try {
-        await backend.installGame(romId, dest);
+        await backend.installGame(romId, dest, proton);
       } catch (e) {
         setProgress((p) => {
           const next = new Map(p);
@@ -147,9 +148,9 @@ export function useInstalls(onAuthError: (e: unknown) => Promise<string>): Insta
 
   /** Lance le jeu ; renvoie un message d'erreur ou null. */
   const play = useCallback(
-    async (romId: number, saveChoice: SaveChoice = "unchanged"): Promise<string | null> => {
+    async (romId: number, saveChoice: SaveChoice = "unchanged", cod?: CodChoice | null): Promise<string | null> => {
       try {
-        await backend.playGame(romId, saveChoice);
+        await backend.playGame(romId, saveChoice, cod);
         return null;
       } catch (e) {
         return onAuthError(e);

@@ -57,7 +57,33 @@ const KNOWN: &[(&str, &str, &[&str])] = &[
     ("sm64coopdx", "sm64coopdx", &["sm64_save_file*.bin"]),
     // %APPDATA%/MHGURecomp/save/save_0/system…
     ("mhgurecomp", "MHGURecomp/save", &[]),
+    // %LOCALAPPDATA%/DELTARUNE/filech1_0…, partagé avec la version Steam.
+    ("deltarune", "DELTARUNE", &[]),
 ];
+
+/// Dossier des préfixes Wine des jeux Windows lancés avec Proton.
+static PREFIXES: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+pub fn set_prefixes_dir(dir: PathBuf) {
+    let _ = PREFIXES.set(dir);
+}
+
+/// Dossiers « Windows » de l'utilisateur dans chaque préfixe Proton
+/// (`<préfixe>/drive_c` avec umu, `<préfixe>/pfx/drive_c` avec Proton seul).
+fn prefix_roots() -> Vec<PathBuf> {
+    let Some(dir) = PREFIXES.get() else { return Vec::new() };
+    let Ok(rd) = fs::read_dir(dir) else { return Vec::new() };
+    let mut roots = Vec::new();
+    for prefix in rd.filter_map(Result::ok).map(|e| e.path()) {
+        for drive in [prefix.join("drive_c"), prefix.join("pfx").join("drive_c")] {
+            let user = drive.join("users").join("steamuser");
+            for sub in ["AppData/Roaming", "AppData/Local", "AppData/LocalLow", "Documents", "Documents/My Games", "Saved Games"] {
+                roots.push(user.join(sub));
+            }
+        }
+    }
+    roots
+}
 
 /// Dossiers où les jeux rangent leurs données utilisateur, par système.
 pub fn data_roots() -> Vec<PathBuf> {
@@ -87,6 +113,7 @@ pub fn data_roots() -> Vec<PathBuf> {
         roots.push(home.join("Documents"));
         roots.push(home.join("Documents/My Games"));
     }
+    roots.extend(prefix_roots());
     // Moteurs qui rangent tous leurs jeux sous un même dossier : Godot
     // (`<données>/Godot/app_userdata/<jeu>`), LÖVE (`<données>/LOVE/<jeu>`).
     let engines: Vec<PathBuf> = roots
@@ -248,6 +275,59 @@ fn save_file_patterns(dir: &Path) -> Vec<String> {
     exts.into_iter().map(|x| format!("*.{x}")).collect()
 }
 
+/// Jeux GOG qui sauvegardent via le SDK Galaxy (Devil May Cry HD Collection…) :
+/// `%LOCALAPPDATA%/GOG.com/Galaxy/Applications/<client_id>/Storage/Shared/Files`,
+/// `client_id` étant lu dans `GalaxyConfig.json` à côté du jeu. Le dossier est
+/// retenu même s'il n'existe pas encore (le jeu le crée à sa première sauvegarde).
+fn galaxy_storage(game_dir: &Path) -> Option<PathBuf> {
+    let text = fs::read_to_string(game_dir.join("GalaxyConfig.json")).ok()?;
+    let config: serde_json::Value = serde_json::from_str(text.trim_start_matches('\u{feff}')).ok()?;
+    let id = config.get("client_id")?.as_str()?.trim().to_string();
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return None;
+    }
+    let rel = Path::new("GOG.com").join("Galaxy").join("Applications").join(&id).join("Storage").join("Shared").join("Files");
+    let roots = data_roots();
+    // Déjà créé quelque part (Windows, ou préfixe Proton du jeu).
+    if let Some(dir) = roots.iter().map(|r| r.join(&rel)).find(|d| d.is_dir()) {
+        return Some(dir);
+    }
+    // Pas encore créé : sous Windows dans %LOCALAPPDATA% ; ailleurs on attend
+    // que le jeu l'ait créé (le préfixe dépend du jeu).
+    std::env::var_os("LOCALAPPDATA").filter(|_| cfg!(windows)).map(|l| PathBuf::from(l).join(rel))
+}
+
+/// Fichiers `save1`, `save_0.dat`… rangés avec le jeu sans dossier dédié
+/// (Iconoclasts : `data/save1`). Cherchés à la racine et deux niveaux plus bas.
+fn named_save_files(game_dir: &Path) -> Option<SaveLocation> {
+    let is_save = |e: &fs::DirEntry| {
+        let name = e.file_name().to_string_lossy().to_lowercase();
+        let ext = Path::new(&name).extension().map(|x| x.to_string_lossy().into_owned()).unwrap_or_default();
+        e.file_type().map(|t| t.is_file()).unwrap_or(false)
+            && name.starts_with("save")
+            && !name.starts_with("saved")
+            && !NOT_SAVE_EXTS.contains(&ext.as_str())
+            && !matches!(ext.as_str(), "exe" | "dll" | "so" | "txt" | "json" | "xml")
+    };
+    let mut level = vec![game_dir.to_path_buf()];
+    for _ in 0..3 {
+        let mut next = Vec::new();
+        for dir in &level {
+            let Ok(rd) = fs::read_dir(dir) else { continue };
+            let entries: Vec<fs::DirEntry> = rd.filter_map(Result::ok).collect();
+            if entries.iter().any(is_save) {
+                return Some(SaveLocation { dir: dir.clone(), patterns: vec!["save*".into()] });
+            }
+            next.extend(entries.iter().filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false)).filter(|e| {
+                let n = e.file_name().to_string_lossy().to_lowercase();
+                !is_skipped(&n) && n != crate::install::extract::INTERNAL_DIR
+            }).map(|e| e.path()));
+        }
+        level = next;
+    }
+    None
+}
+
 /// Nom réduit à ses lettres et chiffres, en minuscules (`Super Mario 64` → `supermario64`).
 fn squash(s: &str) -> String {
     s.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect()
@@ -330,6 +410,9 @@ fn data_dirs(game_dir: &Path, names: &Names) -> Vec<PathBuf> {
 /// démarré par son launcher s'il est connu).
 pub fn detect(game_dir: &Path, exes: &[PathBuf], game_name: &str) -> Option<SaveLocation> {
     let whole = |dir: PathBuf| SaveLocation { dir, patterns: Vec::new() };
+    if let Some(dir) = galaxy_storage(game_dir) {
+        return Some(whole(dir));
+    }
     for exe in exes {
         let exe_dir = game_dir.join(exe).parent().map(Path::to_path_buf).unwrap_or_else(|| game_dir.to_path_buf());
         if let Some(dir) = child_dir_ci(&exe_dir, SAVE_DIR_NAMES) {
@@ -338,6 +421,9 @@ pub fn detect(game_dir: &Path, exes: &[PathBuf], game_name: &str) -> Option<Save
     }
     if let Some(dir) = find_save_dir(game_dir) {
         return Some(whole(dir));
+    }
+    if let Some(loc) = named_save_files(game_dir) {
+        return Some(loc);
     }
     let roots = data_roots();
     for exe in exes {
@@ -697,5 +783,37 @@ mod tests {
         let loc = SaveLocation { dir: root.join("nothing"), patterns: vec![] };
         assert_eq!(hash_local(&loc).unwrap(), None);
         fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod named_files_tests {
+    #[test]
+    fn finds_save_files_next_to_game_data() {
+        let game = std::env::temp_dir().join(format!("farfa-named-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(game.join("data")).unwrap();
+        std::fs::write(game.join("Assets.dat"), b"x").unwrap();
+        std::fs::write(game.join("data/settings"), b"x").unwrap();
+        assert!(super::named_save_files(&game).is_none());
+        std::fs::write(game.join("data/save1"), b"x").unwrap();
+        let loc = super::named_save_files(&game).unwrap();
+        assert_eq!((loc.dir, loc.patterns), (game.join("data"), vec!["save*".to_string()]));
+        std::fs::remove_dir_all(game).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod galaxy_tests {
+    #[test]
+    fn reads_galaxy_client_id() {
+        let game = std::env::temp_dir().join(format!("farfa-galaxy-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&game).unwrap();
+        assert!(super::galaxy_storage(&game).is_none());
+        std::fs::write(game.join("GalaxyConfig.json"), r#"{"client_id": "58418848926304357", "client_code": "x"}"#).unwrap();
+        if cfg!(windows) {
+            let dir = super::galaxy_storage(&game).unwrap();
+            assert!(dir.ends_with("GOG.com/Galaxy/Applications/58418848926304357/Storage/Shared/Files"));
+        }
+        std::fs::remove_dir_all(game).unwrap();
     }
 }

@@ -1,7 +1,7 @@
 //! Bouton « Jouer » : lancement, suivi de la session et envoi du temps de jeu.
 //! Événements : `game-started` puis `game-stopped`.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 use time::OffsetDateTime;
 
@@ -10,6 +10,8 @@ use crate::error::{AppError, AppResult};
 use crate::install::{rel_to_path, state};
 use crate::install::state::DirectLaunch;
 use crate::launch::{self, Launch};
+use crate::pc::cod::CodMode;
+use crate::pc::proton::{self, Runner};
 use crate::romm::playtime::{self, PendingSession};
 use crate::state::AppState;
 
@@ -32,6 +34,51 @@ struct GameStopped {
     game: Option<state::InstalledGame>,
 }
 
+/// Mode choisi pour un Call of Duty.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodChoice {
+    mode: CodMode,
+    /// Plutonium : en ligne (`true`) ou en LAN.
+    #[serde(default)]
+    online: bool,
+}
+
+/// Lancement d'un jeu PC, préparé avant la partie.
+struct PreparedPc {
+    exe: std::path::PathBuf,
+    args: Vec<String>,
+    cwd: Option<std::path::PathBuf>,
+    runner: Option<Runner>,
+}
+
+/// Nom du joueur en LAN : celui de la session de l'ordinateur.
+fn player_name() -> String {
+    ["USERNAME", "USER"]
+        .iter()
+        .find_map(|k| std::env::var(k).ok())
+        .map(|n| n.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_').take(15).collect::<String>())
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| "Joueur".into())
+}
+
+/// Jeu PC : Proton prêt (téléchargé si besoin), client Call of Duty à jour.
+async fn prepare_pc(state: &AppState, st: &state::InstalledGame, cod: Option<CodChoice>) -> AppResult<Option<PreparedPc>> {
+    let Some(pc) = &st.pc else { return Ok(None) };
+    let runner = match &pc.proton {
+        Some(setup) => Some(proton::runner(&state.config_dir, setup, pc.steam_app_id, &tokio_util::sync::CancellationToken::new(), |_, _| {}).await?),
+        None => None,
+    };
+    if let Some(game) = pc.cod {
+        let choice = cod.ok_or(AppError::ModeRequired)?;
+        let (exe, args, cwd) =
+            crate::pc::install::prepare_cod(game, choice.mode, choice.online, &st.game_dir, runner.as_ref(), &player_name()).await?;
+        return Ok(Some(PreparedPc { exe, args, cwd, runner }));
+    }
+    let exe = st.executable.as_deref().ok_or(AppError::NoExecutable)?;
+    Ok(Some(PreparedPc { exe: rel_to_path(exe), args: pc.args.clone(), cwd: pc.cwd.as_deref().map(rel_to_path), runner }))
+}
+
 #[tauri::command]
 pub fn running_games(state: State<'_, AppState>) -> Vec<i64> {
     state.running.lock().unwrap().iter().copied().collect()
@@ -40,7 +87,13 @@ pub fn running_games(state: State<'_, AppState>) -> Vec<i64> {
 /// Lance le jeu. `save_choice` : réponse à `save_check` (sauvegarde locale ou
 /// du serveur), appliquée avant le lancement.
 #[tauri::command]
-pub async fn play_game(app: AppHandle, state: State<'_, AppState>, rom_id: i64, save_choice: SaveChoice) -> AppResult<()> {
+pub async fn play_game(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    rom_id: i64,
+    save_choice: SaveChoice,
+    cod: Option<CodChoice>,
+) -> AppResult<()> {
     let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
     let exe = st.executable.clone().ok_or(AppError::NoExecutable)?;
     if state.installs.lock().unwrap().contains_key(&rom_id) || state.is_busy(rom_id) {
@@ -53,11 +106,19 @@ pub async fn play_game(app: AppHandle, state: State<'_, AppState>, rom_id: i64, 
         state.running.lock().unwrap().remove(&rom_id);
         return Err(e);
     }
+    let prepared = match prepare_pc(&state, &st, cod).await {
+        Ok(p) => p,
+        Err(e) => {
+            state.running.lock().unwrap().remove(&rom_id);
+            return Err(e);
+        }
+    };
     // Jeu déjà relevé derrière le launcher : lancé directement.
     let direct = st.direct_launch.as_ref().filter(|d| !st.prefer_launcher && st.game_dir.join(rel_to_path(&d.exe)).exists());
-    let spec = match direct {
-        Some(d) => Launch { exe: rel_to_path(&d.exe), args: &d.args, env: &d.env, cwd: d.cwd.as_deref().map(rel_to_path), learn: false },
-        None => Launch { exe: rel_to_path(&exe), args: &[], env: &[], cwd: None, learn: true },
+    let spec = match (&prepared, direct) {
+        (Some(p), _) => Launch { exe: p.exe.clone(), args: &p.args, env: &[], cwd: p.cwd.clone(), learn: false, runner: p.runner.as_ref() },
+        (None, Some(d)) => Launch { exe: rel_to_path(&d.exe), args: &d.args, env: &d.env, cwd: d.cwd.as_deref().map(rel_to_path), learn: false, runner: None },
+        (None, None) => Launch { exe: rel_to_path(&exe), args: &[], env: &[], cwd: None, learn: true, runner: None },
     };
     let running = match launch::spawn(&st.game_dir, spec) {
         Ok(r) => r,
@@ -70,7 +131,15 @@ pub async fn play_game(app: AppHandle, state: State<'_, AppState>, rom_id: i64, 
     let _ = app.emit("game-started", rom_id);
 
     tauri::async_runtime::spawn(async move {
-        let learned = tauri::async_runtime::spawn_blocking(move || running.wait()).await.ok().flatten();
+        let shown = app.clone();
+        let learned = tauri::async_runtime::spawn_blocking(move || {
+            running.wait(move || {
+                let _ = shown.emit("game-window", rom_id);
+            })
+        })
+        .await
+        .ok()
+        .flatten();
         let ended = OffsetDateTime::now_utc();
         let state = app.state::<AppState>();
         state.running.lock().unwrap().remove(&rom_id);

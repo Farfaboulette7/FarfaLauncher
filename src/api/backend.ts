@@ -76,6 +76,49 @@ export interface PlatformArchive {
 
 export type Manual = { kind: "resource"; url: string } | { kind: "file"; file: RemoteFile };
 
+/** Jeu de la plateforme « Ordinateur ». */
+export type PcKind = "portable" | "archive" | "gogInstaller" | "cod";
+export type CodGame = "cod4" | "waw" | "mw2" | "bo1" | "bo2" | "mw3";
+export type CodMode = "sp" | "mp" | "zm";
+
+export interface PcGame {
+  kind: PcKind;
+  /** Système pour lequel les fichiers du jeu sont faits. */
+  os: "windows" | "linux";
+  cod: CodGame | null;
+  files: RemoteFile[];
+  size: number;
+  /** Jouable sur ce système (directement ou avec Proton). */
+  runnable: boolean;
+  /** Jeu Windows sous Linux : lancé avec Proton. */
+  proton: boolean;
+}
+
+export interface PcInstall {
+  kind: PcKind;
+  os: "windows" | "linux";
+  cod: CodGame | null;
+  args: string[];
+  cwd: string | null;
+  proton: { version: string | null; prefix: string } | null;
+  steamAppId: number | null;
+}
+
+export interface ProtonVersion {
+  name: string;
+  path: string | null;
+  source: "steam" | "farfa" | "remote";
+  size: number | null;
+  recommended: boolean;
+}
+
+export interface CodModeInfo {
+  mode: CodMode;
+  label: string;
+  /** Passe par Plutonium : en ligne ou en LAN. */
+  plutonium: boolean;
+}
+
 export interface Platform {
   id: number;
   slug: string;
@@ -107,6 +150,8 @@ export interface Game {
   myArchive: PlatformArchive | null;
   romFiles: RemoteFile[];
   mods: RemoteFile[];
+  /** Jeu PC (plateforme « Ordinateur »). */
+  pc: PcGame | null;
   versionFile: RemoteFile | null;
   serverVersion: string | null;
   /** Contenu complet de VERSION.txt (comparé pour les mises à jour). */
@@ -157,6 +202,8 @@ export interface InstalledGame {
   installedAt: number;
   updatedAt: number;
   gameDir: string;
+  /** Jeu PC (plateforme « Ordinateur »). */
+  pc: PcInstall | null;
 }
 
 export interface DirectLaunch {
@@ -172,13 +219,24 @@ export interface InstallInfo {
   active: number[];
 }
 
-export type InstallPhase = "prepare" | "download" | "verify" | "backup" | "extract" | "finalize";
+export type InstallPhase =
+  | "prepare"
+  | "proton"
+  | "download"
+  | "verify"
+  | "backup"
+  | "extract"
+  | "installer"
+  | "client"
+  | "finalize";
 
 export interface InstallProgress {
   romId: number;
   phase: InstallPhase;
   done: number;
   total: number;
+  /** Téléchargement : fichier reçu en cours de vérification. */
+  verifying?: boolean;
 }
 
 export interface DiskInfo {
@@ -245,6 +303,12 @@ export type SaveCheck =
   | { status: "off" | "ready" }
   | { status: "unknown"; suggestions: string[] }
   | { status: "conflict"; localModified: number | null; serverModified: string };
+
+/** Mode choisi pour un Call of Duty (Plutonium : en ligne ou en LAN). */
+export interface CodChoice {
+  mode: CodMode;
+  online: boolean;
+}
 
 /** Sauvegarde à utiliser pour la partie. */
 export type SaveChoice = "local" | "server" | "unchanged";
@@ -316,7 +380,8 @@ export const backend = {
   favoriteSet: (romId: number, favorite: boolean) => invoke<number[]>("favorite_set", { romId, favorite }),
   installInfo: () => invoke<InstallInfo>("install_info"),
   /** `dest` : dossier où créer celui du jeu (sinon le dossier des jeux des paramètres). */
-  installGame: (romId: number, dest?: string) => invoke<void>("install_game", { romId, dest: dest ?? null }),
+  installGame: (romId: number, dest?: string, proton?: string | null) =>
+    invoke<void>("install_game", { romId, dest: dest ?? null, proton: proton ?? null }),
   cancelInstall: (romId: number) => invoke<void>("cancel_install", { romId }),
   executableCandidates: (romId: number) => invoke<string[]>("executable_candidates", { romId }),
   chooseExecutable: (romId: number, executable: string) => invoke<InstalledGame>("choose_executable", { romId, executable }),
@@ -328,7 +393,11 @@ export const backend = {
   setPreferLauncher: (romId: number, prefer: boolean) => invoke<InstalledGame>("set_prefer_launcher", { romId, prefer }),
   systemInfo: () => invoke<SystemInfo>("system_info"),
   serverPing: () => invoke<number>("server_ping"),
-  playGame: (romId: number, saveChoice: SaveChoice) => invoke<void>("play_game", { romId, saveChoice }),
+  playGame: (romId: number, saveChoice: SaveChoice, cod?: CodChoice | null) =>
+    invoke<void>("play_game", { romId, saveChoice, cod: cod ?? null }),
+  protonVersions: () => invoke<ProtonVersion[]>("proton_versions"),
+  setProtonVersion: (romId: number, version: string | null) => invoke<InstalledGame>("set_proton_version", { romId, version }),
+  codModes: (romId: number) => invoke<CodModeInfo[]>("cod_modes", { romId }),
   saveCheck: (romId: number) => invoke<SaveCheck>("save_check", { romId }),
   setSaveLocation: (romId: number, dir: string | null, off: boolean) =>
     invoke<InstalledGame>("set_save_location", { romId, dir, off }),
@@ -361,6 +430,17 @@ export function formatPlaytime(ms: number): string {
 
 /** Mise à jour disponible : le VERSION.txt du serveur diffère de celui installé
  *  (ou la version installée est inconnue). */
+/** Le jeu peut être installé sur ce système. */
+export function isAvailable(game: Game): boolean {
+  return !!game.myArchive || !!game.pc?.runnable;
+}
+
+/** Taille à télécharger pour installer le jeu. */
+export function downloadSize(game: Game): number {
+  if (game.pc) return game.pc.size;
+  return game.myArchive ? game.myArchive.file.size + game.romFiles.reduce((s, f) => s + f.size, 0) : 0;
+}
+
 export function hasUpdate(game: Game, inst: InstalledGame | undefined): boolean {
   return !!inst?.executable && !!game.serverVersionRaw && game.serverVersionRaw !== inst.versionRaw;
 }

@@ -71,6 +71,14 @@ pub enum AppError {
     DestinationExists,
     #[error("Impossible de déplacer le jeu à l'intérieur de son propre dossier.")]
     MoveIntoItself,
+    #[error("L'installation du jeu a échoué ou a été annulée dans la fenêtre de l'installateur.")]
+    InstallerFailed,
+    #[error("Impossible de préparer Proton (téléchargement ou version introuvable). Vérifiez votre connexion ou choisissez une autre version.")]
+    ProtonUnavailable,
+    #[error("Plutonium n'est pas encore installé : vérifiez votre connexion puis relancez le jeu.")]
+    PlutoniumMissing,
+    #[error("Choisissez un mode de jeu.")]
+    ModeRequired,
     #[error("Le serveur a renvoyé une erreur inattendue. Réessayez plus tard.")]
     Server,
     #[error("Une erreur inattendue est survenue. Les détails sont dans les logs.")]
@@ -111,6 +119,10 @@ impl AppError {
             AppError::AlreadyRunning => "already_running",
             AppError::DestinationExists => "destination_exists",
             AppError::MoveIntoItself => "move_into_itself",
+            AppError::InstallerFailed => "installer_failed",
+            AppError::ProtonUnavailable => "proton_unavailable",
+            AppError::PlutoniumMissing => "plutonium_missing",
+            AppError::ModeRequired => "mode_required",
             AppError::Server => "server",
             AppError::Internal => "internal",
         }

@@ -382,9 +382,10 @@ body::after {
 /* Animations réduites (souvent coupées par Windows, ex. AtlasOS) : sauf l'ouverture
    et le passage vers une fiche, courts et demandés explicitement, le remplissage
    des boutons au survol (signature NieR) et le défilement
-   des titres trop longs (sinon illisibles). */
+   des titres trop longs (sinon illisibles), et l'écran de lancement (il montre
+   que le jeu démarre). */
 @media (prefers-reduced-motion: reduce) {
-  :where(*:not(.intro, .intro *, .hack-stage, .n-marquee-track, .n-btn, .card, .pcard, .now-playing-pause, .pdf-leaf, .pdf-leaf *, .backdrop *, [data-reveal], .n-appear)),
+  :where(*:not(.intro, .intro *, .launch-overlay, .launch-overlay *, .hack-stage, .n-marquee-track, .n-btn, .card, .pcard, .now-playing-pause, .pdf-leaf, .pdf-leaf *, .backdrop *, [data-reveal], .n-appear)),
   :where(*:not(.intro, .intro *))::before,
   :where(*:not(.intro, .intro *, .pdf-leaf *))::after {
     animation: none !important;

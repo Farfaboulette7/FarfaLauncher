@@ -39,6 +39,8 @@ pub struct Progress {
     pub phase: &'static str,
     pub done: u64,
     pub total: u64,
+    /// Téléchargement : fichier reçu en cours de vérification (la progression reste affichée).
+    pub verifying: bool,
 }
 
 pub struct InstallJob {
@@ -47,6 +49,8 @@ pub struct InstallJob {
     pub install_root: PathBuf,
     pub target: Target,
     pub cancel: CancellationToken,
+    /// Version de Proton choisie pour un jeu Windows sous Linux (`None` : la recommandée).
+    pub proton: Option<String>,
     pub on_progress: Arc<dyn Fn(Progress) + Send + Sync>,
 }
 
@@ -59,14 +63,22 @@ pub enum InstallOutcome {
 }
 
 impl InstallJob {
-    fn emit(&self, rom_id: i64, phase: &'static str, done: u64, total: u64) {
-        (self.on_progress)(Progress { rom_id, phase, done, total });
+    pub(crate) fn emit(&self, rom_id: i64, phase: &'static str, done: u64, total: u64) {
+        (self.on_progress)(Progress { rom_id, phase, done, total, verifying: false });
+    }
+
+    /// Fichier téléchargé en cours de vérification : on reste en phase de téléchargement.
+    pub(crate) fn emit_verifying(&self, rom_id: i64, done: u64, total: u64) {
+        (self.on_progress)(Progress { rom_id, phase: "download", done, total, verifying: true });
     }
 
     pub async fn run(&self, rom_id: i64) -> AppResult<InstallOutcome> {
         self.emit(rom_id, "prepare", 0, 0);
         // Toujours les informations fraîches du serveur (identifiants de fichiers à jour).
         let game = library::fetch_game_details(&self.client, rom_id, self.target).await?;
+        if let Some(pc) = game.pc.clone() {
+            return crate::pc::install::run(self, game, pc).await;
+        }
         let archive = game.my_archive.clone().ok_or(AppError::NotAvailable)?;
         let previous = state::find(&self.config_dir, rom_id);
         let game_dir = match &previous {
@@ -108,7 +120,7 @@ impl InstallJob {
                     last = Instant::now();
                     self.emit(rom_id, "download", offset + got, total);
                 }
-            }, || self.emit(rom_id, "verify", 0, 0))
+            }, || self.emit_verifying(rom_id, offset + file.size, total))
             .await?;
             offset += file.size;
         }
@@ -142,7 +154,7 @@ impl InstallJob {
                 extract::extract(&a, kind, &s, &cancel, |done, total| {
                     if last.elapsed() >= Duration::from_millis(200) || done == total {
                         last = Instant::now();
-                        cb(Progress { rom_id, phase: "extract", done, total });
+                        cb(Progress { rom_id, phase: "extract", done, total, verifying: false });
                     }
                 })?;
                 let root = extract::content_root(&s)?;
@@ -184,6 +196,7 @@ impl InstallJob {
             installed_at: previous.as_ref().map(|p| p.installed_at).unwrap_or(now),
             updated_at: now,
             game_dir: game_dir.clone(),
+            pc: None,
         };
         let chosen = match (kept, candidates.len()) {
             (Some(e), _) => e,
@@ -509,7 +522,7 @@ pub fn path_to_rel(p: &Path) -> String {
     p.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/")
 }
 
-fn ensure_space(dir: &Path, needed: u64) -> AppResult<()> {
+pub(crate) fn ensure_space(dir: &Path, needed: u64) -> AppResult<()> {
     let probe = dir.ancestors().find(|p| p.exists()).unwrap_or(dir);
     let available = match fs4::available_space(probe) {
         Ok(a) => a,
@@ -544,7 +557,7 @@ fn prune_backups(dir: &Path) {
 }
 
 #[cfg(unix)]
-fn make_executable(path: &Path) {
+pub(crate) fn make_executable(path: &Path) {
     use std::os::unix::fs::PermissionsExt;
     let set = |p: &Path| {
         if let Ok(m) = std::fs::metadata(p) {
@@ -566,7 +579,7 @@ fn make_executable(path: &Path) {
 }
 
 #[cfg(not(unix))]
-fn make_executable(_path: &Path) {}
+pub(crate) fn make_executable(_path: &Path) {}
 
 fn remove_quarantine(game_dir: &Path) {
     if cfg!(target_os = "macos") {
@@ -578,7 +591,7 @@ fn remove_quarantine(game_dir: &Path) {
     }
 }
 
-async fn blocking<T: Send + 'static>(f: impl FnOnce() -> AppResult<T> + Send + 'static) -> AppResult<T> {
+pub(crate) async fn blocking<T: Send + 'static>(f: impl FnOnce() -> AppResult<T> + Send + 'static) -> AppResult<T> {
     tokio::task::spawn_blocking(f).await.map_err(|e| log_err(AppError::Internal, "tâche interrompue", e))?
 }
 
@@ -610,6 +623,7 @@ mod tests {
             installed_at: 0,
             updated_at: 0,
             game_dir: old.clone(),
+            pc: None,
         };
         state::write_state(&config, &st).unwrap();
 

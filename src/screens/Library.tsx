@@ -7,6 +7,7 @@ import {
   errorMessage,
   Game,
   hasUpdate,
+  isAvailable,
   isAppError,
   LIBRARY_DONE_EVENT,
   LIBRARY_GAME_EVENT,
@@ -531,7 +532,7 @@ function GameCard({
       ? { label: "Mise à jour disponible", cls: "" }
       : inst?.executable
         ? { label: "Installé", cls: "card-badge--ok" }
-        : !game.myArchive && game.detailsLoaded
+        : !isAvailable(game) && game.detailsLoaded
           ? { label: "Non disponible", cls: "card-badge--muted" }
           : null;
   const [kind, setKind] = useState<"box" | "flat" | null>(null);
