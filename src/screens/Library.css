@@ -223,13 +223,15 @@
     transform var(--nier-normal) var(--nier-ease);
 }
 .card:hover,
-.card:focus-visible {
+.card:focus-visible,
+.pad-nav .card:focus {
   outline: none;
   background-size: 100% 100%;
   color: var(--nier-high);
   transform: translateY(-3px);
 }
-.card:focus-visible { outline: 2px solid var(--nier-low); outline-offset: 4px; }
+.card:focus-visible,
+.pad-nav .card:focus { outline: 2px solid var(--nier-low); outline-offset: 4px; }
 .card-cover {
   position: relative;
   aspect-ratio: 3 / 4;
@@ -291,8 +293,12 @@
 .card-badge,
 .card-fav { z-index: 1; }
 
-/* Linux (WebKitGTK) : un filtre qui change au survol fait clignoter la carte ;
-   la carte garde aussi sa couche de rendu pour ne pas être redessinée. */
+/* Linux (WebKitGTK) : un filtre qui change au survol fait clignoter la carte,
+   et une couche de rendu par carte (transform, will-change) mélange parfois
+   les images entre cartes. La carte monte donc par position, sans couche. */
 .fx-lite .card-cover .boxart-flat,
 .fx-lite .card:hover .card-cover .boxart-flat { filter: none; transition: none; }
-.fx-lite .card { will-change: transform; }
+.fx-lite .card { position: relative; top: 0; transition: background-size var(--nier-sweep) var(--nier-ease), color var(--nier-fast) linear; }
+.fx-lite .card:hover,
+.fx-lite .card:focus-visible,
+.fx-lite.pad-nav .card:focus { transform: none; top: -3px; }

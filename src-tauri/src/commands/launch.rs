@@ -11,6 +11,7 @@ use crate::install::{rel_to_path, state};
 use crate::install::state::DirectLaunch;
 use crate::launch::{self, Launch};
 use crate::pc::cod::CodMode;
+use crate::pc::dosbox;
 use crate::pc::proton::{self, Runner};
 use crate::romm::playtime::{self, PendingSession};
 use crate::state::AppState;
@@ -76,7 +77,17 @@ async fn prepare_pc(state: &AppState, st: &state::InstalledGame, cod: Option<Cod
         return Ok(Some(PreparedPc { exe, args, cwd, runner }));
     }
     let exe = st.executable.as_deref().ok_or(AppError::NoExecutable)?;
-    Ok(Some(PreparedPc { exe: rel_to_path(exe), args: pc.args.clone(), cwd: pc.cwd.as_deref().map(rel_to_path), runner }))
+    let mut args = pc.args.clone();
+    if dosbox::is_dosbox(exe) {
+        // Touches personnalisées : config lue en dernier par DOSBox.
+        let path_for = |p: &std::path::Path| if runner.is_some() { proton::windows_path(p) } else { p.to_string_lossy().into_owned() };
+        match dosbox::write(&st.game_dir, &pc.keys, path_for) {
+            Ok(Some(conf)) => args.extend(["-conf".to_string(), path_for(&conf)]),
+            Ok(None) => {}
+            Err(e) => tracing::warn!("touches DOSBox non écrites: {e}"),
+        }
+    }
+    Ok(Some(PreparedPc { exe: rel_to_path(exe), args, cwd: pc.cwd.as_deref().map(rel_to_path), runner }))
 }
 
 #[tauri::command]

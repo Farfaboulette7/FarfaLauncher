@@ -30,6 +30,7 @@ import { useReveal } from "../reveal";
 import { beginAudio } from "../audioGuard";
 import "./Library.css";
 import "./Hack.css";
+import { FullscreenButton } from "../components/FullscreenButton";
 
 type Tab = "recent" | "library" | "favorites";
 
@@ -186,15 +187,13 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
     if (!session.offline) {
       backend.flushPlaySessions().catch((e) => console.warn("sessions en attente non envoyées", e));
     }
-    // Cache d'abord ; le serveur n'est interrogé que si le cache est vide
-    // (sinon : bouton « Rafraîchir »).
+    // Cache d'abord pour un affichage immédiat, puis rafraîchissement auprès
+    // du serveur pour faire apparaître les nouveaux jeux.
     backend
       .libraryCached()
       .then((snap) => {
-        if (snap) {
-          setSnapshot(snap);
-          setLoading(false);
-        } else if (session.offline) {
+        if (snap) setSnapshot(snap);
+        if (session.offline) {
           setLoading(false);
         } else {
           refresh();
@@ -370,6 +369,7 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
           >
             {loading ? "Chargement…" : "Rafraîchir"}
           </button>
+          <FullscreenButton />
           <button className="n-btn" onClick={() => setShowSettings(true)}>
             Paramètres
           </button>

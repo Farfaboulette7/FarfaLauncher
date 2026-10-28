@@ -10,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::error::{log_err, AppError, AppResult};
 use crate::install::{self, detect, path_to_rel, state, InstallJob, InstallOutcome};
-use crate::pc::{cod, proton};
+use crate::pc::{cod, dosbox, proton};
 use crate::platform;
 use crate::romm::library::{self, Game};
 use crate::state::AppState;
@@ -192,6 +192,15 @@ pub fn set_proton_version(state: State<'_, AppState>, rom_id: i64, version: Opti
     let mut st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
     let setup = st.pc.as_mut().and_then(|p| p.proton.as_mut()).ok_or(AppError::Internal)?;
     setup.version = version;
+    state::write_state(&state.config_dir, &st)?;
+    Ok(st)
+}
+
+/// Touches personnalisées d'un jeu DOS (appliquées au prochain lancement).
+#[tauri::command]
+pub fn set_key_binds(state: State<'_, AppState>, rom_id: i64, keys: Vec<dosbox::KeyBind>) -> AppResult<state::InstalledGame> {
+    let mut st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
+    st.pc.as_mut().ok_or(AppError::Internal)?.keys = keys;
     state::write_state(&state.config_dir, &st)?;
     Ok(st)
 }

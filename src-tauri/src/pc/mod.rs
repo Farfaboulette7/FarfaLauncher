@@ -14,6 +14,7 @@
 //! un jeu Linux).
 
 pub mod cod;
+pub mod dosbox;
 pub mod gog;
 pub mod install;
 pub mod net;
@@ -91,6 +92,9 @@ pub struct PcInstall {
     pub proton: Option<proton::ProtonSetup>,
     #[serde(default)]
     pub steam_app_id: Option<u32>,
+    /// Touches personnalisées (jeux DOS, voir `dosbox`).
+    #[serde(default)]
+    pub keys: Vec<dosbox::KeyBind>,
 }
 
 /// Étiquettes `[…]` du nom de dossier, en minuscules.

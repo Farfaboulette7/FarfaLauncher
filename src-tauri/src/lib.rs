@@ -3,6 +3,7 @@ mod cache;
 mod commands;
 mod error;
 mod external;
+mod gamepad;
 mod install;
 mod launch;
 mod logging;
@@ -14,7 +15,7 @@ mod secrets;
 mod settings;
 mod state;
 
-use tauri::Manager;
+use tauri::{Manager, WindowEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -39,8 +40,20 @@ pub fn run() {
                 app.manage(guard);
             }
             saves::set_prefixes_dir(pc::proton::prefixes_dir(&config_dir));
-            app.manage(state::AppState::new(config_dir, log_dir, cache_dir, default_install_root));
+            let state = state::AppState::new(config_dir, log_dir, cache_dir, default_install_root);
+            // Fenêtre créée cachée : affichée directement au bon format.
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_fullscreen(state.settings().fullscreen);
+                let _ = window.show();
+            }
+            app.manage(state);
+            gamepad::start(app.handle().clone());
             Ok(())
+        })
+        .on_window_event(|_, event| {
+            if let WindowEvent::Focused(focused) = event {
+                gamepad::set_focused(*focused);
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::open_logs,
@@ -48,6 +61,9 @@ pub fn run() {
             commands::system::system_info,
             commands::system::server_ping,
             commands::log_frontend,
+            commands::window::is_fullscreen,
+            commands::window::set_fullscreen,
+            commands::window::gamepads,
             commands::session::session_status,
             commands::session::set_server,
             commands::session::start_device_auth,
@@ -85,6 +101,7 @@ pub fn run() {
             commands::install::proton_versions,
             commands::install::set_proton_version,
             commands::install::cod_modes,
+            commands::install::set_key_binds,
             commands::launch::running_games,
             commands::launch::play_game,
             commands::launch::set_prefer_launcher,

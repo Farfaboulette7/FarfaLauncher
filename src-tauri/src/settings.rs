@@ -20,6 +20,8 @@ pub struct Settings {
     /// Identifiant stable de cette installation, envoyé à RomM lors de
     /// l'appairage (`client_device_identifier`).
     pub device_id: String,
+    /// Fenêtre en plein écran au démarrage.
+    pub fullscreen: bool,
 }
 
 impl Default for Settings {
@@ -29,6 +31,7 @@ impl Default for Settings {
             install_dir: None,
             assets_url: None,
             device_id: uuid::Uuid::new_v4().to_string(),
+            fullscreen: true,
         }
     }
 }

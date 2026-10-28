@@ -102,7 +102,25 @@ export interface PcInstall {
   cwd: string | null;
   proton: { version: string | null; prefix: string } | null;
   steamAppId: number | null;
+  /** Touches personnalisées (jeux DOS). */
+  keys?: KeyBind[];
 }
+
+/** Touche du jeu (évènement DOSBox, ex. `key_up`) et touche ou bouton du joueur (ex. `key 119`). */
+export interface KeyBind {
+  target: string;
+  source: string;
+  targetLabel?: string | null;
+  sourceLabel?: string | null;
+}
+
+export type PadEvent =
+  | { kind: "button"; pad: number; button: string; pressed: boolean }
+  | { kind: "axis"; pad: number; axis: "lx" | "ly" | "rx" | "ry"; value: number }
+  | { kind: "connected"; pad: number; name: string }
+  | { kind: "disconnected"; pad: number };
+
+export const GAMEPAD_EVENT = "gamepad";
 
 export interface ProtonVersion {
   name: string;
@@ -398,6 +416,10 @@ export const backend = {
   protonVersions: () => invoke<ProtonVersion[]>("proton_versions"),
   setProtonVersion: (romId: number, version: string | null) => invoke<InstalledGame>("set_proton_version", { romId, version }),
   codModes: (romId: number) => invoke<CodModeInfo[]>("cod_modes", { romId }),
+  setKeyBinds: (romId: number, keys: KeyBind[]) => invoke<InstalledGame>("set_key_binds", { romId, keys }),
+  isFullscreen: () => invoke<boolean>("is_fullscreen"),
+  setFullscreen: (on: boolean) => invoke<void>("set_fullscreen", { on }),
+  gamepads: () => invoke<{ pad: number; name: string }[]>("gamepads"),
   saveCheck: (romId: number) => invoke<SaveCheck>("save_check", { romId }),
   setSaveLocation: (romId: number, dir: string | null, off: boolean) =>
     invoke<InstalledGame>("set_save_location", { romId, dir, off }),

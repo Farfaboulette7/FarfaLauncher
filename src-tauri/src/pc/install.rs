@@ -350,6 +350,7 @@ pub async fn run(job: &InstallJob, game: Game, pc: PcGame) -> AppResult<InstallO
             cwd: task.as_ref().and_then(|t| t.cwd.clone()),
             proton: proton_setup,
             steam_app_id,
+            keys: previous_pc.map(|p| p.keys).unwrap_or_default(),
         }),
     };
     let chosen = match (kept, candidates.len()) {

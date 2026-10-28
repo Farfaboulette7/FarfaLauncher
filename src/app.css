@@ -8,3 +8,9 @@
   padding: var(--gutter);
   text-align: center;
 }
+
+/* Navigation à la manette : focus toujours visible (voir gamepad.ts). */
+.pad-nav :focus {
+  outline: 2px solid var(--nier-low);
+  outline-offset: 3px;
+}

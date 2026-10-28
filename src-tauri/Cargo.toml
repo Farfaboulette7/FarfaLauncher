@@ -42,6 +42,7 @@ tracing-appender = "0.2"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+gilrs = "0.11"
 sysinfo = { version = "0.39.6", default-features = false, features = ["system", "disk"] }
 
 [target."cfg(windows)".dependencies]

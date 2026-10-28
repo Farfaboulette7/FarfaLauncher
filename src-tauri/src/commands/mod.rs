@@ -7,6 +7,7 @@ pub mod library;
 pub mod session;
 pub mod sounds;
 pub mod system;
+pub mod window;
 
 use tauri::State;
 

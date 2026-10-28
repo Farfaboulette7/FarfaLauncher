@@ -3,6 +3,7 @@ import { backend, formatPlaytime, Game, Manual, Platform, Target } from "../api/
 import { InstallsState } from "../hooks/useInstalls";
 import { InstallFacts, InstallPanel } from "./InstallPanel";
 import { ModsTab } from "./ModsTab";
+import { ControlsTab } from "./ControlsTab";
 import { useCachedImage } from "../hooks/useCachedImage";
 import { BoxArt } from "../components/BoxArt";
 import { Marquee } from "../components/Marquee";
@@ -12,7 +13,7 @@ import "./GameDetail.css";
 // pdf.js est lourd : chargé seulement à l'ouverture d'un livret.
 const PdfViewer = lazy(() => import("../components/PdfViewer").then((m) => ({ default: m.PdfViewer })));
 
-type Tab = "infos" | "medias" | "livret" | "mods";
+type Tab = "infos" | "medias" | "livret" | "mods" | "controles";
 
 interface Props {
   game: Game;
@@ -54,6 +55,7 @@ export function GameDetail({ game, platform, target, installs, favorite, onToggl
     { id: "medias", label: "Médias", count: game.screenshotUrls.length },
     { id: "livret", label: "Livret", count: game.manuals.length },
     { id: "mods", label: "Mods", count: game.mods.length },
+    { id: "controles", label: "Contrôles" },
   ];
 
   return (
@@ -127,6 +129,7 @@ export function GameDetail({ game, platform, target, installs, favorite, onToggl
             {tab === "medias" && <MediaTab game={game} />}
             {tab === "livret" && <ManualTab game={game} onError={onError} />}
             {tab === "mods" && <ModsTab game={game} installs={installs} onError={onError} />}
+            {tab === "controles" && <ControlsTab game={game} installs={installs} onError={onError} />}
           </div>
         </section>
       </div>
