@@ -140,13 +140,28 @@ pub fn play_task(game_dir: &Path) -> Option<PlayTask> {
     let game = |t: &&RawTask| t.category.is_empty() || t.category == "game";
     let playable = |t: &&RawTask| t.category != "document" && t.category != "tool";
     let task = tasks.iter().filter(playable).find(|t| t.is_primary).or_else(|| tasks.iter().find(game))?;
-    let exe = to_rel(&task.path);
-    if !game_dir.join(&exe).is_file() {
-        tracing::warn!("goggame: programme introuvable: {exe}");
+    // Casse des chemins de GOG pas toujours celle du disque (DOSBOX/dosbox.exe
+    // pour DOSBOX/DOSBox.exe) : sans importance sous Windows, pas sous Linux.
+    let Some(exe) = resolve_ci(game_dir, &to_rel(&task.path)).filter(|e| game_dir.join(e).is_file()) else {
+        tracing::warn!("goggame: programme introuvable: {}", task.path);
         return None;
-    }
-    let cwd = Some(to_rel(&task.working_dir)).filter(|d| !d.is_empty());
+    };
+    let cwd = Some(to_rel(&task.working_dir)).filter(|d| !d.is_empty()).map(|d| resolve_ci(game_dir, &d).unwrap_or(d));
     Some(PlayTask { exe, args: split_args(&task.arguments), cwd })
+}
+
+/// Chemin relatif retrouvé sur le disque sans tenir compte de la casse.
+fn resolve_ci(root: &Path, rel: &str) -> Option<String> {
+    let mut dir = root.to_path_buf();
+    let mut parts = Vec::new();
+    for part in rel.split('/').filter(|p| !p.is_empty()) {
+        // Nom réel sur le disque : identique si possible, sinon à la casse près.
+        let names: Vec<String> = std::fs::read_dir(&dir).ok()?.filter_map(Result::ok).map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        let name = names.iter().find(|n| *n == part).or_else(|| names.iter().find(|n| n.eq_ignore_ascii_case(part)))?.clone();
+        dir.push(&name);
+        parts.push(name);
+    }
+    Some(parts.join("/"))
 }
 
 /// Découpe une ligne d'arguments Windows (guillemets doubles).
@@ -276,6 +291,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("farfa-gog-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(dir.join("bin/x64")).unwrap();
         std::fs::write(dir.join("bin/x64/Game.exe"), b"").unwrap();
+        assert_eq!(resolve_ci(&dir, "BIN/X64/game.EXE").as_deref(), Some("bin/x64/Game.exe"));
         std::fs::write(
             dir.join("goggame-1423049311.info"),
             r#"{"gameId":"1","playTasks":[{"category":"launcher","isPrimary":false,"path":"x.exe","type":"FileTask"},{"category":"document","isPrimary":true,"path":"m.pdf","type":"FileTask"},

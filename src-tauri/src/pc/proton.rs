@@ -110,6 +110,8 @@ pub fn installed(tools: &Path) -> Vec<ProtonVersion> {
             if !path.join("proton").is_file() || (source == "steam" && !name.to_lowercase().contains("proton")) {
                 continue;
             }
+            // L'archive de GE-Proton11-11 donne le dossier GE-Proton11-11-x86_64.
+            let name = name.strip_suffix("-x86_64").map(str::to_string).unwrap_or(name);
             if out.iter().any(|v| v.name == name) {
                 continue;
             }
@@ -199,11 +201,10 @@ pub async fn ensure(tools: &Path, wanted: Option<&str>, cancel: &CancellationTok
     let (a, d) = (archive.clone(), dir.clone());
     tokio::task::spawn_blocking(move || untar_gz(&a, &d)).await.map_err(|_| AppError::Internal)??;
     let _ = std::fs::remove_file(&archive);
-    let path = dir.join(&pick.name);
-    if !path.join("proton").is_file() {
+    let Some(path) = installed(tools).into_iter().find(|v| v.name == pick.name).and_then(|v| v.path) else {
         tracing::error!("{} : archive inattendue", pick.name);
         return Err(AppError::ProtonUnavailable);
-    }
+    };
     Ok((pick.name, path))
 }
 

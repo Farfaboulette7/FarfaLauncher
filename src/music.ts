@@ -120,6 +120,7 @@ function startVersion(version: MusicVersion, offset: number, fadeIn: number): Pl
   source.loopEnd = Math.min(v.loopEnd, buffer.duration);
   const gain = c.createGain();
   const now = c.currentTime;
+  gain.gain.value = fadeIn > 0 ? 0 : 1;
   gain.gain.setValueAtTime(fadeIn > 0 ? 0 : 1, now);
   if (fadeIn > 0) gain.gain.linearRampToValueAtTime(1, now + fadeIn);
   source.connect(gain).connect(master!);
@@ -277,12 +278,13 @@ export function loadMusic(): Promise<void> {
     }
     ctx = c;
     master = c.createGain();
-    master.gain.setValueAtTime(0, c.currentTime);
+    // Volume réglé tout de suite (pas d'automatisation) : sous Linux, le
+    // moteur audio joue sinon les premiers instants à plein volume.
+    master.gain.value = targetVolume();
     master.connect(c.destination);
     track = chosen;
     buffers = pair;
     playing = startVersion(wanted, 0, 0);
-    applyVolume(1.5);
     setState({ title: chosen.title });
     logToFile("info", `musique : « ${chosen.title} » (audio ${c.state})`);
     resumeOnGesture(c);

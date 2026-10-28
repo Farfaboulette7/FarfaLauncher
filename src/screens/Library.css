@@ -290,3 +290,9 @@
 .card--box3d .card-cover { background: transparent; overflow: visible; }
 .card-badge,
 .card-fav { z-index: 1; }
+
+/* Linux (WebKitGTK) : un filtre qui change au survol fait clignoter la carte ;
+   la carte garde aussi sa couche de rendu pour ne pas être redessinée. */
+.fx-lite .card-cover .boxart-flat,
+.fx-lite .card:hover .card-cover .boxart-flat { filter: none; transition: none; }
+.fx-lite .card { will-change: transform; }
