@@ -1,6 +1,6 @@
 [package]
 name = "farfalauncher"
-version = "0.4.4"
+version = "0.4.5"
 description = "Launcher de jeux recomp / portages PC hébergés sur un serveur RomM"
 authors = ["Farfaboulette7"]
 repository = "https://github.com/Farfaboulette7/FarfaLauncher"
