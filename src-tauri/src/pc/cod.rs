@@ -287,6 +287,21 @@ pub fn plutonium_root(local_appdata: &Path) -> PathBuf {
     local_appdata.join("Plutonium")
 }
 
+impl CodGame {
+    /// Profils et sauvegardes : `storage/<jeu>/players` de Plutonium, sinon
+    /// `players` à côté du jeu (clients IW3x, IW4x).
+    pub fn save_dir(self, game_dir: &Path, local_appdata: &Path) -> PathBuf {
+        let storage = |game: &str| plutonium_root(local_appdata).join("storage").join(game).join("players");
+        match self {
+            CodGame::Waw => storage("t4"),
+            CodGame::Bo1 => storage("t5"),
+            CodGame::Bo2 => storage("t6"),
+            CodGame::Mw3 => storage("iw5"),
+            CodGame::Cod4 | CodGame::Mw2 => game_dir.join("players"),
+        }
+    }
+}
+
 fn read_revision(text: &str) -> Option<i64> {
     serde_json::from_str::<serde_json::Value>(text).ok()?.get("revision")?.as_i64()
 }

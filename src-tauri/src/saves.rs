@@ -4,12 +4,13 @@
 //! Chaque recomp range ses sauvegardes à sa façon. Ordre de recherche :
 //! 1. un dossier de sauvegardes (`save`, `saves`, `savedata`…) à côté de
 //!    l'exécutable, ou ailleurs dans le dossier du jeu (quelques niveaux) ;
-//! 2. quelques recomps connues (table ci-dessous) ;
+//! 2. quelques jeux connus (table ci-dessous) ;
 //! 3. le dossier de données du jeu, d'après le nom de l'exécutable ou du jeu
 //!    (`%APPDATA%`, `%LOCALAPPDATA%`, `AppData/LocalLow`, Documents, `My Games`,
 //!    `Saved Games`, `~/.local/share`, `~/.config`, `~/Library/Application
 //!    Support`…, aussi sous un dossier d'éditeur) : son dossier de sauvegardes,
-//!    sinon ses fichiers `.sav`, `.srm`… ;
+//!    sinon ses fichiers `.sav`, `.srm`…, sinon tout le dossier s'il est
+//!    léger (jeux Unity : `LocalLow/<éditeur>/<jeu>/<compte>/user1.dat`) ;
 //! 4. sinon, l'utilisateur indique le dossier.
 
 use std::fs;
@@ -50,16 +51,26 @@ pub struct SaveLocation {
     pub patterns: Vec<String>,
 }
 
-/// Recomps dont le dossier de données contient bien plus que les sauvegardes
-/// (ROM, mods…) : on ne prend que les fichiers de sauvegarde.
-/// (nom de l'exécutable sans extension, dossier de données, motifs)
+/// Jeux dont les sauvegardes ne se devinent pas, ou dont le dossier de
+/// données contient bien plus (ROM, mods…) : on ne prend que les sauvegardes.
+/// (nom de l'exécutable sans extension, dossier de données ou `@jeu/` pour le
+/// dossier du jeu, motifs : fichiers ou dossiers du premier niveau)
 const KNOWN: &[(&str, &str, &[&str])] = &[
     ("sm64coopdx", "sm64coopdx", &["sm64_save_file*.bin"]),
     // %APPDATA%/MHGURecomp/save/save_0/system…
     ("mhgurecomp", "MHGURecomp/save", &[]),
     // %LOCALAPPDATA%/DELTARUNE/filech1_0…, partagé avec la version Steam.
-    ("deltarune", "DELTARUNE", &[]),
+    ("deltarune", "DELTARUNE", &["filech*", "config_*.ini", "dr.ini"]),
+    // Recomp LÖVE : %APPDATA%/pokemon-love2d/saves/<version>/slot1.lua, les
+    // anciens save_<version>.lua et options.lua (liste des emplacements).
+    ("gen1recomp", "pokemon-love2d", &["saves", "save*.lua", "options.lua"]),
+    // data/save1, data/save2… à côté des données du jeu.
+    ("iconoclasts", "@jeu/data", &["save*"]),
 ];
+
+/// Dossier de données pris en entier (aucun dossier ni fichier de sauvegarde
+/// reconnu) seulement en dessous de cette taille : au-delà, ce sont des caches.
+const WHOLE_DATA_MAX_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Dossier des préfixes Wine des jeux Windows lancés avec Proton.
 static PREFIXES: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
@@ -328,9 +339,34 @@ fn named_save_files(game_dir: &Path) -> Option<SaveLocation> {
     None
 }
 
-/// Nom réduit à ses lettres et chiffres, en minuscules (`Super Mario 64` → `supermario64`).
+/// Nom réduit à ses lettres et chiffres, en minuscules, sans accents, les
+/// chiffres romains en chiffres (`Super Mario 64` → `supermario64`,
+/// `DOOM II` → `doom2`, `Pokémon` → `pokemon`).
 fn squash(s: &str) -> String {
-    s.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect()
+    let fold = |c: char| match c {
+        'à' | 'á' | 'â' | 'ä' | 'ã' | 'å' => 'a',
+        'é' | 'è' | 'ê' | 'ë' => 'e',
+        'í' | 'ì' | 'î' | 'ï' => 'i',
+        'ó' | 'ò' | 'ô' | 'ö' | 'õ' => 'o',
+        'ú' | 'ù' | 'û' | 'ü' => 'u',
+        'ç' => 'c',
+        'ñ' => 'n',
+        c => c,
+    };
+    let lower: String = s.chars().flat_map(char::to_lowercase).map(fold).collect();
+    lower
+        .split(|c: char| !c.is_alphanumeric())
+        .map(|w| match w {
+            "ii" => "2",
+            "iii" => "3",
+            "iv" => "4",
+            "vi" => "6",
+            "vii" => "7",
+            "viii" => "8",
+            "ix" => "9",
+            w => w,
+        })
+        .collect()
 }
 
 /// Noms d'exécutables qui ne disent rien du jeu.
@@ -429,10 +465,14 @@ pub fn detect(game_dir: &Path, exes: &[PathBuf], game_name: &str) -> Option<Save
     for exe in exes {
         let Some(stem) = exe_stem(exe) else { continue };
         if let Some((_, folder, patterns)) = KNOWN.iter().find(|(e, _, _)| e.eq_ignore_ascii_case(&stem)) {
+            let patterns = patterns.iter().map(|p| p.to_string()).collect();
+            if let Some(rel) = folder.strip_prefix("@jeu/") {
+                return Some(SaveLocation { dir: game_dir.join(rel), patterns });
+            }
             // Le dossier n'existe peut-être pas encore (jeu jamais lancé) : on le
             // retient quand même, il sera créé par le jeu.
             let root = roots.iter().find(|r| r.join(folder).is_dir()).or(roots.first())?;
-            return Some(SaveLocation { dir: root.join(folder), patterns: patterns.iter().map(|p| p.to_string()).collect() });
+            return Some(SaveLocation { dir: root.join(folder), patterns });
         }
     }
     let data = data_dirs(game_dir, &Names::new(game_dir, exes, game_name, false));
@@ -441,10 +481,28 @@ pub fn detect(game_dir: &Path, exes: &[PathBuf], game_name: &str) -> Option<Save
     }
     // Pas de dossier dédié : les fichiers de sauvegarde posés à la racine des
     // données (le reste — ROM, mods, journaux — n'est pas pris).
-    data.into_iter().find_map(|dir| {
-        let patterns = save_file_patterns(&dir);
-        (!patterns.is_empty()).then_some(SaveLocation { dir, patterns })
-    })
+    if let Some(loc) = data.iter().find_map(|dir| {
+        let patterns = save_file_patterns(dir);
+        (!patterns.is_empty()).then(|| SaveLocation { dir: dir.clone(), patterns })
+    }) {
+        return Some(loc);
+    }
+    // Ni dossier ni fichiers reconnus (`user1.dat`, `playerInfo.dat`…) : tout le
+    // dossier de données, s'il est léger et contient plus que des journaux.
+    data.into_iter().find(|dir| whole_data_dir(dir)).map(whole)
+}
+
+/// Dossier de données à prendre en entier : quelques fichiers (hors journaux),
+/// léger, pas un dossier de jeu installé.
+fn whole_data_dir(dir: &Path) -> bool {
+    let loc = SaveLocation { dir: dir.to_path_buf(), patterns: Vec::new() };
+    let Ok(files) = collect(&loc) else { return false };
+    let size: u64 = files.iter().filter_map(|(_, p)| fs::metadata(p).ok()).map(|m| m.len()).sum();
+    let has_program = files.iter().any(|(rel, _)| {
+        let ext = Path::new(rel).extension().map(|x| x.to_string_lossy().to_lowercase()).unwrap_or_default();
+        matches!(ext.as_str(), "exe" | "dll" | "so" | "pck" | "assets")
+    });
+    !files.is_empty() && size <= WHOLE_DATA_MAX_BYTES && !has_program
 }
 
 /// Dossiers à proposer quand rien n'a été trouvé : données du jeu existantes.
@@ -500,7 +558,13 @@ pub fn collect(loc: &SaveLocation) -> AppResult<Vec<(String, PathBuf)>> {
     } else {
         for e in fs::read_dir(&loc.dir).map_err(|e| log_err(AppError::Disk, "lecture des sauvegardes", e))?.filter_map(Result::ok) {
             let name = e.file_name().to_string_lossy().into_owned();
-            if e.file_type().map(|t| t.is_file()).unwrap_or(false) && loc.patterns.iter().any(|p| matches(p, &name)) {
+            if !loc.patterns.iter().any(|p| matches(p, &name)) {
+                continue;
+            }
+            let ft = e.file_type().map_err(|e| log_err(AppError::Disk, "lecture des sauvegardes", e))?;
+            if ft.is_dir() {
+                walk(&e.path(), &name, &mut out)?;
+            } else if ft.is_file() && !is_log(&name) {
                 out.push((name, e.path()));
             }
         }
@@ -521,11 +585,17 @@ fn walk(dir: &Path, rel: &str, out: &mut Vec<(String, PathBuf)>) -> AppResult<()
         let ft = e.file_type().map_err(|e| log_err(AppError::Disk, "lecture des sauvegardes", e))?;
         if ft.is_dir() {
             walk(&e.path(), &child, out)?;
-        } else if ft.is_file() {
+        } else if ft.is_file() && !is_log(&e.file_name().to_string_lossy()) {
             out.push((child, e.path()));
         }
     }
     Ok(())
+}
+
+/// Journaux et fichiers temporaires : réécrits à chaque partie, jamais des sauvegardes.
+fn is_log(name: &str) -> bool {
+    let ext = Path::new(name).extension().map(|x| x.to_string_lossy().to_lowercase()).unwrap_or_default();
+    NOT_SAVE_EXTS.contains(&ext.as_str())
 }
 
 fn feed(hasher: &mut Sha1, rel: &str, data: &[u8]) {
@@ -618,7 +688,8 @@ pub fn restore(loc: &SaveLocation, bytes: &[u8], backup_dir: &Path) -> AppResult
     }
     for (rel, data) in entries {
         // Avec des motifs, on ne pose que des fichiers de sauvegarde reconnus.
-        if !loc.patterns.is_empty() && (rel.contains('/') || !loc.patterns.iter().any(|p| matches(p, &rel))) {
+        let top = rel.split('/').next().unwrap_or(&rel);
+        if !loc.patterns.is_empty() && !loc.patterns.iter().any(|p| matches(p, top)) {
             continue;
         }
         let dest = loc.dir.join(&rel);
@@ -815,5 +886,47 @@ mod galaxy_tests {
             assert!(dir.ends_with("GOG.com/Galaxy/Applications/58418848926304357/Storage/Shared/Files"));
         }
         std::fs::remove_dir_all(game).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod detection_tests {
+    use super::*;
+
+    #[test]
+    fn squash_folds_accents_and_roman_numerals() {
+        assert_eq!(squash("DOOM II"), "doom2");
+        assert_eq!(squash("DOOM 2"), "doom2");
+        assert_eq!(squash("Pokémon Yellow"), "pokemonyellow");
+        assert_eq!(squash("Final Fantasy VII"), "finalfantasy7");
+    }
+
+    #[test]
+    fn patterns_take_matching_folders_and_skip_logs() {
+        let dir = std::env::temp_dir().join(format!("farfa-savepat-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(dir.join("saves/yellow")).unwrap();
+        fs::write(dir.join("saves/yellow/slot1.lua"), b"x").unwrap();
+        fs::write(dir.join("options.lua"), b"x").unwrap();
+        fs::write(dir.join("mod_index_cache.lua"), b"x").unwrap();
+        fs::write(dir.join("Player.log"), b"x").unwrap();
+        let loc = SaveLocation { dir: dir.clone(), patterns: vec!["saves".into(), "options.lua".into()] };
+        let names: Vec<String> = collect(&loc).unwrap().into_iter().map(|(r, _)| r).collect();
+        assert_eq!(names, ["options.lua", "saves/yellow/slot1.lua"]);
+        let whole = SaveLocation { dir: dir.clone(), patterns: Vec::new() };
+        assert!(!collect(&whole).unwrap().iter().any(|(r, _)| r.ends_with(".log")));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn whole_data_dir_needs_more_than_logs() {
+        let dir = std::env::temp_dir().join(format!("farfa-wholedata-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("Player.log"), b"x").unwrap();
+        assert!(!whole_data_dir(&dir));
+        fs::write(dir.join("user1.dat"), b"x").unwrap();
+        assert!(whole_data_dir(&dir));
+        fs::write(dir.join("UnityPlayer.dll"), b"x").unwrap();
+        assert!(!whole_data_dir(&dir));
+        fs::remove_dir_all(&dir).unwrap();
     }
 }

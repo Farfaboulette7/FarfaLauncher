@@ -69,7 +69,18 @@ fn resolve(config_dir: &std::path::Path, st: &mut InstalledGame) -> Option<SaveL
     if exes.is_empty() {
         return None;
     }
-    let loc = saves::detect(&st.game_dir, &exes, &st.name)?;
+    let loc = match st.pc.as_ref().and_then(|p| Some((p.cod?, p.proton.is_some()))) {
+        // Call of Duty : dossier du client communautaire (Plutonium…).
+        Some((cod, proton)) => {
+            let local = if proton {
+                crate::pc::install::prefix_for(config_dir, &st.game_dir, st.rom_id).join("drive_c/users/steamuser/AppData/Local")
+            } else {
+                crate::pc::install::local_appdata(None)
+            };
+            SaveLocation { dir: cod.save_dir(&st.game_dir, &local), patterns: Vec::new() }
+        }
+        None => saves::detect(&st.game_dir, &exes, &st.name)?,
+    };
     tracing::info!("sauvegardes de « {} » trouvées dans {} {:?}", st.name, loc.dir.display(), loc.patterns);
     st.saves.dir = Some(loc.dir.clone());
     st.saves.patterns = loc.patterns.clone();
