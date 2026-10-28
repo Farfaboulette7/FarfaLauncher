@@ -3,7 +3,6 @@
 use tauri::{State, WebviewWindow};
 
 use crate::error::{log_err, AppError, AppResult};
-use crate::gamepad::{self, PadInfo};
 use crate::state::AppState;
 
 #[tauri::command]
@@ -20,6 +19,6 @@ pub fn set_fullscreen(window: WebviewWindow, state: State<'_, AppState>, on: boo
 }
 
 #[tauri::command]
-pub fn gamepads() -> Vec<PadInfo> {
-    gamepad::connected()
+pub fn gamepads() -> Vec<crate::gamepad::PadInfo> {
+    crate::gamepad::connected()
 }

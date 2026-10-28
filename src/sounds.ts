@@ -14,7 +14,10 @@ export type SoundName =
   | "Error";
 
 const SETTINGS_KEY = "farfa.sounds";
-const sources = new Map<SoundName, HTMLAudioElement>();
+// Lus par Web Audio, comme la musique : sous Linux, un <audio> ne lit pas
+// les fichiers locaux servis par le launcher (protocole asset).
+const sources = new Map<SoundName, AudioBuffer>();
+let ctx: AudioContext | null = null;
 const lastPlayed = new Map<SoundName, number>();
 let loading: Promise<void> | null = null;
 /** Son demandé avant le chargement (ex. ouverture) : joué dès qu'il arrive. */
@@ -62,12 +65,20 @@ export function loadSounds(): Promise<void> {
   if (!settings.enabled) return Promise.resolve();
   loading ??= backend
     .soundPaths()
-    .then((paths) => {
-      for (const [name, path] of Object.entries(paths)) {
-        const audio = new Audio(convertFileSrc(path));
-        audio.preload = "auto";
-        sources.set(name as SoundName, audio);
-      }
+    .then(async (paths) => {
+      ctx ??= new AudioContext();
+      const c = ctx;
+      await Promise.all(
+        Object.entries(paths).map(async ([name, path]) => {
+          try {
+            const resp = await fetch(convertFileSrc(path));
+            sources.set(name as SoundName, await c.decodeAudioData(await resp.arrayBuffer()));
+          } catch (e) {
+            console.warn("son illisible", name, e);
+          }
+        }),
+      );
+      resumeOnGesture(c);
       if (pending && Date.now() - pending.at < 4000) play(pending.name);
       pending = null;
     })
@@ -97,9 +108,27 @@ export function play(name: SoundName) {
   const now = performance.now();
   if (now - (lastPlayed.get(name) ?? -1e9) < (name === "Error" ? 600 : 60)) return;
   lastPlayed.set(name, now);
-  const a = src.cloneNode() as HTMLAudioElement;
-  a.volume = settings.volume * BASE_LEVEL;
-  a.play().catch(() => undefined);
+  if (!ctx || ctx.state !== "running") return;
+  const gain = ctx.createGain();
+  gain.gain.value = settings.volume * BASE_LEVEL;
+  gain.connect(ctx.destination);
+  const node = ctx.createBufferSource();
+  node.buffer = src;
+  node.connect(gain);
+  node.onended = () => gain.disconnect();
+  node.start();
+}
+
+/** Le moteur peut démarrer l'audio en pause : reprise au premier geste. */
+function resumeOnGesture(c: AudioContext) {
+  if (c.state !== "suspended") return;
+  const resume = () => {
+    c.resume().catch(() => undefined);
+    window.removeEventListener("pointerdown", resume, true);
+    window.removeEventListener("keydown", resume, true);
+  };
+  window.addEventListener("pointerdown", resume, true);
+  window.addEventListener("keydown", resume, true);
 }
 
 /**

@@ -117,8 +117,16 @@ export interface KeyBind {
 export type PadEvent =
   | { kind: "button"; pad: number; button: string; pressed: boolean }
   | { kind: "axis"; pad: number; axis: "lx" | "ly" | "rx" | "ry"; value: number }
-  | { kind: "connected"; pad: number; name: string }
+  | ({ kind: "connected" } & PadInfo)
   | { kind: "disconnected"; pad: number };
+
+export type PadLayout = "xbox" | "playstation" | "nintendo" | "generic";
+
+export interface PadInfo {
+  pad: number;
+  name: string;
+  layout: PadLayout;
+}
 
 export const GAMEPAD_EVENT = "gamepad";
 
@@ -419,7 +427,7 @@ export const backend = {
   setKeyBinds: (romId: number, keys: KeyBind[]) => invoke<InstalledGame>("set_key_binds", { romId, keys }),
   isFullscreen: () => invoke<boolean>("is_fullscreen"),
   setFullscreen: (on: boolean) => invoke<void>("set_fullscreen", { on }),
-  gamepads: () => invoke<{ pad: number; name: string }[]>("gamepads"),
+  gamepads: () => invoke<PadInfo[]>("gamepads"),
   saveCheck: (romId: number) => invoke<SaveCheck>("save_check", { romId }),
   setSaveLocation: (romId: number, dir: string | null, off: boolean) =>
     invoke<InstalledGame>("set_save_location", { romId, dir, off }),

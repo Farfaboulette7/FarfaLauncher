@@ -15,7 +15,7 @@ mod secrets;
 mod settings;
 mod state;
 
-use tauri::{Manager, WindowEvent};
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -49,11 +49,6 @@ pub fn run() {
             app.manage(state);
             gamepad::start(app.handle().clone());
             Ok(())
-        })
-        .on_window_event(|_, event| {
-            if let WindowEvent::Focused(focused) = event {
-                gamepad::set_focused(*focused);
-            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::open_logs,

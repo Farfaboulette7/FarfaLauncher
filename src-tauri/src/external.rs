@@ -22,6 +22,13 @@ pub fn prepare_linux() {
         if nvidia && std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
             std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
         }
+        // Dessin des pages par le processeur graphique (Skia) : sous Mesa, des
+        // morceaux de page affichent parfois une autre image (jaquettes
+        // échangées le temps d'une image). Le dessin par le processeur suffit
+        // à l'interface ; l'affichage reste accéléré.
+        if std::env::var_os("WEBKIT_SKIA_ENABLE_CPU_RENDERING").is_none() {
+            std::env::set_var("WEBKIT_SKIA_ENABLE_CPU_RENDERING", "1");
+        }
     }
 }
 

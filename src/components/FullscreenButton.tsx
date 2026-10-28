@@ -13,7 +13,7 @@ export function FullscreenButton() {
   if (on === null) return null;
   return (
     <button className="n-btn" title="F11" onClick={() => backend.setFullscreen(!on).then(() => setOn(!on))}>
-      {on ? "Fenêtré" : "Plein écran"}
+      {on ? "Quitter le plein écran" : "Plein écran"}
     </button>
   );
 }

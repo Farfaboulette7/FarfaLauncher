@@ -7,6 +7,7 @@ use time::OffsetDateTime;
 
 use super::saves::{self, SaveChoice, SaveUpload};
 use crate::error::{AppError, AppResult};
+use crate::gamepad;
 use crate::install::{rel_to_path, state};
 use crate::install::state::DirectLaunch;
 use crate::launch::{self, Launch};
@@ -140,6 +141,7 @@ pub async fn play_game(
     };
     let started = OffsetDateTime::now_utc();
     let _ = app.emit("game-started", rom_id);
+    gamepad::game_started();
 
     tauri::async_runtime::spawn(async move {
         let shown = app.clone();
@@ -154,6 +156,12 @@ pub async fn play_game(
         let ended = OffsetDateTime::now_utc();
         let state = app.state::<AppState>();
         state.running.lock().unwrap().remove(&rom_id);
+        gamepad::game_stopped();
+        // Retour au launcher, pilotable à la manette sans clic pour reprendre le focus.
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+        }
         let game = learned.and_then(|d| remember_direct(&state, rom_id, d));
 
         let session = PendingSession::new(rom_id, started, ended);

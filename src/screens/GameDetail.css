@@ -113,6 +113,7 @@
 .gd-title-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; min-width: 0; }
 .gd-title-block { min-width: 0; }
 .gd-platform { margin: 0; }
+.gd-header-actions { display: flex; gap: 10px; flex: none; }
 .gd-fav { flex: none; }
 .gd-fav::before { display: none; }
 .gd-actions-body { display: flex; flex-direction: column; gap: 10px; }
@@ -317,9 +318,7 @@
 .gd-controls > section { display: flex; flex-direction: column; gap: 10px; }
 .ctl-tester { display: flex; flex-direction: column; gap: 16px; }
 .ctl-label { display: block; margin-bottom: 6px; font-size: var(--fs-sm); color: var(--nier-mid); }
-.ctl-keys,
-.ctl-buttons { display: flex; flex-wrap: wrap; gap: 6px; min-height: 30px; align-items: center; }
-.ctl-buttons { max-width: 420px; }
+.ctl-keys { display: flex; flex-wrap: wrap; gap: 6px; min-height: 30px; align-items: center; }
 .ctl-key {
   display: inline-block;
   min-width: 30px;
@@ -333,22 +332,37 @@
 }
 .ctl-key--on { color: var(--nier-high); background: var(--nier-low); }
 .ctl-code { opacity: 0.7; }
-.ctl-pad-body { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+.ctl-lock { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.ctl-lock p { margin: 0; }
+.ctl-pad-body { display: flex; flex-wrap: wrap; gap: 14px 28px; }
+.ctl-group { display: flex; flex-direction: column; gap: 6px; }
+.ctl-group-title { font-size: var(--fs-xs); color: var(--nier-mid); }
+.ctl-key[data-face] { color: var(--ctl-face); font-weight: 700; }
+.ctl-key--on[data-face] { color: var(--nier-high); background: var(--ctl-face); }
 .ctl-stick {
   position: relative;
-  width: 64px;
-  height: 64px;
-  border: 2px solid var(--nier-low);
-  border-radius: 50%;
-  flex: none;
+  display: inline-block;
+  width: 46px;
+  height: 46px;
+  background: var(--nier-high-mid);
+  box-shadow: var(--nier-drop) var(--nier-drop) 0 var(--nier-shadow);
 }
+.ctl-stick--on { background: var(--nier-low); }
 .ctl-stick span {
   position: absolute;
-  width: 14px;
-  height: 14px;
-  margin: -7px 0 0 -7px;
-  border-radius: 50%;
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
   background: var(--nier-low);
+}
+.ctl-stick--on span { background: var(--nier-high); }
+.ctl-stick em {
+  position: absolute;
+  right: 3px;
+  bottom: 1px;
+  font-size: 9px;
+  font-style: normal;
+  color: var(--nier-mid);
 }
 .ctl-map { display: flex; flex-direction: column; gap: 12px; }
 .ctl-binds { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }

@@ -7,6 +7,7 @@ import { ControlsTab } from "./ControlsTab";
 import { useCachedImage } from "../hooks/useCachedImage";
 import { BoxArt } from "../components/BoxArt";
 import { Marquee } from "../components/Marquee";
+import { FullscreenButton } from "../components/FullscreenButton";
 import { useReveal } from "../reveal";
 import "./GameDetail.css";
 
@@ -69,15 +70,18 @@ export function GameDetail({ game, platform, target, installs, favorite, onToggl
             <Marquee as="h1" className="n-title gd-title" text={game.name} />
             {platform && <p className="n-subtitle gd-platform">{platform.name}</p>}
           </div>
-          <button
-            className="n-btn gd-fav"
-            aria-pressed={favorite}
-            disabled={!onToggleFavorite}
-            title={onToggleFavorite ? undefined : (favoriteError ?? "Favoris indisponibles hors ligne")}
-            onClick={() => onToggleFavorite?.()}
-          >
-            {favorite ? "★ Favori" : "☆ Favori"}
-          </button>
+          <div className="gd-header-actions">
+            <FullscreenButton />
+            <button
+              className="n-btn gd-fav"
+              aria-pressed={favorite}
+              disabled={!onToggleFavorite}
+              title={onToggleFavorite ? undefined : (favoriteError ?? "Favoris indisponibles hors ligne")}
+              onClick={() => onToggleFavorite?.()}
+            >
+              {favorite ? "★ Favori" : "☆ Favori"}
+            </button>
+          </div>
         </div>
       </header>
       <div className="n-rule gd-rule" />
