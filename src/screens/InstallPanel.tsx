@@ -113,7 +113,7 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
     }
   }
 
-  /** Ouvre le menu de la recomp partagée (réglages, mods, autres jeux). */
+  /** Ouvre le launcher de la recomp partagée (réglages, mods, autres jeux). */
   function onOpenMenu() {
     openMenu.current = true;
     codChoice.current = null;
@@ -226,8 +226,8 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
               </button>
             )}
             {inst.shared && !busy && runningSince === undefined && !launching && (
-              <button className="n-btn n-btn--block" onClick={onOpenMenu}>
-                Ouvrir le menu de {inst.shared.runtimeName}
+              <button className="n-btn n-btn--block gd-launcher" title={`Ouvre le launcher de ${inst.shared.runtimeName} (réglages, mods, autres jeux)`} onClick={onOpenMenu}>
+                Ouvrir le launcher
               </button>
             )}
             {last && <p className="n-hint">{sessionSummary(last)}</p>}
@@ -321,7 +321,7 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
               </button>
             )}
             <button className="n-link" onClick={moveGame}>
-              {inst.shared ? `Déplacer ${inst.shared.runtimeName}…` : "Déplacer le jeu…"}
+              {inst.shared ? "Déplacer la recomp…" : "Déplacer le jeu…"}
             </button>
             <button className="n-link" onClick={() => setDialog("uninstall")}>
               Désinstaller

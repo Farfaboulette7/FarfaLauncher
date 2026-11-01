@@ -174,9 +174,9 @@ function Box3D({ front, side, back, interactive, autoSpin }: Box3DProps) {
             <Face src={front} cls="b3-front" w={dims.W} h={dims.H} t={`translateZ(${dims.D / 2}px)`} />
             <Face src={back} cls="b3-back" w={dims.W} h={dims.H} t={`rotateY(180deg) translateZ(${dims.D / 2}px)`} />
             <Face src={side} rotated={sideRotated} cls="b3-spine" w={dims.D} h={dims.H} x={(dims.W - dims.D) / 2} t={`rotateY(-90deg) translateZ(${dims.W / 2}px)`} />
-            <Face src={null} cls="b3-edge" w={dims.D} h={dims.H} x={(dims.W - dims.D) / 2} t={`rotateY(90deg) translateZ(${dims.W / 2}px)`} />
+            <Face src={null} cls="b3-edge b3-opening" w={dims.D} h={dims.H} x={(dims.W - dims.D) / 2} t={`rotateY(90deg) translateZ(${dims.W / 2}px)`} />
             <Face src={null} cls="b3-edge b3-top" w={dims.W} h={dims.D} y={(dims.H - dims.D) / 2} t={`rotateX(90deg) translateZ(${dims.H / 2}px)`} />
-            <Face src={null} cls="b3-edge" w={dims.W} h={dims.D} y={(dims.H - dims.D) / 2} t={`rotateX(-90deg) translateZ(${dims.H / 2}px)`} />
+            <Face src={null} cls="b3-edge b3-bottom" w={dims.W} h={dims.D} y={(dims.H - dims.D) / 2} t={`rotateX(-90deg) translateZ(${dims.H / 2}px)`} />
           </div>
         </div>
       )}

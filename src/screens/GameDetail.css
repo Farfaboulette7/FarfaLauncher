@@ -105,6 +105,7 @@
 .gd-actions .n-panel-header { font-size: var(--fs-sm); padding-block: 6px; }
 .gd-actions .n-panel-body { padding: 14px 16px; }
 .gd-actions .n-btn--primary { font-size: var(--fs-md); padding: 9px 24px; }
+.gd-actions .gd-launcher { font-size: var(--fs-xs); padding: 4px 12px; }
 .gd-actions .n-btn .n-spinner { background: currentColor; vertical-align: -1px; margin-right: 6px; }
 /* Hauteur fixe : les boutons qui apparaissent ou disparaissent (installation,
    jeu lancé, mise à jour…) ne doivent pas redimensionner la boîte au-dessus. */

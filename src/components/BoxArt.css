@@ -50,9 +50,18 @@
   background: linear-gradient(90deg, rgba(0, 0, 0, 0.22), rgba(0, 0, 0, 0.08));
   pointer-events: none;
 }
-.b3-back:not(:has(img)) { background: var(--nier-ink); }
-.b3-edge { background: #2f2d28; }
-.b3-top { background: #3a3832; }
+/* Tranches du boîtier : plastique clair et légèrement brillant (boîtes DS, 3DS…),
+   avec le reflet et le joint d'ouverture dans le sens de la profondeur. */
+.b3-back:not(:has(img)) { background: #d9d9d3; }
+.b3-edge {
+  --b3-depth: 90deg;
+  background:
+    linear-gradient(var(--b3-depth), transparent 49%, rgba(70, 70, 66, 0.3) 49.5%, rgba(255, 255, 255, 0.5) 51%, transparent 52%),
+    linear-gradient(var(--b3-depth), #aeaea8 0%, #e6e6e0 12%, #f6f6f1 24%, #cfcfc9 46%, #d9d9d3 56%, #f1f1ec 76%, #c4c4be 92%, #a4a49e 100%);
+  box-shadow: inset 0 0 2px rgba(60, 60, 56, 0.45);
+}
+.b3-top { --b3-depth: 180deg; filter: brightness(1.04); }
+.b3-bottom { --b3-depth: 180deg; filter: brightness(0.78); }
 
 .boxart-flat { width: 100%; height: 100%; object-fit: cover; display: block; }
 .boxart-cutout {
