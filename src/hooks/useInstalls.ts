@@ -36,7 +36,7 @@ export interface InstallsState {
   running: Map<number, number>;
   /** Dernière session terminée par jeu. */
   lastSession: Map<number, GameStopped>;
-  play: (romId: number, saveChoice?: SaveChoice, cod?: CodChoice | null) => Promise<string | null>;
+  play: (romId: number, saveChoice?: SaveChoice, cod?: CodChoice | null, menu?: boolean) => Promise<string | null>;
 }
 
 /** État des installations, tenu à jour par les événements du Rust. */
@@ -91,6 +91,8 @@ export function useInstalls(onAuthError: (e: unknown) => Promise<string>): Insta
           const game = payload.outcome.game;
           playSound("DownloadEnd");
           setInstalledMap((m) => new Map(m).set(game.romId, game));
+          // Runtime partagé : ses autres jeux ont peut-être changé de version.
+          if (game.shared) await reload();
         } else if (payload.error && payload.error.code !== "cancelled") {
           await onAuthError(payload.error); // joue aussi le son d'erreur
           const err = payload.error;
@@ -148,9 +150,9 @@ export function useInstalls(onAuthError: (e: unknown) => Promise<string>): Insta
 
   /** Lance le jeu ; renvoie un message d'erreur ou null. */
   const play = useCallback(
-    async (romId: number, saveChoice: SaveChoice = "unchanged", cod?: CodChoice | null): Promise<string | null> => {
+    async (romId: number, saveChoice: SaveChoice = "unchanged", cod?: CodChoice | null, menu = false): Promise<string | null> => {
       try {
-        await backend.playGame(romId, saveChoice, cod);
+        await backend.playGame(romId, saveChoice, cod, menu);
         return null;
       } catch (e) {
         return onAuthError(e);

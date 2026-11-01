@@ -342,6 +342,7 @@ pub async fn run(job: &InstallJob, game: Game, pc: PcGame) -> AppResult<InstallO
         installed_at: previous.as_ref().map(|p| p.installed_at).unwrap_or(now),
         updated_at: now,
         game_dir: game_dir.clone(),
+        shared: None,
         pc: Some(PcInstall {
             kind: pc.kind,
             os: pc.os,

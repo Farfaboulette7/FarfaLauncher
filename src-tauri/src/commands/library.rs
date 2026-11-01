@@ -5,6 +5,7 @@
 //! chaque jeu sont chargés en arrière-plan et poussés à l'interface par
 //! l'événement `library-game` (`library-done` à la fin).
 
+use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -19,6 +20,7 @@ use crate::platform::{self, Target};
 use crate::romm::favorites;
 use crate::romm::library::{self, Manual};
 use crate::romm::playtime;
+use crate::runtimes;
 use crate::state::AppState;
 
 /// Détails chargés simultanément (on ménage le serveur).
@@ -78,10 +80,9 @@ pub async fn library_refresh(app: AppHandle, state: State<'_, AppState>) -> AppR
 async fn start_refresh(app: &AppHandle, state: &AppState) -> AppResult<LibrarySnapshot> {
     let client = state.client()?;
     let target = platform::detect();
-    let platforms = library::list_platforms(&client).await?;
-    let mut games = library::list_games(&client, &platforms, target).await?;
-    let ids: Vec<(i64, String)> = games.iter().map(|g| (g.id, g.folder_name.clone())).collect();
-    install_state::rekey_moved(&state.config_dir, &ids);
+    runtimes::refresh(state).await;
+    let manifest = state.manifest();
+    let (platforms, mut games) = runtimes::list_library(&client, &manifest, target, |ids| install_state::rekey_moved(&state.config_dir, ids)).await?;
 
     // En attendant les détails, on garde ceux du cache pour chaque jeu.
     if let Some(old) = state.library.lock().unwrap().as_ref() {
@@ -105,10 +106,21 @@ async fn start_refresh(app: &AppHandle, state: &AppState) -> AppResult<LibrarySn
     tauri::async_runtime::spawn(async move {
         let state = app.state::<AppState>();
         let mut failed = Vec::new();
+        // Chaque runtime une seule fois, quel que soit son nombre de jeux.
+        let mut shared = HashMap::new();
+        for runtime in &manifest.runtimes {
+            match library::fetch_game_details(&client, runtime.rom_id, target).await {
+                Ok(game) => {
+                    shared.insert(runtime.rom_id, game);
+                }
+                Err(e) => tracing::warn!("runtime {} non chargé: {}", runtime.id, e.code()),
+            }
+        }
+        let (shared, manifest) = (&shared, &manifest);
         let mut results = stream::iter(ids)
             .map(|id| {
                 let client = client.clone();
-                async move { (id, library::fetch_game_details(&client, id, target).await) }
+                async move { (id, runtimes::fetch_details_with(&client, manifest, shared, id, target).await) }
             })
             .buffer_unordered(DETAIL_CONCURRENCY);
         while let Some((id, res)) = results.next().await {

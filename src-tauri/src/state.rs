@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicBool;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use tokio_util::sync::CancellationToken;
 
@@ -37,6 +37,10 @@ pub struct AppState {
     pub busy: Mutex<HashSet<i64>>,
     /// Téléchargements de mods en cours (jeu, fichier).
     pub mod_downloads: Mutex<HashSet<(i64, i64)>>,
+    /// Recomps partagées par plusieurs jeux (dernier manifeste connu).
+    pub manifest: Mutex<crate::runtimes::Manifest>,
+    /// Un seul jeu à la fois installe ou met à jour un runtime.
+    pub runtime_lock: Arc<tokio::sync::Mutex<()>>,
     /// Dossier d'installation par défaut (`~/FarfaLauncher/Jeux`).
     pub default_install_root: PathBuf,
 }
@@ -44,6 +48,7 @@ pub struct AppState {
 impl AppState {
     pub fn new(config_dir: PathBuf, log_dir: PathBuf, cache_dir: PathBuf, default_install_root: PathBuf) -> Self {
         let settings = settings::load(&config_dir);
+        let manifest = crate::runtimes::Manifest::load_cached(&config_dir);
         // Persiste immédiatement le device_id généré au premier lancement.
         if let Err(e) = settings::save(&config_dir, &settings) {
             tracing::error!("impossible d'enregistrer les paramètres initiaux: {e}");
@@ -61,6 +66,8 @@ impl AppState {
             running: Mutex::new(HashSet::new()),
             busy: Mutex::new(HashSet::new()),
             mod_downloads: Mutex::new(HashSet::new()),
+            manifest: Mutex::new(manifest),
+            runtime_lock: Arc::new(tokio::sync::Mutex::new(())),
             default_install_root,
         }
     }
@@ -74,6 +81,22 @@ impl AppState {
             return Err(AppError::Busy);
         }
         Ok(BusyGuard { state: self, rom_id })
+    }
+
+    pub fn manifest(&self) -> crate::runtimes::Manifest {
+        self.manifest.lock().unwrap().clone()
+    }
+
+    /// Refuse si un jeu qui partage l'installation de `rom_id` tourne ou s'installe.
+    pub fn check_family_idle(&self, rom_id: i64) -> AppResult<()> {
+        let others: Vec<i64> = self.manifest().family(rom_id).into_iter().filter(|id| *id != rom_id).collect();
+        if others.iter().any(|id| self.running.lock().unwrap().contains(id)) {
+            return Err(AppError::AlreadyRunning);
+        }
+        if others.iter().any(|id| self.installs.lock().unwrap().contains_key(id) || self.is_busy(*id)) {
+            return Err(AppError::Busy);
+        }
+        Ok(())
     }
 
     pub fn is_busy(&self, rom_id: i64) -> bool {

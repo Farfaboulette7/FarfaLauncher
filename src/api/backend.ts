@@ -155,6 +155,20 @@ export interface Platform {
   iconUrls: string[];
 }
 
+export interface GameRuntime {
+  romId: number;
+  name: string;
+  repo: string;
+  game: string;
+}
+
+/** Lien entre un jeu installé et le runtime qui le fait tourner. */
+export interface SharedGame {
+  runtimeRomId: number;
+  game: string;
+  runtimeName: string;
+}
+
 export interface Game {
   id: number;
   platformId: number;
@@ -178,6 +192,8 @@ export interface Game {
   mods: RemoteFile[];
   /** Jeu PC (plateforme « Ordinateur »). */
   pc: PcGame | null;
+  /** Jeu lancé par un runtime partagé : archives, mods et version sont les siens. */
+  runtime: GameRuntime | null;
   versionFile: RemoteFile | null;
   serverVersion: string | null;
   /** Contenu complet de VERSION.txt (comparé pour les mises à jour). */
@@ -211,6 +227,7 @@ export interface FavoritesInfo {
 
 export interface InstalledGame {
   romId: number;
+  shared?: SharedGame | null;
   name: string;
   version: string | null;
   versionRaw: string | null;
@@ -419,8 +436,8 @@ export const backend = {
   setPreferLauncher: (romId: number, prefer: boolean) => invoke<InstalledGame>("set_prefer_launcher", { romId, prefer }),
   systemInfo: () => invoke<SystemInfo>("system_info"),
   serverPing: () => invoke<number>("server_ping"),
-  playGame: (romId: number, saveChoice: SaveChoice, cod?: CodChoice | null) =>
-    invoke<void>("play_game", { romId, saveChoice, cod: cod ?? null }),
+  playGame: (romId: number, saveChoice: SaveChoice, cod?: CodChoice | null, menu = false) =>
+    invoke<void>("play_game", { romId, saveChoice, cod: cod ?? null, menu }),
   protonVersions: () => invoke<ProtonVersion[]>("proton_versions"),
   setProtonVersion: (romId: number, version: string | null) => invoke<InstalledGame>("set_proton_version", { romId, version }),
   codModes: (romId: number) => invoke<CodModeInfo[]>("cod_modes", { romId }),
@@ -466,9 +483,11 @@ export function isAvailable(game: Game): boolean {
 }
 
 /** Taille à télécharger pour installer le jeu. */
-export function downloadSize(game: Game): number {
+export function downloadSize(game: Game, runtimeInstalled = false): number {
   if (game.pc) return game.pc.size;
-  return game.myArchive ? game.myArchive.file.size + game.romFiles.reduce((s, f) => s + f.size, 0) : 0;
+  const roms = game.romFiles.reduce((s, f) => s + f.size, 0);
+  if (runtimeInstalled) return roms;
+  return game.myArchive ? game.myArchive.file.size + roms : 0;
 }
 
 export function hasUpdate(game: Game, inst: InstalledGame | undefined): boolean {

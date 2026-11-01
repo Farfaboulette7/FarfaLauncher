@@ -160,6 +160,17 @@ pub struct BoxFaces {
     pub back: Option<String>,
 }
 
+/// Runtime partagé qui fait tourner un jeu.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GameRuntime {
+    pub rom_id: i64,
+    pub name: String,
+    pub repo: String,
+    /// Identifiant du jeu pour la recomp.
+    pub game: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Game {
@@ -192,6 +203,9 @@ pub struct Game {
     /// Jeu de la plateforme « Ordinateur » (installateurs, jeu prêt à lancer…).
     #[serde(default)]
     pub pc: Option<crate::pc::PcGame>,
+    /// Jeu lancé par un runtime partagé : archives, mods et version sont les siens.
+    #[serde(default)]
+    pub runtime: Option<GameRuntime>,
     pub version_file: Option<RemoteFile>,
     /// Contenu de VERSION.txt côté serveur.
     pub server_version: Option<String>,
@@ -307,6 +321,17 @@ impl Game {
         self.server_version = old.server_version.clone();
         self.server_version_raw = old.server_version_raw.clone();
         self.details_loaded = false;
+    }
+
+    /// Jeu d'un runtime : la recomp, sa version et ses mods sont ceux du runtime.
+    pub fn use_runtime(&mut self, runtime: &Game) {
+        self.archives = runtime.archives.clone();
+        self.my_archive = runtime.my_archive.clone();
+        self.mods = runtime.mods.clone();
+        self.version_file = runtime.version_file.clone();
+        self.server_version = runtime.server_version.clone();
+        self.server_version_raw = runtime.server_version_raw.clone();
+        self.details_loaded = runtime.details_loaded;
     }
 }
 
@@ -533,6 +558,7 @@ fn to_game(r: RawRom, base: &str, me: Target, details_loaded: bool) -> Game {
         rom_files,
         mods,
         pc,
+        runtime: None,
         version_file,
         server_version: None,
         server_version_raw: None,

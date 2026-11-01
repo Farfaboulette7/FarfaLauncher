@@ -53,6 +53,8 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
   const [protonChoice, setProtonChoice] = useState<string | null>(null);
   /** Mode du Call of Duty pour la partie en cours de lancement. */
   const codChoice = useRef<CodChoice | null>(null);
+  /** Cette partie ouvre le menu de la recomp plutôt que le jeu. */
+  const openMenu = useRef(false);
   /** Écran « Lancement en cours » ; `started` : le jeu est lancé, on attend sa fenêtre. */
   const [overlay, setOverlay] = useState<{ started: boolean } | null>(null);
   /** Question sur les sauvegardes avant de jouer. */
@@ -71,6 +73,9 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
   const [installDir, setInstallDir] = useState<string | null>(null);
 
   const update = hasUpdate(game, inst);
+  /** Runtime partagé déjà sur cet ordinateur et à jour : seule la ROM reste à télécharger. */
+  const runtimeInst = game.runtime ? installs.installed.get(game.runtime.romId) : undefined;
+  const runtimeReady = !!runtimeInst?.executable && !hasUpdate(game, runtimeInst);
   const pendingChoice = !!inst && !inst.executable && !progress;
   const runningSince = installs.running.get(game.id);
   const last = installs.lastSession.get(game.id);
@@ -91,7 +96,7 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
       choice === "server" ? "Récupération de la sauvegarde du serveur…" : inst?.pc?.proton || inst?.pc?.cod ? "Préparation du jeu…" : "Lancement…",
     );
     setOverlay({ started: false });
-    const err = await installs.play(game.id, choice, codChoice.current);
+    const err = await installs.play(game.id, choice, codChoice.current, openMenu.current);
     setLaunching(null);
     setOverlay((o) => (err ? null : o && { started: true }));
     if (err) setMessage(err);
@@ -100,11 +105,19 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
 
   /** « Jouer » : un Call of Duty demande d'abord son mode. */
   function onPlay() {
+    openMenu.current = false;
     if (inst?.pc?.cod) setDialog("cod");
     else {
       codChoice.current = null;
       startPlay();
     }
+  }
+
+  /** Ouvre le menu de la recomp partagée (réglages, mods, autres jeux). */
+  function onOpenMenu() {
+    openMenu.current = true;
+    codChoice.current = null;
+    startPlay();
   }
 
   /** « Jouer » : compare d'abord la sauvegarde locale à celle du serveur. */
@@ -212,6 +225,11 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
                 )}
               </button>
             )}
+            {inst.shared && !busy && runningSince === undefined && !launching && (
+              <button className="n-btn n-btn--block" onClick={onOpenMenu}>
+                Ouvrir le menu de {inst.shared.runtimeName}
+              </button>
+            )}
             {last && <p className="n-hint">{sessionSummary(last)}</p>}
             {update && runningSince === undefined && !busy && !launching && (
               <button className="n-btn n-btn--block gd-update" onClick={() => installs.start(game.id)}>
@@ -246,19 +264,23 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
               <p className="n-hint">L'installateur GOG demandera l'autorisation de Windows.</p>
             )}
             <p className="n-hint gd-install-dest" title={installDir ?? installs.installRoot ?? undefined}>
-              {formatSize(downloadSize(game))}
-              {(installDir ?? installs.installRoot) && ` · dans ${installDir ?? installs.installRoot}`}
+              {formatSize(downloadSize(game, runtimeReady))}
+              {runtimeInst?.executable
+                ? ` · ${game.runtime?.name} est déjà installé`
+                : (installDir ?? installs.installRoot) && ` · dans ${installDir ?? installs.installRoot}`}
             </p>
-            <div className="gd-inst-actions">
-              <button className="n-link" onClick={chooseInstallDir}>
-                Changer l'emplacement…
-              </button>
-              {installDir && (
-                <button className="n-link" onClick={() => setInstallDir(null)}>
-                  Emplacement par défaut
+            {!runtimeInst?.executable && (
+              <div className="gd-inst-actions">
+                <button className="n-link" onClick={chooseInstallDir}>
+                  Changer l'emplacement…
                 </button>
-              )}
-            </div>
+                {installDir && (
+                  <button className="n-link" onClick={() => setInstallDir(null)}>
+                    Emplacement par défaut
+                  </button>
+                )}
+              </div>
+            )}
           </>
         ) : (
           <p className="n-alert" data-sound="none">Non disponible pour votre système{target ? ` (${TARGET_LABELS[target]})` : ""}.</p>
@@ -273,7 +295,7 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
             <button className="n-link" onClick={() => run(() => backend.openGameFolder(game.id))}>
               Ouvrir le dossier du jeu
             </button>
-            {inst.executable && !inst.pc?.cod && (
+            {inst.executable && !inst.pc?.cod && !inst.shared && (
               <button className="n-link" onClick={openExeChoice}>
                 Changer l'exécutable
               </button>
@@ -283,7 +305,7 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
                 Version de Proton…
               </button>
             )}
-            {inst.directLaunch && (
+            {inst.directLaunch && !inst.shared && (
               <button className="n-link" onClick={togglePreferLauncher}>
                 {inst.preferLauncher ? "Lancer le jeu sans son launcher" : "Passer par le launcher du jeu"}
               </button>
@@ -293,13 +315,13 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
                 Ouvrir les sauvegardes
               </button>
             )}
-            {inst.executable && (
+            {inst.executable && !inst.shared && (
               <button className="n-link" onClick={() => setSaveAsk({ kind: "where", suggestions: [], thenPlay: false })}>
                 Dossier des sauvegardes…
               </button>
             )}
             <button className="n-link" onClick={moveGame}>
-              Déplacer le jeu…
+              {inst.shared ? `Déplacer ${inst.shared.runtimeName}…` : "Déplacer le jeu…"}
             </button>
             <button className="n-link" onClick={() => setDialog("uninstall")}>
               Désinstaller
@@ -378,13 +400,18 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
       {dialog === "uninstall" && inst && (
         <UninstallDialog
           name={game.name}
+          runtimeName={inst.shared?.runtimeName ?? null}
           onClose={() => setDialog(null)}
           onConfirm={async (keepSaves) => {
             setDialog(null);
             installs.setBusy(game.id, "uninstall");
             const ok = await run(() => backend.uninstallGame(game.id, keepSaves).then(() => true));
             installs.setBusy(game.id, null);
-            if (ok) installs.remove(game.id);
+            if (ok) {
+              installs.remove(game.id);
+              // Le runtime a pu partir avec son dernier jeu.
+              if (inst.shared) await installs.reload();
+            }
           }}
         />
       )}
@@ -402,8 +429,19 @@ const PC_KIND_LABELS: Record<PcKind, string> = {
 /** Détails de l'installation, affichés dans l'onglet « Informations ». */
 export function InstallFacts({ game, installs }: { game: Game; installs: InstallsState }) {
   const inst = installs.installed.get(game.id);
+  const runtimeInstalled = !!game.runtime && !!installs.installed.get(game.runtime.romId)?.executable;
   return (
     <>
+      {game.runtime && (
+        <>
+          <dt>Recomp</dt>
+          <dd>
+            <button className="n-link" title={game.runtime.repo} onClick={() => backend.openUrl(game.runtime!.repo)}>
+              {game.runtime.name}
+            </button>
+          </dd>
+        </>
+      )}
       <dt>Version serveur</dt>
       <dd>{game.serverVersion ?? "inconnue"}</dd>
       <dt>Version installée</dt>
@@ -449,7 +487,7 @@ export function InstallFacts({ game, installs }: { game: Game; installs: Install
       {!inst && isAvailable(game) && (
         <>
           <dt>Téléchargement</dt>
-          <dd>{formatSize(downloadSize(game))}</dd>
+          <dd>{formatSize(downloadSize(game, runtimeInstalled && !hasUpdate(game, installs.installed.get(game.runtime?.romId ?? -1))))}</dd>
         </>
       )}
       <dt>Plateformes</dt>
@@ -712,7 +750,17 @@ function CodModeDialog({
   );
 }
 
-function UninstallDialog({ name, onClose, onConfirm }: { name: string; onClose: () => void; onConfirm: (keepSaves: boolean) => void }) {
+function UninstallDialog({
+  name,
+  runtimeName,
+  onClose,
+  onConfirm,
+}: {
+  name: string;
+  runtimeName: string | null;
+  onClose: () => void;
+  onConfirm: (keepSaves: boolean) => void;
+}) {
   const [keepSaves, setKeepSaves] = useState(true);
   return (
     <Dialog
@@ -732,9 +780,12 @@ function UninstallDialog({ name, onClose, onConfirm }: { name: string; onClose: 
       <p>
         Supprimer <strong>{name}</strong> de cet ordinateur ?
       </p>
+      {runtimeName && (
+        <p className="n-hint">{runtimeName} n'est supprimé qu'avec le dernier jeu qui l'utilise. Les sauvegardes des autres jeux ne sont pas touchées.</p>
+      )}
       <label className="n-check">
         <input type="checkbox" checked={keepSaves} onChange={(e) => setKeepSaves(e.target.checked)} />
-        Conserver les sauvegardes (dossiers save / saves)
+        {runtimeName ? "Conserver les sauvegardes de ce jeu" : "Conserver les sauvegardes (dossiers save / saves)"}
       </label>
     </Dialog>
   );

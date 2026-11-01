@@ -62,6 +62,8 @@ pub fn spawn(game_dir: &Path, launch: Launch<'_>) -> AppResult<RunningGame> {
     if !exe.exists() {
         return Err(AppError::NoExecutable);
     }
+    // `open` ne transmet ni arguments ni variables : programme du bundle lancé directement.
+    let exe = if launch.args.is_empty() && launch.env.is_empty() { exe } else { app_binary(&exe).unwrap_or(exe) };
     let work_dir = match &launch.cwd {
         Some(rel) if game_dir.join(rel).is_dir() => game_dir.join(rel),
         _ => exe.parent().unwrap_or(game_dir).to_path_buf(),
@@ -110,6 +112,15 @@ pub fn spawn(game_dir: &Path, launch: Launch<'_>) -> AppResult<RunningGame> {
     Ok(RunningGame { child, started: Instant::now(), run_log, watcher })
 }
 
+/// Programme à l'intérieur d'un bundle macOS.
+fn app_binary(exe: &Path) -> Option<PathBuf> {
+    if !cfg!(target_os = "macos") || !exe.to_string_lossy().to_lowercase().ends_with(".app") {
+        return None;
+    }
+    let macos = exe.join("Contents").join("MacOS");
+    std::fs::read_dir(macos).ok()?.filter_map(Result::ok).map(|e| e.path()).find(|p| p.is_file())
+}
+
 fn build_command(exe: &Path) -> Command {
     let lower = exe.to_string_lossy().to_lowercase();
     if cfg!(target_os = "macos") && lower.ends_with(".app") {
@@ -127,6 +138,11 @@ fn build_command(exe: &Path) -> Command {
 }
 
 impl RunningGame {
+    #[cfg(test)]
+    pub fn pid(&self) -> u32 {
+        self.child.id()
+    }
+
     /// Attend la fin du jeu et de tous ses processus (bloquant : à appeler
     /// dans `spawn_blocking`). Renvoie le jeu démarré par un launcher, s'il y en a eu un.
     /// `on_window` : appelé une fois, quand une fenêtre du jeu apparaît (Windows ;

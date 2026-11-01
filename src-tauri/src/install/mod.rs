@@ -20,6 +20,7 @@ use crate::error::{log_err, AppError, AppResult};
 use crate::platform::{ArchiveKind, Target};
 use crate::romm::client::RommClient;
 use crate::romm::library::{self, Game, RemoteFile};
+use crate::runtimes::{self, Manifest, Runtime, RuntimeGame};
 use download::disk_error;
 use extract::INTERNAL_DIR;
 use state::InstalledGame;
@@ -51,6 +52,8 @@ pub struct InstallJob {
     pub cancel: CancellationToken,
     /// Version de Proton choisie pour un jeu Windows sous Linux (`None` : la recommandée).
     pub proton: Option<String>,
+    pub manifest: Manifest,
+    pub runtime_lock: Arc<tokio::sync::Mutex<()>>,
     pub on_progress: Arc<dyn Fn(Progress) + Send + Sync>,
 }
 
@@ -74,11 +77,116 @@ impl InstallJob {
 
     pub async fn run(&self, rom_id: i64) -> AppResult<InstallOutcome> {
         self.emit(rom_id, "prepare", 0, 0);
+        if let Some((runtime, game)) = self.manifest.page(rom_id) {
+            return self.install_page(rom_id, runtime, game).await;
+        }
         // Toujours les informations fraîches du serveur (identifiants de fichiers à jour).
         let game = library::fetch_game_details(&self.client, rom_id, self.target).await?;
         if let Some(pc) = game.pc.clone() {
             return crate::pc::install::run(self, game, pc).await;
         }
+        self.install_recomp(rom_id, game, None).await
+    }
+
+    /// Jeu d'un runtime partagé : installe le runtime s'il manque ou n'est plus
+    /// à jour, puis ajoute seulement la ROM de ce jeu.
+    async fn install_page(&self, rom_id: i64, runtime: &Runtime, def: &RuntimeGame) -> AppResult<InstallOutcome> {
+        let page = runtimes::fetch_page(&self.client, &self.manifest, rom_id, self.target).await?;
+        let rom = page.rom_files.first().cloned().ok_or(AppError::NotAvailable)?;
+        let installed = {
+            let _lock = self.runtime_lock.lock().await;
+            self.ensure_runtime(rom_id, runtime).await?
+        };
+        let exe = installed.executable.clone().ok_or(AppError::NoExecutable)?;
+
+        // La ROM reste sur le disque : la recomp en a besoin à chaque nouvelle version.
+        let game_dir = installed.game_dir.clone();
+        let rom_rel = format!("{INTERNAL_DIR}/roms/{}", rom.file_name);
+        ensure_space(&game_dir, rom.size)?;
+        let mut last = Instant::now() - Duration::from_secs(1);
+        download::download(&self.client, &rom, &game_dir.join(rel_to_path(&rom_rel)), &self.cancel, |got| {
+            if last.elapsed() >= Duration::from_millis(200) || got == rom.size {
+                last = Instant::now();
+                self.emit(rom_id, "download", got, rom.size);
+            }
+        }, || self.emit_verifying(rom_id, rom.size, rom.size))
+        .await?;
+
+        self.emit(rom_id, "finalize", 0, 0);
+        let sep = std::path::MAIN_SEPARATOR;
+        let rom_arg = format!("{}{sep}{}", crate::launch::direct::GAME_DIR_VAR, path_to_rel(&rel_to_path(&rom_rel)).replace('/', &sep.to_string()));
+        let (args, env) = runtime.launch_for(&def.game, &rom_arg);
+        let previous = state::find(&self.config_dir, rom_id);
+        let now = state::now();
+        let st = InstalledGame {
+            rom_id,
+            name: page.name.clone(),
+            version: installed.version.clone(),
+            version_raw: installed.version_raw.clone(),
+            target: installed.target,
+            archive_name: installed.archive_name.clone(),
+            executable: Some(exe.clone()),
+            pending_candidates: Vec::new(),
+            roms: vec![rom_rel.clone()],
+            rom_sources: vec![state::RomSource { rel_path: rom.rel_path.clone(), size: rom.size, sha1: rom.sha1.clone(), md5: rom.md5.clone(), placed: vec![rom_rel] }],
+            mods_downloaded: Vec::new(),
+            saves: previous.as_ref().map(|p| p.saves.clone()).unwrap_or_default(),
+            direct_launch: Some(state::DirectLaunch { exe, args, cwd: None, env }),
+            prefer_launcher: previous.as_ref().is_some_and(|p| p.prefer_launcher),
+            installed_at: previous.as_ref().map(|p| p.installed_at).unwrap_or(now),
+            updated_at: now,
+            game_dir,
+            pc: None,
+            shared: Some(state::SharedGame {
+                runtime_rom_id: runtime.rom_id,
+                game: def.game.clone(),
+                runtime_name: runtime.name.clone(),
+                data_dir: runtime.data_dir.clone(),
+                save_dir: runtime.save_dir.replace("{game}", &def.game),
+                cache_dir: runtime.cache_dir.as_ref().map(|d| d.replace("{game}", &def.game)),
+            }),
+        };
+        state::write_state(&self.config_dir, &st)?;
+        tracing::info!("« {} » installé sur le runtime {}", st.name, runtime.id);
+        // Relu pour avoir les informations venues du runtime et le dossier des sauvegardes.
+        let st = state::find(&self.config_dir, rom_id).ok_or(AppError::Internal)?;
+        Ok(InstallOutcome::Installed { game: st })
+    }
+
+    /// Runtime installé et à jour. Sa progression s'affiche sur la page `page_id`.
+    async fn ensure_runtime(&self, page_id: i64, runtime: &Runtime) -> AppResult<InstalledGame> {
+        // Sans ses ROMs : chaque jeu apporte la sienne.
+        let mut game = library::fetch_game_details(&self.client, runtime.rom_id, self.target).await?;
+        game.rom_files.clear();
+        if let Some(current) = state::find(&self.config_dir, runtime.rom_id) {
+            let up_to_date = game.server_version_raw.is_none() || game.server_version_raw == current.version_raw;
+            if current.executable.is_some() && up_to_date {
+                tracing::info!("runtime {} déjà installé et à jour", runtime.id);
+                return Ok(current);
+            }
+        }
+        tracing::info!("installation du runtime {}", runtime.id);
+        let forward = self.on_progress.clone();
+        let job = InstallJob {
+            client: self.client.clone(),
+            config_dir: self.config_dir.clone(),
+            install_root: self.install_root.clone(),
+            target: self.target,
+            cancel: self.cancel.clone(),
+            proton: None,
+            manifest: self.manifest.clone(),
+            runtime_lock: self.runtime_lock.clone(),
+            on_progress: Arc::new(move |p| forward(Progress { rom_id: page_id, ..p })),
+        };
+        match job.install_recomp(runtime.rom_id, game, Some(runtime)).await? {
+            InstallOutcome::Installed { game } => Ok(game),
+            InstallOutcome::NeedsChoice { .. } => Err(AppError::NoExecutable),
+        }
+    }
+
+    /// Recomp : archive de la plateforme, ROMs à côté de l'exécutable, état.
+    /// `runtime` : l'exécutable est celui du manifeste, sans question.
+    async fn install_recomp(&self, rom_id: i64, game: Game, runtime: Option<&Runtime>) -> AppResult<InstallOutcome> {
         let archive = game.my_archive.clone().ok_or(AppError::NotAvailable)?;
         let previous = state::find(&self.config_dir, rom_id);
         let game_dir = match &previous {
@@ -197,6 +305,14 @@ impl InstallJob {
             updated_at: now,
             game_dir: game_dir.clone(),
             pc: None,
+            shared: None,
+        };
+        let kept = match runtime {
+            Some(r) => runtimes::pick_exe(&candidates, &r.exe, game.server_version.as_deref()).or_else(|| {
+                tracing::warn!("exécutable {} absent des candidats", r.exe);
+                candidates.first().cloned()
+            }),
+            None => kept,
         };
         let chosen = match (kept, candidates.len()) {
             (Some(e), _) => e,
@@ -326,6 +442,50 @@ pub async fn change_executable(config_dir: &Path, mut st: InstalledGame, executa
 
 /// Désinstalle un jeu ; avec `keep_saves`, les dossiers save/saves restent en place.
 pub async fn uninstall(config_dir: &Path, st: InstalledGame, keep_saves: bool) -> AppResult<()> {
+    match st.shared.clone() {
+        Some(shared) => uninstall_page(config_dir, st, shared, keep_saves).await,
+        None => uninstall_dir(config_dir, st, keep_saves).await,
+    }
+}
+
+/// Jeu d'un runtime : retire sa ROM et ses données. Le runtime et le dossier de
+/// données commun ne partent qu'avec le dernier jeu qui les utilise.
+async fn uninstall_page(config_dir: &Path, st: InstalledGame, shared: state::SharedGame, keep_saves: bool) -> AppResult<()> {
+    let others = state::pages_in(config_dir, &st.game_dir).into_iter().filter(|id| *id != st.rom_id).count();
+    let (gd, roms, data) = (st.game_dir.clone(), st.roms.clone(), runtimes::existing_data_dir(&shared.data_dir));
+    let (cache_dir, save_dir, whole_data) = (shared.cache_dir.clone(), shared.save_dir.clone(), others == 0 && !keep_saves);
+    blocking(move || -> AppResult<()> {
+        let remove_dir = |dir: PathBuf| match std::fs::remove_dir_all(&dir) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(log_err(AppError::Disk, "suppression des données du jeu", e)),
+            _ => Ok(()),
+        };
+        for rom in &roms {
+            let _ = std::fs::remove_file(gd.join(rel_to_path(rom)));
+        }
+        let Some(data) = data else { return Ok(()) };
+        if whole_data {
+            return remove_dir(data);
+        }
+        if let Some(cache) = cache_dir {
+            remove_dir(data.join(rel_to_path(&cache)))?;
+        }
+        if !keep_saves {
+            remove_dir(data.join(rel_to_path(&save_dir)))?;
+        }
+        Ok(())
+    })
+    .await?;
+    state::forget(config_dir, st.rom_id)?;
+    tracing::info!("« {} » désinstallé ({others} autre(s) jeu(x) sur le runtime, saves conservées: {keep_saves})", st.name);
+    if others == 0 {
+        if let Some(runtime) = state::find(config_dir, shared.runtime_rom_id) {
+            uninstall_dir(config_dir, runtime, keep_saves).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn uninstall_dir(config_dir: &Path, st: InstalledGame, keep_saves: bool) -> AppResult<()> {
     let gd = st.game_dir.clone();
     blocking(move || -> AppResult<()> {
         if !gd.exists() {
@@ -428,6 +588,8 @@ pub async fn move_game(config_dir: &Path, mut st: InstalledGame, dest_parent: Pa
         st.saves.dir = Some(target.join(rest));
     }
     st.game_dir = target;
+    // Runtime partagé : ses autres jeux ont suivi le dossier.
+    state::relocate(config_dir, &old, &st.game_dir)?;
     state::write_state(config_dir, &st)?;
     tracing::info!("« {} » déplacé de {} vers {}", st.name, old.display(), st.game_dir.display());
     Ok(st)
@@ -624,6 +786,7 @@ mod tests {
             updated_at: 0,
             game_dir: old.clone(),
             pc: None,
+            shared: None,
         };
         state::write_state(&config, &st).unwrap();
 
@@ -666,6 +829,102 @@ mod tests {
         let n = extract::merge_into(&staging, &root).unwrap();
         println!("{n} fichiers posés dans {}", root.display());
         assert!(n > 0);
+    }
+
+    /// Parcours complet contre un vrai serveur, sans toucher aux vraies données
+    /// (POKEPORT_IDENTITY) : `FARFA_E2E_URL=… FARFA_E2E_TOKEN=… FARFA_E2E_YELLOW=<id>
+    /// FARFA_E2E_GOLD=<id> FARFA_E2E_RUNTIME=<id> cargo test -- --ignored shared_runtime_e2e --nocapture`.
+    #[cfg(windows)]
+    #[tokio::test]
+    #[ignore]
+    async fn shared_runtime_e2e() {
+        let var = |k: &str| std::env::var(k).unwrap();
+        let id = |k: &str| var(k).parse::<i64>().unwrap();
+        let (yellow, gold, runtime_id) = (id("FARFA_E2E_YELLOW"), id("FARFA_E2E_GOLD"), id("FARFA_E2E_RUNTIME"));
+        let identity = "farfa-test-g1-e2e";
+        let data = PathBuf::from(var("APPDATA")).join(identity);
+        let _ = std::fs::remove_dir_all(&data);
+        let base = std::env::temp_dir().join(format!("farfa-e2e-{}", uuid::Uuid::new_v4()));
+        let config = base.join("config");
+        std::fs::create_dir_all(&config).unwrap();
+        let manifest: Manifest = serde_json::from_value(serde_json::json!({
+            "runtimes": [{ "id": "gen1recomp", "name": "Gen1recomp", "repo": "https://github.com/bryanthaboi/gen1recomp",
+                "romId": runtime_id, "exe": "gen1recomp", "dataDir": identity, "saveDir": "saves/{game}", "cacheDir": "{game}",
+                "args": ["--game={game}"], "env": [["POKEPORT_IMPORT_ROM", "{rom}"], ["POKEPORT_IDENTITY", identity]] }],
+            "games": [{ "runtime": "gen1recomp", "game": "yellow", "romId": yellow }, { "runtime": "gen1recomp", "game": "gold", "romId": gold }]
+        }))
+        .unwrap();
+        let job = InstallJob {
+            client: RommClient::new(&var("FARFA_E2E_URL"), Some(var("FARFA_E2E_TOKEN"))).unwrap(),
+            config_dir: config.clone(),
+            install_root: base.join("Jeux"),
+            target: Target::Windows,
+            cancel: CancellationToken::new(),
+            proton: None,
+            manifest,
+            runtime_lock: Arc::new(tokio::sync::Mutex::new(())),
+            on_progress: Arc::new(|_| {}),
+        };
+        let installed = |o: InstallOutcome| match o {
+            InstallOutcome::Installed { game } => game,
+            InstallOutcome::NeedsChoice { .. } => panic!("le runtime ne doit rien demander"),
+        };
+
+        // Premier jeu : runtime + sa seule ROM.
+        let st = installed(job.run(yellow).await.unwrap());
+        let dir = st.game_dir.clone();
+        let exe = dir.join(st.executable.clone().unwrap());
+        println!("dossier {} ; version {:?} ; lancement {:?}", dir.display(), st.version, st.direct_launch);
+        assert!(exe.exists() && state::find(&config, runtime_id).is_some());
+        assert_eq!(std::fs::read_dir(dir.join(".farfalauncher/roms")).unwrap().count(), 1);
+        assert!(st.saves.dir.as_ref().is_some_and(|d| d.ends_with("saves/yellow")));
+        assert_eq!(st.direct_launch.as_ref().unwrap().args, ["--game=yellow"]);
+        let stamp = std::fs::metadata(&exe).unwrap().modified().unwrap();
+
+        // Lancement : import sans menu, puis le jeu s'ouvre.
+        let d = st.direct_launch.clone().unwrap();
+        let launch = crate::launch::Launch { exe: rel_to_path(&d.exe), args: &d.args, env: &d.env, cwd: None, learn: false, runner: None };
+        let running = crate::launch::spawn(&dir, launch).unwrap();
+        let pid = running.pid();
+        let waiter = tokio::task::spawn_blocking(move || running.wait(|| {}));
+        for _ in 0..120 {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            if data.join("yellow/rom-cache.complete").exists() {
+                break;
+            }
+        }
+        assert!(data.join("yellow/rom-cache.complete").exists(), "ROM non importée");
+        tokio::time::sleep(Duration::from_secs(12)).await;
+        std::process::Command::new("taskkill").args(["/F", "/PID", &pid.to_string()]).status().unwrap();
+        waiter.await.unwrap();
+        println!("sortie du jeu :\n{}", std::fs::read_to_string(dir.join(".farfalauncher/dernier-lancement.log")).unwrap_or_default());
+
+        // Deuxième jeu : le runtime n'est pas retouché.
+        let st2 = installed(job.run(gold).await.unwrap());
+        assert_eq!(st2.game_dir, dir);
+        assert_eq!(std::fs::metadata(&exe).unwrap().modified().unwrap(), stamp, "runtime réinstallé");
+        assert_eq!(std::fs::read_dir(dir.join(".farfalauncher/roms")).unwrap().count(), 2);
+        assert_eq!(state::list_installed(&config).len(), 3);
+
+        // Désinstaller Jaune sans ses sauvegardes : Or et le runtime ne bougent pas.
+        for s in ["saves/yellow", "saves/gold"] {
+            std::fs::create_dir_all(data.join(s)).unwrap();
+            std::fs::write(data.join(s).join("slot1.lua"), b"x").unwrap();
+        }
+        uninstall(&config, state::find(&config, yellow).unwrap(), false).await.unwrap();
+        assert!(state::find(&config, yellow).is_none() && state::find(&config, gold).is_some());
+        assert!(exe.exists() && !data.join("saves/yellow").exists() && !data.join("yellow").exists());
+        assert!(data.join("saves/gold/slot1.lua").exists() && data.join("options.lua").exists());
+        assert_eq!(std::fs::read_dir(dir.join(".farfalauncher/roms")).unwrap().count(), 1);
+
+        // Le dernier jeu emporte le runtime ; ses sauvegardes restent si on le demande.
+        uninstall(&config, state::find(&config, gold).unwrap(), true).await.unwrap();
+        assert!(!exe.exists() && state::find(&config, runtime_id).is_none());
+        assert!(data.join("saves/gold/slot1.lua").exists());
+        assert!(state::list_installed(&config).is_empty());
+
+        std::fs::remove_dir_all(&data).unwrap();
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

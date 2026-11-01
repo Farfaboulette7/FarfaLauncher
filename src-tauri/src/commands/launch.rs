@@ -97,7 +97,8 @@ pub fn running_games(state: State<'_, AppState>) -> Vec<i64> {
 }
 
 /// Lance le jeu. `save_choice` : réponse à `save_check` (sauvegarde locale ou
-/// du serveur), appliquée avant le lancement.
+/// du serveur), appliquée avant le lancement. `menu` : ouvrir le menu d'un runtime
+/// partagé plutôt que le jeu.
 #[tauri::command]
 pub async fn play_game(
     app: AppHandle,
@@ -105,12 +106,15 @@ pub async fn play_game(
     rom_id: i64,
     save_choice: SaveChoice,
     cod: Option<CodChoice>,
+    menu: Option<bool>,
 ) -> AppResult<()> {
     let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
     let exe = st.executable.clone().ok_or(AppError::NoExecutable)?;
     if state.installs.lock().unwrap().contains_key(&rom_id) || state.is_busy(rom_id) {
         return Err(AppError::Busy);
     }
+    // Même programme et mêmes données pour tous les jeux d'un runtime : un seul à la fois.
+    state.check_family_idle(rom_id)?;
     if !state.running.lock().unwrap().insert(rom_id) {
         return Err(AppError::AlreadyRunning);
     }
@@ -126,11 +130,13 @@ pub async fn play_game(
         }
     };
     // Jeu déjà relevé derrière le launcher : lancé directement.
-    let direct = st.direct_launch.as_ref().filter(|d| !st.prefer_launcher && st.game_dir.join(rel_to_path(&d.exe)).exists());
+    let open_menu = menu == Some(true) && st.shared.is_some();
+    let direct = st.direct_launch.as_ref().filter(|d| !open_menu && !st.prefer_launcher && st.game_dir.join(rel_to_path(&d.exe)).exists());
     let spec = match (&prepared, direct) {
         (Some(p), _) => Launch { exe: p.exe.clone(), args: &p.args, env: &[], cwd: p.cwd.clone(), learn: false, runner: p.runner.as_ref() },
         (None, Some(d)) => Launch { exe: rel_to_path(&d.exe), args: &d.args, env: &d.env, cwd: d.cwd.as_deref().map(rel_to_path), learn: false, runner: None },
-        (None, None) => Launch { exe: rel_to_path(&exe), args: &[], env: &[], cwd: None, learn: true, runner: None },
+        // Jeu d'un runtime : son lancement est connu, le menu de la recomp n'a rien à apprendre.
+        (None, None) => Launch { exe: rel_to_path(&exe), args: &[], env: &[], cwd: None, learn: st.shared.is_none(), runner: None },
     };
     let running = match launch::spawn(&st.game_dir, spec) {
         Ok(r) => r,

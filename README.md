@@ -144,6 +144,36 @@ en place n'est pas retéléchargée lors d'une mise à jour de la recomp.
 directement dans `RECOMP/` sont pris en compte, et des milliers de fichiers dans un jeu
 ralentissent fortement RomM.
 
+**Recomps à plusieurs jeux** (Gen1recomp : Rouge, Bleu, Or…) : une page par jeu, un seul programme installé. La clé
+`recomps` d'`assets.json` (serveur des assets) relie les entrées RomM :
+
+```json
+"recomps": {
+  "runtimes": [{
+    "id": "gen1recomp", "name": "Gen1recomp", "repo": "https://github.com/bryanthaboi/gen1recomp",
+    "romId": 10550, "exe": "gen1recomp",
+    "dataDir": "pokemon-love2d", "saveDir": "saves/{game}", "cacheDir": "{game}",
+    "args": ["--game={game}"], "env": [["POKEPORT_IMPORT_ROM", "{rom}"]]
+  }],
+  "games": [{ "runtime": "gen1recomp", "game": "red", "romId": 12345 }]
+}
+```
+
+- **Runtime** : entrée `portage-*` habituelle (`RECOMP/`, `VERSION.txt`, `MODS/`), masquée dans le launcher. Le dépôt
+  GitHub et la version ne sont suivis qu'ici (recomp-updater). Ses `ROM/` ne sont pas téléchargées.
+- **Jeu** : entrée `roms/portage-<console>/<Jeu>/ROM/<rom>` (ex. `portage-gbc/Pokemon Yellow/`), sans `RECOMP/` ni fichier
+  dans `recomps/` : c'est le runtime qui est suivi. Le dossier `portage-<console>` doit être relié à sa console.
+- Un launcher antérieur à cette fonction affiche ces pages comme « Non disponible pour votre système ».
+- **Installer** un jeu installe le runtime s'il manque ou n'est plus à jour, puis télécharge sa ROM dans
+  `.farfalauncher/roms/`. **Désinstaller** retire sa ROM et ses données ; le runtime et le dossier `dataDir` ne
+  partent qu'avec le dernier jeu. Un seul jeu d'un runtime tourne à la fois.
+- `args` et `env` décrivent le lancement (`{game}`, `{rom}` remplacés). **Jouer** ouvre le jeu ; le bouton du dessous ouvre le
+  menu de la recomp.
+- Pages et bonnes images : section `jeux:` de `recomps/Pokemon.txt` (voir le README de recomp-updater).
+  Gen1recomp : `--game=` (forme avec `=` obligatoire) ouvre le bon jeu, et `POKEPORT_IMPORT_ROM` importe la ROM sans
+  menu quand c'est nécessaire, y compris après une mise à jour de la recomp.
+- Sauvegardes : `saveDir` est synchronisé par jeu, sur son entrée RomM.
+
 **Boîtes 3D** : le launcher construit la boîte à partir de la face avant, de la tranche et
 du dos scrapés par ScreenScraper. Il faut donc `box2d_side` (et idéalement `box2d_back`)
 dans `scan.media` du `config.yml` de RomM ; sans tranche, la jaquette s'affiche à plat.

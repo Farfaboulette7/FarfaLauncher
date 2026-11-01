@@ -12,7 +12,8 @@ use crate::error::{log_err, AppError, AppResult};
 use crate::install::{self, detect, path_to_rel, state, InstallJob, InstallOutcome};
 use crate::pc::{cod, dosbox, proton};
 use crate::platform;
-use crate::romm::library::{self, Game};
+use crate::romm::library::Game;
+use crate::runtimes;
 use crate::state::AppState;
 
 #[derive(Serialize)]
@@ -53,6 +54,13 @@ pub fn install_game(app: AppHandle, state: State<'_, AppState>, rom_id: i64, des
     };
     let client = state.client()?;
     let cancel = CancellationToken::new();
+    let manifest = state.manifest();
+    if manifest.page(rom_id).is_some() {
+        // Le programme partagé peut être mis à jour : aucun de ses jeux ne doit tourner.
+        if manifest.family(rom_id).iter().any(|id| state.running.lock().unwrap().contains(id)) {
+            return Err(AppError::AlreadyRunning);
+        }
+    }
     {
         let mut jobs = state.installs.lock().unwrap();
         if state.running.lock().unwrap().contains(&rom_id) {
@@ -71,6 +79,8 @@ pub fn install_game(app: AppHandle, state: State<'_, AppState>, rom_id: i64, des
         target: platform::detect(),
         cancel,
         proton,
+        manifest,
+        runtime_lock: state.runtime_lock.clone(),
         on_progress: Arc::new(move |p| {
             let _ = emitter.emit("install-progress", p);
         }),
@@ -142,13 +152,14 @@ async fn game_details(state: &AppState, rom_id: i64) -> AppResult<Game> {
         .and_then(|s| s.games.iter().find(|g| g.id == rom_id && g.details_loaded).cloned());
     match cached {
         Some(g) => Ok(g),
-        None => library::fetch_game_details(&state.client()?, rom_id, platform::detect()).await,
+        None => runtimes::fetch_details(&state.client()?, &state.manifest(), rom_id, platform::detect()).await,
     }
 }
 
 #[tauri::command]
 pub async fn uninstall_game(state: State<'_, AppState>, rom_id: i64, keep_saves: bool) -> AppResult<()> {
     let _busy = state.mark_busy(rom_id)?;
+    state.check_family_idle(rom_id)?;
     let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
     install::uninstall(&state.config_dir, st, keep_saves).await
 }
@@ -161,6 +172,7 @@ pub async fn move_game(state: State<'_, AppState>, rom_id: i64, dest: String) ->
         return Err(AppError::Internal);
     }
     let _busy = state.mark_busy(rom_id)?;
+    state.check_family_idle(rom_id)?;
     let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
     install::move_game(&state.config_dir, st, dest).await
 }

@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{log_err, AppError, AppResult};
-use crate::install::extract::STATE_FILE;
+use crate::install::extract::{INTERNAL_DIR, STATE_FILE};
 use crate::platform::Target;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,9 +56,30 @@ pub struct InstalledGame {
     /// Jeu de la plateforme « Ordinateur ».
     #[serde(default)]
     pub pc: Option<crate::pc::PcInstall>,
+    /// Jeu d'un runtime partagé : `game_dir` est alors le dossier du runtime.
+    #[serde(default)]
+    pub shared: Option<SharedGame>,
     /// Dossier du jeu (non stocké dans le fichier, déduit de son emplacement).
     #[serde(skip_deserializing, default)]
     pub game_dir: PathBuf,
+}
+
+/// Lien entre un jeu installé et le runtime qui le fait tourner. Version et
+/// exécutable ne sont pas gardés ici : ils sont relus sur le runtime.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SharedGame {
+    pub runtime_rom_id: i64,
+    /// Identifiant du jeu pour la recomp (`red`, `gold`…).
+    pub game: String,
+    pub runtime_name: String,
+    /// Dossier de données du runtime, sous `%APPDATA%` et ses équivalents.
+    pub data_dir: String,
+    /// Sauvegardes de ce jeu, relatives à `data_dir`.
+    pub save_dir: String,
+    /// Données tirées de la ROM, relatives à `data_dir`.
+    #[serde(default)]
+    pub cache_dir: Option<String>,
 }
 
 /// Un fichier de `ROM/` du serveur et ce qu'il a donné dans le dossier du jeu.
@@ -128,6 +149,9 @@ struct Registry {
 struct RegistryEntry {
     rom_id: i64,
     game_dir: PathBuf,
+    /// Jeu d'un runtime partagé : son état est dans `<dossier>/.farfalauncher/pages/`.
+    #[serde(default)]
+    page: bool,
 }
 
 fn registry_path(config_dir: &Path) -> PathBuf {
@@ -163,18 +187,78 @@ pub fn read_state(game_dir: &Path) -> Option<InstalledGame> {
     Some(st)
 }
 
+fn page_path(game_dir: &Path, rom_id: i64) -> PathBuf {
+    game_dir.join(INTERNAL_DIR).join("pages").join(format!("{rom_id}.json"))
+}
+
+/// État d'un jeu d'un runtime : ce qui concerne le programme vient du runtime.
+fn read_page(game_dir: &Path, rom_id: i64) -> Option<InstalledGame> {
+    let text = std::fs::read_to_string(page_path(game_dir, rom_id)).ok()?;
+    let mut st: InstalledGame = serde_json::from_str(&text)
+        .map_err(|e| tracing::warn!("état illisible pour le jeu {rom_id}: {e}"))
+        .ok()?;
+    let runtime = read_state(game_dir)?;
+    let shared = st.shared.clone()?;
+    st.game_dir = game_dir.to_path_buf();
+    st.version = runtime.version;
+    st.version_raw = runtime.version_raw;
+    st.target = runtime.target;
+    st.archive_name = runtime.archive_name;
+    st.executable = runtime.executable.clone();
+    if let (Some(direct), Some(exe)) = (st.direct_launch.as_mut(), runtime.executable) {
+        direct.exe = exe;
+    }
+    // Le dossier n'existe qu'après le premier lancement : relu à chaque fois.
+    st.saves.dir = crate::runtimes::data_dir(&shared.data_dir).map(|d| d.join(crate::install::rel_to_path(&shared.save_dir)));
+    st.saves.patterns = Vec::new();
+    Some(st)
+}
+
+fn read_entry(e: &RegistryEntry) -> Option<InstalledGame> {
+    if e.page {
+        read_page(&e.game_dir, e.rom_id)
+    } else {
+        read_state(&e.game_dir).filter(|s| s.rom_id == e.rom_id)
+    }
+}
+
 /// Écrit l'état dans le dossier du jeu et l'inscrit au registre.
 pub fn write_state(config_dir: &Path, st: &InstalledGame) -> AppResult<()> {
     let text = serde_json::to_string_pretty(st).map_err(|e| log_err(AppError::Internal, "état du jeu", e))?;
-    write_atomic(&st.game_dir.join(STATE_FILE), &text)?;
+    if st.shared.is_some() {
+        let path = page_path(&st.game_dir, st.rom_id);
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| log_err(AppError::Disk, "dossier d'état", e))?;
+        }
+        write_atomic(&path, &text)?;
+    } else {
+        write_atomic(&st.game_dir.join(STATE_FILE), &text)?;
+    }
     let mut reg = load_registry(config_dir);
     reg.games.retain(|g| g.rom_id != st.rom_id);
-    reg.games.push(RegistryEntry { rom_id: st.rom_id, game_dir: st.game_dir.clone() });
+    reg.games.push(RegistryEntry { rom_id: st.rom_id, game_dir: st.game_dir.clone(), page: st.shared.is_some() });
+    save_registry(config_dir, &reg)
+}
+
+/// Jeux installés sur le runtime du dossier `game_dir`.
+pub fn pages_in(config_dir: &Path, game_dir: &Path) -> Vec<i64> {
+    load_registry(config_dir).games.iter().filter(|g| g.page && g.game_dir == game_dir).map(|g| g.rom_id).collect()
+}
+
+/// Dossier déplacé : tout ce qui y est inscrit le suit.
+pub fn relocate(config_dir: &Path, old: &Path, new: &Path) -> AppResult<()> {
+    let mut reg = load_registry(config_dir);
+    for g in reg.games.iter_mut().filter(|g| g.game_dir == old) {
+        g.game_dir = new.to_path_buf();
+    }
     save_registry(config_dir, &reg)
 }
 
 pub fn forget(config_dir: &Path, rom_id: i64) -> AppResult<()> {
     let mut reg = load_registry(config_dir);
+    for g in reg.games.iter().filter(|g| g.rom_id == rom_id && g.page) {
+        let _ = std::fs::remove_file(page_path(&g.game_dir, rom_id));
+    }
     reg.games.retain(|g| g.rom_id != rom_id);
     save_registry(config_dir, &reg)
 }
@@ -184,13 +268,13 @@ pub fn list_installed(config_dir: &Path) -> Vec<InstalledGame> {
     load_registry(config_dir)
         .games
         .iter()
-        .filter_map(|e| read_state(&e.game_dir).filter(|s| s.rom_id == e.rom_id))
+        .filter_map(read_entry)
         .collect()
 }
 
 pub fn find(config_dir: &Path, rom_id: i64) -> Option<InstalledGame> {
     let entry = load_registry(config_dir).games.into_iter().find(|g| g.rom_id == rom_id)?;
-    read_state(&entry.game_dir).filter(|s| s.rom_id == rom_id)
+    read_entry(&entry)
 }
 
 /// Jeux déplacés sur le serveur (ex. de `farfa-portage` vers `portage-n64`) :
@@ -201,7 +285,7 @@ pub fn rekey_moved(config_dir: &Path, games: &[(i64, String)]) -> usize {
     let installed = list_installed(config_dir);
     let mut moved = 0;
     for mut st in installed.iter().cloned() {
-        if games.iter().any(|(id, _)| *id == st.rom_id) {
+        if st.shared.is_some() || games.iter().any(|(id, _)| *id == st.rom_id) {
             continue;
         }
         let dir_name = st.game_dir.file_name().map(|n| n.to_string_lossy().into_owned());
@@ -280,6 +364,7 @@ mod tests {
             updated_at: 1,
             game_dir: game_dir.clone(),
             pc: None,
+            shared: None,
         };
         write_state(&config, &st).unwrap();
 

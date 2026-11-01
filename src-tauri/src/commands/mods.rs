@@ -13,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 use crate::error::{AppError, AppResult};
 use crate::install::{download, extract::MODS_DIR, state};
 use crate::platform;
-use crate::romm::library;
+use crate::runtimes;
 use crate::state::AppState;
 
 #[derive(Clone, Serialize)]
@@ -54,7 +54,7 @@ pub async fn download_mod(app: AppHandle, state: State<'_, AppState>, rom_id: i6
     let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
     let client = state.client()?;
     // Fichier à jour côté serveur (identifiants actuels).
-    let game = library::fetch_game_details(&client, rom_id, platform::detect()).await?;
+    let game = runtimes::fetch_details(&client, &state.manifest(), rom_id, platform::detect()).await?;
     let file = game.mods.iter().find(|m| m.id == file_id).cloned().ok_or(AppError::NotAvailable)?;
     let key = (rom_id, file_id);
     let cancel = CancellationToken::new();

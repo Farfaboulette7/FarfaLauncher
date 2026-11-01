@@ -1,0 +1,355 @@
+//! Recomps qui font tourner plusieurs jeux (Gen1recomp : Rouge, Bleu, Or…).
+//!
+//! Le « runtime » est le programme installé, partagé et suivi une seule fois :
+//! son entrée RomM (`RECOMP/`, `VERSION.txt`, `MODS/`) n'a pas de page dans le
+//! launcher. Chaque jeu a sa propre entrée `portage-<console>/<Jeu>/ROM/`, qui donne sa page.
+//!
+//! Le manifeste qui les relie est la clé `recomps` de `assets.json`, sur le
+//! serveur des assets (réservé aux utilisateurs connectés). Une copie reste sur
+//! le disque pour démarrer sans serveur.
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+
+use crate::assets;
+use crate::error::{AppError, AppResult};
+use crate::platform::Target;
+use crate::romm::client::RommClient;
+use crate::romm::library::{self, Game, GameRuntime};
+use crate::state::AppState;
+
+const REMOTE_FILE: &str = "assets.json";
+const CACHE_FILE: &str = "recomps.json";
+
+/// Programme partagé par plusieurs jeux.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Runtime {
+    pub id: String,
+    pub name: String,
+    /// Dépôt GitHub de la recomp (le suivi des versions reste à recomp-updater).
+    pub repo: String,
+    /// Entrée RomM qui porte `RECOMP/` et `VERSION.txt`.
+    pub rom_id: i64,
+    /// Début du nom de l'exécutable, sans extension (`gen1recomp`).
+    pub exe: String,
+    /// Dossier de données partagé, sous `%APPDATA%` et ses équivalents.
+    pub data_dir: String,
+    /// Sauvegardes d'un jeu, relatives à `data_dir` (`{game}` remplacé).
+    pub save_dir: String,
+    /// Données tirées de la ROM, relatives à `data_dir`, recréées si besoin.
+    #[serde(default)]
+    pub cache_dir: Option<String>,
+    /// Arguments du lancement (`{game}`, `{rom}` remplacés). Vide : menu de la recomp.
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Variables d'environnement du lancement (`{game}`, `{rom}` remplacés).
+    #[serde(default)]
+    pub env: Vec<(String, String)>,
+}
+
+/// Un jeu : sa page vient de son entrée `portage-*` de RomM.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeGame {
+    pub runtime: String,
+    /// Identifiant du jeu pour la recomp (`red`, `gold`…).
+    pub game: String,
+    pub rom_id: i64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Manifest {
+    pub runtimes: Vec<Runtime>,
+    pub games: Vec<RuntimeGame>,
+}
+
+#[derive(Deserialize)]
+struct AssetsFile {
+    #[serde(default)]
+    recomps: Manifest,
+}
+
+/// Chemin relatif sans remontée : sert à supprimer des dossiers à la désinstallation.
+fn valid_rel(path: &str) -> bool {
+    !path.is_empty()
+        && !path.contains('\\')
+        && !path.contains(':')
+        && path.split('/').all(|s| !s.is_empty() && s != "." && s != "..")
+}
+
+fn valid_game_id(id: &str) -> bool {
+    !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+}
+
+impl Runtime {
+    fn is_valid(&self) -> bool {
+        valid_game_id(&self.id)
+            && !self.exe.is_empty()
+            && valid_rel(&self.data_dir)
+            && valid_rel(&expand(&self.save_dir, "x", ""))
+            && self.cache_dir.as_deref().is_none_or(|d| valid_rel(&expand(d, "x", "")))
+    }
+
+    /// Arguments et variables de lancement d'un jeu.
+    pub fn launch_for(&self, game: &str, rom: &str) -> (Vec<String>, Vec<(String, String)>) {
+        (
+            self.args.iter().map(|a| expand(a, game, rom)).collect(),
+            self.env.iter().map(|(k, v)| (k.clone(), expand(v, game, rom))).collect(),
+        )
+    }
+}
+
+fn expand(text: &str, game: &str, rom: &str) -> String {
+    text.replace("{game}", game).replace("{rom}", rom)
+}
+
+impl Manifest {
+    fn parse(text: &str) -> AppResult<Self> {
+        let file: AssetsFile = serde_json::from_str(text).map_err(|e| crate::error::log_err(AppError::Server, "assets.json invalide", e))?;
+        Ok(file.recomps.validated())
+    }
+
+    fn validated(mut self) -> Self {
+        self.runtimes.retain(|r| {
+            let ok = r.is_valid();
+            if !ok {
+                tracing::warn!("runtime {} ignoré : champs invalides", r.id);
+            }
+            ok
+        });
+        let known: Vec<String> = self.runtimes.iter().map(|r| r.id.clone()).collect();
+        self.games.retain(|g| {
+            let ok = known.contains(&g.runtime) && valid_game_id(&g.game);
+            if !ok {
+                tracing::warn!("jeu {} ignoré : runtime inconnu ou identifiant invalide", g.rom_id);
+            }
+            ok
+        });
+        self
+    }
+
+    pub fn load_cached(config_dir: &Path) -> Self {
+        std::fs::read_to_string(config_dir.join(CACHE_FILE))
+            .ok()
+            .and_then(|t| serde_json::from_str::<Manifest>(&t).ok())
+            .map(Manifest::validated)
+            .unwrap_or_default()
+    }
+
+    fn save_cached(&self, config_dir: &Path) {
+        match serde_json::to_string_pretty(self) {
+            Ok(text) => {
+                if let Err(e) = std::fs::write(config_dir.join(CACHE_FILE), text) {
+                    tracing::warn!("manifeste des recomps non mis en cache: {e}");
+                }
+            }
+            Err(e) => tracing::warn!("manifeste des recomps non mis en cache: {e}"),
+        }
+    }
+
+    pub fn is_runtime(&self, rom_id: i64) -> bool {
+        self.runtimes.iter().any(|r| r.rom_id == rom_id)
+    }
+
+    /// Le jeu `rom_id` et son runtime, si la page en dépend.
+    pub fn page(&self, rom_id: i64) -> Option<(&Runtime, &RuntimeGame)> {
+        let game = self.games.iter().find(|g| g.rom_id == rom_id)?;
+        Some((self.runtimes.iter().find(|r| r.id == game.runtime)?, game))
+    }
+
+    #[cfg(test)]
+    pub fn page_ids(&self) -> Vec<i64> {
+        self.games.iter().map(|g| g.rom_id).collect()
+    }
+
+    /// Le jeu ou runtime `rom_id` et tout ce qui partage son installation.
+    pub fn family(&self, rom_id: i64) -> Vec<i64> {
+        let runtime = self.page(rom_id).map(|(r, _)| r).or_else(|| self.runtimes.iter().find(|r| r.rom_id == rom_id));
+        match runtime {
+            Some(r) => std::iter::once(r.rom_id).chain(self.games.iter().filter(|g| g.runtime == r.id).map(|g| g.rom_id)).collect(),
+            None => vec![rom_id],
+        }
+    }
+}
+
+/// Relit le manifeste sur le serveur des assets ; garde le précédent s'il ne répond pas.
+pub async fn refresh(state: &AppState) {
+    let Some(base) = assets::base_url(&state.settings()) else { return };
+    let Ok(client) = state.client().map(|c| c.with_base(&base)) else { return };
+    let text = match client.send(client.get(REMOTE_FILE)).await {
+        Ok(resp) => resp.text().await.map_err(|e| crate::error::log_err(AppError::Server, "lecture de assets.json", e)),
+        Err(e) => Err(e),
+    };
+    match text.and_then(|t| Manifest::parse(&t)) {
+        Ok(manifest) => {
+            manifest.save_cached(&state.config_dir);
+            tracing::info!("{} runtime(s) partagé(s), {} jeu(x)", manifest.runtimes.len(), manifest.games.len());
+            *state.manifest.lock().unwrap() = manifest;
+        }
+        Err(e) => tracing::warn!("manifeste des recomps indisponible ({}), copie locale gardée", e.code()),
+    }
+}
+
+fn link(runtime: &Runtime, game: &RuntimeGame) -> GameRuntime {
+    GameRuntime { rom_id: runtime.rom_id, name: runtime.name.clone(), repo: runtime.repo.clone(), game: game.game.clone() }
+}
+
+/// Page d'un jeu sans les fichiers de son runtime : sa ROM est dans son `ROM/`.
+pub async fn fetch_page(client: &RommClient, manifest: &Manifest, rom_id: i64, me: Target) -> AppResult<Game> {
+    let (runtime, game) = manifest.page(rom_id).ok_or(AppError::NotAvailable)?;
+    let mut page = library::fetch_game_details(client, rom_id, me).await?;
+    page.runtime = Some(link(runtime, game));
+    Ok(page)
+}
+
+/// Plateformes et jeux de la bibliothèque. Les runtimes n'ont pas de page. `on_listed` reçoit
+/// tous les jeux du serveur, runtimes compris.
+pub async fn list_library(
+    client: &RommClient,
+    manifest: &Manifest,
+    me: Target,
+    on_listed: impl FnOnce(&[(i64, String)]) -> usize,
+) -> AppResult<(Vec<library::Platform>, Vec<Game>)> {
+    let platforms = library::list_platforms(client).await?;
+    let mut games = library::list_games(client, &platforms, me).await?;
+    let ids: Vec<(i64, String)> = games.iter().map(|g| (g.id, g.folder_name.clone())).collect();
+    on_listed(&ids);
+    games.retain(|g| !manifest.is_runtime(g.id));
+    for game in games.iter_mut() {
+        if let Some((runtime, def)) = manifest.page(game.id) {
+            game.runtime = Some(link(runtime, def));
+        }
+    }
+    Ok((platforms, games))
+}
+
+/// Détails d'un jeu : ses propres fichiers, plus ceux de son runtime s'il en a un.
+pub async fn fetch_details(client: &RommClient, manifest: &Manifest, rom_id: i64, me: Target) -> AppResult<Game> {
+    let Some((runtime, _)) = manifest.page(rom_id) else {
+        return library::fetch_game_details(client, rom_id, me).await;
+    };
+    let shared = library::fetch_game_details(client, runtime.rom_id, me).await?;
+    let mut page = fetch_page(client, manifest, rom_id, me).await?;
+    page.use_runtime(&shared);
+    Ok(page)
+}
+
+/// Détails d'un jeu pendant un rafraîchissement : chaque runtime n'y est lu qu'une fois.
+pub async fn fetch_details_with(client: &RommClient, manifest: &Manifest, shared: &HashMap<i64, Game>, rom_id: i64, me: Target) -> AppResult<Game> {
+    let Some((runtime, _)) = manifest.page(rom_id) else {
+        return library::fetch_game_details(client, rom_id, me).await;
+    };
+    let rt = shared.get(&runtime.rom_id).ok_or(AppError::Server)?;
+    let mut page = fetch_page(client, manifest, rom_id, me).await?;
+    page.use_runtime(rt);
+    Ok(page)
+}
+
+/// Dossier de données existant d'un runtime (rien tant qu'il n'a jamais tourné).
+pub fn existing_data_dir(name: &str) -> Option<PathBuf> {
+    crate::saves::data_roots().into_iter().map(|r| r.join(crate::install::rel_to_path(name))).find(|d| d.is_dir())
+}
+
+/// Dossier de données d'un runtime : celui qui existe, sinon le premier emplacement du système.
+pub fn data_dir(name: &str) -> Option<PathBuf> {
+    existing_data_dir(name).or_else(|| crate::saves::data_roots().first().map(|r| r.join(crate::install::rel_to_path(name))))
+}
+
+/// Exécutable d'un runtime parmi les candidats. Le nom peut contenir la version
+/// (AppImage) et l'ancienne reste sur le disque : celle de la version installée d'abord.
+pub fn pick_exe(candidates: &[String], exe: &str, version: Option<&str>) -> Option<String> {
+    let exe = exe.to_lowercase();
+    let name = |c: &str| c.rsplit('/').next().unwrap_or(c).to_lowercase();
+    let matching: Vec<&String> = candidates.iter().filter(|c| name(c).starts_with(&exe)).collect();
+    let version = version.map(|v| v.trim_start_matches(['v', 'V'])).filter(|v| !v.is_empty());
+    matching
+        .iter()
+        .find(|c| version.is_some_and(|v| name(c).contains(v)))
+        .or(matching.first())
+        .map(|c| c.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Vrai serveur, vrai manifeste : `FARFA_E2E_URL=… FARFA_E2E_TOKEN=… FARFA_E2E_ASSETS=… cargo test -- --ignored library_e2e --nocapture`.
+    #[tokio::test]
+    #[ignore]
+    async fn library_e2e() {
+        let var = |k: &str| std::env::var(k).unwrap();
+        let client = RommClient::new(&var("FARFA_E2E_URL"), Some(var("FARFA_E2E_TOKEN"))).unwrap();
+        let assets = client.with_base(&var("FARFA_E2E_ASSETS"));
+        let text = assets.send(assets.get(REMOTE_FILE)).await.unwrap().text().await.unwrap();
+        let manifest = Manifest::parse(&text).unwrap();
+        let (platforms, games) = list_library(&client, &manifest, Target::Windows, |_| 0).await.unwrap();
+        for p in &platforms {
+            let own: Vec<&str> = games.iter().filter(|g| g.platform_id == p.id).map(|g| g.name.as_str()).collect();
+            println!("{} {} ({}): {own:?}", p.id, p.fs_slug, p.name);
+        }
+        assert!(!games.iter().any(|g| manifest.is_runtime(g.id)));
+        assert_eq!(games.iter().filter(|g| g.runtime.is_some()).count(), manifest.games.len());
+        let runtime = library::fetch_game_details(&client, 10550, Target::Windows).await.unwrap();
+        let page = fetch_details(&client, &manifest, manifest.page_ids()[0], Target::Windows).await.unwrap();
+        println!("{} : {} ROM, archive {:?}, version {:?}, {} mod(s)", page.name, page.rom_files.len(), page.my_archive.as_ref().map(|a| &a.file.file_name), page.server_version, page.mods.len());
+        assert_eq!(page.rom_files.len(), 1);
+        assert_eq!(page.server_version_raw, runtime.server_version_raw);
+        assert!(page.my_archive.is_some() && page.details_loaded);
+    }
+
+    const TEXT: &str = r#"{"music":[],"recomps":{
+        "runtimes":[{"id":"gen1recomp","name":"Gen1recomp","repo":"https://github.com/x/y","romId":10,
+            "exe":"gen1recomp","dataDir":"pokemon-love2d","saveDir":"saves/{game}","cacheDir":"{game}",
+            "args":["--game={game}"],"env":[["ROM","{rom}"]]},
+          {"id":"bad","name":"B","repo":"","romId":99,"exe":"b","dataDir":"../..","saveDir":"s"}],
+        "games":[{"runtime":"gen1recomp","game":"red","romId":1},{"runtime":"gen1recomp","game":"blue","romId":2},
+          {"runtime":"bad","game":"x","romId":3},{"runtime":"gen1recomp","game":"../x","romId":4}]}}"#;
+
+    #[test]
+    fn reads_and_validates_the_manifest() {
+        let m = Manifest::parse(TEXT).unwrap();
+        assert_eq!(m.runtimes.len(), 1);
+        assert_eq!(m.page_ids(), [1, 2]);
+        assert!(m.is_runtime(10) && !m.is_runtime(1));
+        assert_eq!(m.page(2).unwrap().1.game, "blue");
+        assert!(m.page(3).is_none());
+        assert_eq!(m.family(1), [10, 1, 2]);
+        assert_eq!(m.family(10), [10, 1, 2]);
+        assert_eq!(m.family(77), [77]);
+    }
+
+    #[test]
+    fn a_server_without_manifest_changes_nothing() {
+        let m = Manifest::parse(r#"{"music":[]}"#).unwrap();
+        assert!(m.runtimes.is_empty() && m.games.is_empty());
+    }
+
+    #[test]
+    fn expands_the_launch_of_a_game() {
+        let m = Manifest::parse(TEXT).unwrap();
+        let (args, env) = m.runtimes[0].launch_for("red", "/r/x.gb");
+        assert_eq!(args, ["--game=red"]);
+        assert_eq!(env, [("ROM".to_string(), "/r/x.gb".to_string())]);
+    }
+
+    #[test]
+    fn refuses_paths_that_leave_the_data_folder() {
+        for bad in ["", "..", "a/../b", "/a", "a/", "C:/x", "a\\b"] {
+            assert!(!valid_rel(bad), "{bad}");
+        }
+        assert!(valid_rel("saves/red") && valid_rel("pokemon-love2d"));
+    }
+
+    #[test]
+    fn picks_the_executable_of_the_installed_version() {
+        let list = vec!["gen1recomp-0.3.98-linux.AppImage".to_string(), "gen1recomp-0.3.99-linux.AppImage".to_string(), "autre.AppImage".to_string()];
+        assert_eq!(pick_exe(&list, "gen1recomp", Some("v0.3.99")).unwrap(), list[1]);
+        assert_eq!(pick_exe(&list, "gen1recomp", Some("v9")).unwrap(), list[0]);
+        assert_eq!(pick_exe(&["sub/Gen1Recomp.exe".to_string()], "gen1recomp", None).unwrap(), "sub/Gen1Recomp.exe");
+        assert!(pick_exe(&list, "zelda", None).is_none());
+    }
+}

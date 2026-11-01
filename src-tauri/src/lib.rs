@@ -10,6 +10,7 @@ mod logging;
 mod pc;
 mod platform;
 mod romm;
+mod runtimes;
 mod saves;
 mod secrets;
 mod settings;
