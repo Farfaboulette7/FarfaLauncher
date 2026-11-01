@@ -153,6 +153,8 @@ export interface Platform {
   romCount: number;
   /** Icônes servies par RomM, à essayer dans l'ordre. */
   iconUrls: string[];
+  /** Un émulateur tourne sur ce système pour cette console. */
+  hasEmulator: boolean;
 }
 
 export interface GameRuntime {
@@ -167,6 +169,34 @@ export interface SharedGame {
   runtimeRomId: number;
   game: string;
   runtimeName: string;
+  /** `emulator` : le programme vient de FarfaRomManager. */
+  kind?: string | null;
+}
+
+/** Ce que la page d'un jeu sait de l'émulateur de sa console. */
+export interface EmulatorOffer {
+  id: string;
+  name: string;
+  version: string;
+  versionKey: string;
+  runtimeRomId: number;
+  /** Build pour ce système. */
+  available: boolean;
+  size: number;
+  systems: Target[];
+  repo: string | null;
+  /** Éléments de configuration que le serveur n'a pas encore. */
+  configMissing: string[];
+}
+
+export interface GamesPage {
+  games: Game[];
+  hasMore: boolean;
+}
+
+export interface ManagerInfo {
+  url: string | null;
+  custom: boolean;
 }
 
 export interface Game {
@@ -194,6 +224,11 @@ export interface Game {
   pc: PcGame | null;
   /** Jeu lancé par un runtime partagé : archives, mods et version sont les siens. */
   runtime: GameRuntime | null;
+  /** Console d'origine, commune à `gba` et `portage-gba`. */
+  console: string;
+  /** Ce jeu a une recomp. */
+  recomp: boolean;
+  emulator: EmulatorOffer | null;
   versionFile: RemoteFile | null;
   serverVersion: string | null;
   /** Contenu complet de VERSION.txt (comparé pour les mises à jour). */
@@ -423,8 +458,8 @@ export const backend = {
   favoriteSet: (romId: number, favorite: boolean) => invoke<number[]>("favorite_set", { romId, favorite }),
   installInfo: () => invoke<InstallInfo>("install_info"),
   /** `dest` : dossier où créer celui du jeu (sinon le dossier des jeux des paramètres). */
-  installGame: (romId: number, dest?: string, proton?: string | null) =>
-    invoke<void>("install_game", { romId, dest: dest ?? null, proton: proton ?? null }),
+  installGame: (romId: number, dest?: string, proton?: string | null, withEmulator = false) =>
+    invoke<void>("install_game", { romId, dest: dest ?? null, proton: proton ?? null, withEmulator }),
   cancelInstall: (romId: number) => invoke<void>("cancel_install", { romId }),
   executableCandidates: (romId: number) => invoke<string[]>("executable_candidates", { romId }),
   chooseExecutable: (romId: number, executable: string) => invoke<InstalledGame>("choose_executable", { romId, executable }),
@@ -436,6 +471,13 @@ export const backend = {
   setPreferLauncher: (romId: number, prefer: boolean) => invoke<InstalledGame>("set_prefer_launcher", { romId, prefer }),
   systemInfo: () => invoke<SystemInfo>("system_info"),
   serverPing: () => invoke<number>("server_ping"),
+  consoleGames: (platformIds: number[], offset: number) => invoke<GamesPage>("console_games", { platformIds, offset }),
+  searchGames: (term: string) => invoke<Game[]>("search_games", { term }),
+  recentGames: () => invoke<Game[]>("recent_games"),
+  gamesByIds: (ids: number[]) => invoke<Game[]>("games_by_ids", { ids }),
+  gameDetails: (romId: number) => invoke<Game>("game_details", { romId }),
+  managerInfo: () => invoke<ManagerInfo>("manager_info"),
+  setManagerUrl: (url: string | null) => invoke<ManagerInfo>("set_manager_url", { url }),
   playGame: (romId: number, saveChoice: SaveChoice, cod?: CodChoice | null, menu = false) =>
     invoke<void>("play_game", { romId, saveChoice, cod: cod ?? null, menu }),
   protonVersions: () => invoke<ProtonVersion[]>("proton_versions"),
@@ -490,6 +532,24 @@ export function downloadSize(game: Game, runtimeInstalled = false): number {
   return game.myArchive ? game.myArchive.file.size + roms : 0;
 }
 
+export function isEmulatorInstall(inst: InstalledGame | undefined): boolean {
+  return inst?.shared?.kind === "emulator";
+}
+
 export function hasUpdate(game: Game, inst: InstalledGame | undefined): boolean {
-  return !!inst?.executable && !!game.serverVersionRaw && game.serverVersionRaw !== inst.versionRaw;
+  if (!inst?.executable) return false;
+  // Installé avec l'émulateur : c'est lui qui est suivi, pas la recomp du jeu.
+  const remote = isEmulatorInstall(inst) ? game.emulator?.versionKey : game.serverVersionRaw;
+  return !!remote && remote !== inst.versionRaw;
+}
+
+/** Émulateur installable pour ce jeu sur ce système. */
+export function emulatorReady(game: Game): boolean {
+  return !!game.emulator?.available && game.emulator.configMissing.length === 0;
+}
+
+/** Taille à télécharger pour installer le jeu avec son émulateur. */
+export function emulatorDownloadSize(game: Game, emulatorInstalled: boolean): number {
+  const roms = game.romFiles.reduce((s, f) => s + f.size, 0);
+  return roms + (emulatorInstalled ? 0 : (game.emulator?.size ?? 0));
 }

@@ -17,6 +17,8 @@ pub struct Settings {
     /// Serveur des musiques et bruitages, normalisé ; `None` = déduit de
     /// `server_url` (voir `assets::derive_url`).
     pub assets_url: Option<String>,
+    /// FarfaRomManager, normalisé ; `None` = déduit de `server_url`.
+    pub manager_url: Option<String>,
     /// Identifiant stable de cette installation, envoyé à RomM lors de
     /// l'appairage (`client_device_identifier`).
     pub device_id: String,
@@ -30,6 +32,7 @@ impl Default for Settings {
             server_url: None,
             install_dir: None,
             assets_url: None,
+            manager_url: None,
             device_id: uuid::Uuid::new_v4().to_string(),
             fullscreen: true,
         }

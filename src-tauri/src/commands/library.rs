@@ -18,7 +18,7 @@ use crate::error::{AppError, AppResult};
 use crate::install::state as install_state;
 use crate::platform::{self, Target};
 use crate::romm::favorites;
-use crate::romm::library::{self, Manual};
+use crate::romm::library::{self, Game, Manual};
 use crate::romm::playtime;
 use crate::runtimes;
 use crate::state::AppState;
@@ -81,9 +81,19 @@ async fn start_refresh(app: &AppHandle, state: &AppState) -> AppResult<LibrarySn
     let client = state.client()?;
     let target = platform::detect();
     runtimes::refresh(state).await;
+    crate::manager::refresh(state).await;
     let manifest = state.manifest();
+    let catalog = state.catalog();
+    let recomps = catalog.recomp_rom_ids();
     let (platforms, mut games) = runtimes::list_library(&client, &manifest, target, |ids| install_state::rekey_moved(&state.config_dir, ids)).await?;
 
+    for g in games.iter_mut() {
+        runtimes::annotate(g, &catalog, &recomps, target);
+    }
+    let mut platforms = platforms;
+    for p in platforms.iter_mut() {
+        p.has_emulator = catalog.offer(&p.slug, target).is_some_and(|o| o.available);
+    }
     // En attendant les détails, on garde ceux du cache pour chaque jeu.
     if let Some(old) = state.library.lock().unwrap().as_ref() {
         for g in games.iter_mut() {
@@ -125,7 +135,8 @@ async fn start_refresh(app: &AppHandle, state: &AppState) -> AppResult<LibrarySn
             .buffer_unordered(DETAIL_CONCURRENCY);
         while let Some((id, res)) = results.next().await {
             match res {
-                Ok(game) => {
+                Ok(mut game) => {
+                    runtimes::annotate(&mut game, &catalog, &recomps, target);
                     if let Some(snap) = state.library.lock().unwrap().as_mut() {
                         if let Some(slot) = snap.games.iter_mut().find(|g| g.id == id) {
                             *slot = game.clone();
@@ -228,6 +239,101 @@ pub async fn favorite_set(state: State<'_, AppState>, rom_id: i64, favorite: boo
     let rom_ids = favorites::set(&client, rom_id, favorite).await?;
     cache::save_favorites(&state.cache_dir, client.base(), &rom_ids);
     Ok(rom_ids)
+}
+
+/// Jeux par page pour les consoles chargées à la demande.
+const CONSOLE_PAGE: usize = 60;
+const SEARCH_LIMIT: usize = 60;
+const RECENT_LIMIT: usize = 24;
+
+fn annotated(state: &AppState, mut games: Vec<Game>, me: Target) -> Vec<Game> {
+    let manifest = state.manifest();
+    let catalog = state.catalog();
+    let recomps = catalog.recomp_rom_ids();
+    games.retain(|g| !manifest.is_runtime(g.id));
+    for g in games.iter_mut() {
+        if let Some((runtime, def)) = manifest.page(g.id) {
+            g.runtime = Some(runtimes::link(runtime, def));
+        }
+        runtimes::annotate(g, &catalog, &recomps, me);
+    }
+    games
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GamesPage {
+    pub games: Vec<Game>,
+    pub has_more: bool,
+}
+
+/// Une page des jeux d'une console.
+#[tauri::command]
+pub async fn console_games(state: State<'_, AppState>, platform_ids: Vec<i64>, offset: usize) -> AppResult<GamesPage> {
+    let me = platform::detect();
+    let (games, has_more) = library::list_games_page(&state.client()?, &platform_ids, me, offset, CONSOLE_PAGE).await?;
+    Ok(GamesPage { games: annotated(&state, games, me), has_more })
+}
+
+#[tauri::command]
+pub async fn search_games(state: State<'_, AppState>, term: String) -> AppResult<Vec<Game>> {
+    let me = platform::detect();
+    let games = library::search_games(&state.client()?, &term, me, SEARCH_LIMIT).await?;
+    Ok(annotated(&state, games, me))
+}
+
+#[tauri::command]
+pub async fn recent_games(state: State<'_, AppState>) -> AppResult<Vec<Game>> {
+    let me = platform::detect();
+    let games = library::recent_games(&state.client()?, me, RECENT_LIMIT).await?;
+    Ok(annotated(&state, games, me))
+}
+
+/// Favoris hors de la liste déjà chargée. Un jeu disparu du serveur est ignoré.
+#[tauri::command]
+pub async fn games_by_ids(state: State<'_, AppState>, ids: Vec<i64>) -> AppResult<Vec<Game>> {
+    let me = platform::detect();
+    let client = state.client()?;
+    let results = stream::iter(ids).map(|id| { let client = client.clone(); async move { library::fetch_game_details(&client, id, me).await } }).buffer_unordered(DETAIL_CONCURRENCY);
+    let games: Vec<Game> = results.filter_map(|r| async move { r.ok() }).collect().await;
+    Ok(annotated(&state, games, me))
+}
+
+/// Fiche complète d'un jeu, à l'ouverture de sa page.
+#[tauri::command]
+pub async fn game_details(state: State<'_, AppState>, rom_id: i64) -> AppResult<Game> {
+    let me = platform::detect();
+    let game = runtimes::fetch_details(&state.client()?, &state.manifest(), rom_id, me).await?;
+    Ok(annotated(&state, vec![game], me).remove(0))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagerInfo {
+    pub url: Option<String>,
+    pub custom: bool,
+}
+
+fn manager_info_of(state: &AppState) -> ManagerInfo {
+    let settings = state.settings();
+    ManagerInfo { url: crate::manager::base_url(&settings), custom: settings.manager_url.is_some() }
+}
+
+#[tauri::command]
+pub fn manager_info(state: State<'_, AppState>) -> ManagerInfo {
+    manager_info_of(&state)
+}
+
+/// Adresse de FarfaRomManager ; vide = déduite de RomM. Le token y est envoyé :
+/// mêmes règles que pour RomM (https obligatoire hors réseau local).
+#[tauri::command]
+pub fn set_manager_url(state: State<'_, AppState>, url: Option<String>) -> AppResult<ManagerInfo> {
+    let url = match url.as_deref().map(str::trim).filter(|u| !u.is_empty()) {
+        Some(u) => Some(crate::romm::client::normalize_server_url(u)?),
+        None => None,
+    };
+    state.update_settings(|s| s.manager_url = url)?;
+    Ok(manager_info_of(&state))
 }
 
 #[tauri::command]

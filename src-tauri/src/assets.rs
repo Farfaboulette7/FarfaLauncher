@@ -15,6 +15,11 @@ const SUBDOMAIN: &str = "assets";
 ///
 /// Rien pour une IP ou `localhost` : l'adresse doit alors être saisie.
 pub fn derive_url(server_url: &str) -> Option<String> {
+    derive_subdomain(server_url, SUBDOMAIN)
+}
+
+/// Même adresse que RomM, avec `sub` à la place de son premier niveau.
+pub fn derive_subdomain(server_url: &str, sub: &str) -> Option<String> {
     let mut url = Url::parse(server_url).ok()?;
     let host = match url.host()? {
         Host::Domain(d) => d.to_ascii_lowercase(),
@@ -22,11 +27,11 @@ pub fn derive_url(server_url: &str) -> Option<String> {
     };
     let registrable = psl::domain_str(&host)?;
     let derived = if host == registrable {
-        format!("{SUBDOMAIN}.{host}")
+        format!("{sub}.{host}")
     } else {
         // Sous-domaine : on remplace son premier niveau.
         let (_, parent) = host.split_once('.')?;
-        format!("{SUBDOMAIN}.{parent}")
+        format!("{sub}.{parent}")
     };
     url.set_host(Some(&derived)).ok()?;
     Some(url.as_str().trim_end_matches('/').to_string())

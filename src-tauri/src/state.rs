@@ -39,6 +39,8 @@ pub struct AppState {
     pub mod_downloads: Mutex<HashSet<(i64, i64)>>,
     /// Recomps partagées par plusieurs jeux (dernier manifeste connu).
     pub manifest: Mutex<crate::runtimes::Manifest>,
+    /// Catalogue de FarfaRomManager (dernier connu).
+    pub catalog: Mutex<crate::manager::Catalog>,
     /// Un seul jeu à la fois installe ou met à jour un runtime.
     pub runtime_lock: Arc<tokio::sync::Mutex<()>>,
     /// Dossier d'installation par défaut (`~/FarfaLauncher/Jeux`).
@@ -49,6 +51,7 @@ impl AppState {
     pub fn new(config_dir: PathBuf, log_dir: PathBuf, cache_dir: PathBuf, default_install_root: PathBuf) -> Self {
         let settings = settings::load(&config_dir);
         let manifest = crate::runtimes::Manifest::load_cached(&config_dir);
+        let catalog = crate::manager::Catalog::load_cached(&config_dir);
         // Persiste immédiatement le device_id généré au premier lancement.
         if let Err(e) = settings::save(&config_dir, &settings) {
             tracing::error!("impossible d'enregistrer les paramètres initiaux: {e}");
@@ -67,6 +70,7 @@ impl AppState {
             busy: Mutex::new(HashSet::new()),
             mod_downloads: Mutex::new(HashSet::new()),
             manifest: Mutex::new(manifest),
+            catalog: Mutex::new(catalog),
             runtime_lock: Arc::new(tokio::sync::Mutex::new(())),
             default_install_root,
         }
@@ -87,9 +91,18 @@ impl AppState {
         self.manifest.lock().unwrap().clone()
     }
 
+    pub fn catalog(&self) -> crate::manager::Catalog {
+        self.catalog.lock().unwrap().clone()
+    }
+
     /// Refuse si un jeu qui partage l'installation de `rom_id` tourne ou s'installe.
     pub fn check_family_idle(&self, rom_id: i64) -> AppResult<()> {
-        let others: Vec<i64> = self.manifest().family(rom_id).into_iter().filter(|id| *id != rom_id).collect();
+        let mut family = self.manifest().family(rom_id);
+        // Émulateur : ses jeux sont ceux installés sur son dossier.
+        if let Some(st) = crate::install::state::find(&self.config_dir, rom_id) {
+            family.extend(crate::install::state::pages_in(&self.config_dir, &st.game_dir));
+        }
+        let others: Vec<i64> = family.into_iter().filter(|id| *id != rom_id).collect();
         if others.iter().any(|id| self.running.lock().unwrap().contains(id)) {
             return Err(AppError::AlreadyRunning);
         }

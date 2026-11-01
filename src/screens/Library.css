@@ -107,6 +107,8 @@
    même hauteur sur toutes les cartes d'une rangée. */
 .pcard-name {
   flex: 1;
+  width: 100%;
+  min-width: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -114,6 +116,9 @@
   text-transform: uppercase;
   letter-spacing: var(--nier-tracking-wide);
   text-align: center;
+  /* Sur deux lignes si besoin : un nom de console reste entier dans son cadre. */
+  text-wrap: balance;
+  overflow-wrap: anywhere;
 }
 .pcard-foot {
   display: flex;
@@ -167,6 +172,12 @@
   gap: 12px;
   padding-bottom: 8px;
 }
+/* Quatre onglets et les boutons de droite doivent tenir sans se chevaucher. */
+@media (max-width: 1500px) {
+  .lib-tab { font-size: 16px; padding-inline: 10px; letter-spacing: 0.08rem; }
+  .lib-header { gap: 12px; }
+  .lib-status { gap: 8px; }
+}
 .lib-user {
   font-size: var(--fs-sm);
   letter-spacing: var(--nier-tracking-wide);
@@ -184,6 +195,9 @@
 .lib-toolbar-start { display: flex; align-items: center; gap: 20px; min-width: 0; }
 .lib-count { justify-self: end; text-align: right; }
 .lib-msg { margin: 8px var(--gutter) 0; }
+.lib-kinds { display: flex; gap: 8px; padding: 0 var(--gutter) 4px; }
+.lib-kind { font-size: var(--fs-xs); padding: 4px 14px; }
+.lib-more { display: flex; justify-content: center; min-height: 40px; padding: 16px 0; }
 .lib-grid-wrap {
   overflow-y: auto;
   padding: 16px var(--gutter) 40px;
@@ -273,6 +287,8 @@
   font-size: var(--fs-sm);
 }
 .card-badge--ok { background: var(--nier-ok); }
+.card-badge--recomp,
+.card-badge--emu { background: var(--nier-low); }
 .card-caption {
   padding: 0 10px 10px;
   margin-top: -6px;

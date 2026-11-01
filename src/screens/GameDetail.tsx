@@ -129,7 +129,7 @@ export function GameDetail({ game, platform, target, installs, favorite, onToggl
             ref={content}
             style={{ "--appear-delay": contentDelay.current } as CSSProperties}
           >
-            {tab === "infos" && <InfoTab game={game} installs={installs} onError={onError} />}
+            {tab === "infos" && <InfoTab game={game} target={target} installs={installs} onError={onError} />}
             {tab === "medias" && <MediaTab game={game} />}
             {tab === "livret" && <ManualTab game={game} onError={onError} />}
             {tab === "mods" && <ModsTab game={game} installs={installs} onError={onError} />}
@@ -159,7 +159,7 @@ function BoxZoom({ game, kind, onClose }: { game: Game; kind: "box" | "flat"; on
   );
 }
 
-function InfoTab({ game, installs, onError }: { game: Game; installs: InstallsState; onError: (e: unknown) => Promise<string> }) {
+function InfoTab({ game, target, installs, onError }: { game: Game; target: Target | null; installs: InstallsState; onError: (e: unknown) => Promise<string> }) {
   const refreshKey = installs.lastSession.get(game.id);
   const [playtime, setPlaytime] = useState<number | null | undefined>(undefined);
 
@@ -211,7 +211,7 @@ function InfoTab({ game, installs, onError }: { game: Game; installs: InstallsSt
         <section>
           <h3 className="n-section-title">Installation</h3>
           <dl className="gd-facts gd-facts--wide">
-            <InstallFacts game={game} installs={installs} />
+            <InstallFacts game={game} target={target} installs={installs} />
           </dl>
         </section>
       </div>

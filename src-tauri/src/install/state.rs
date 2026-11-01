@@ -80,6 +80,22 @@ pub struct SharedGame {
     /// Données tirées de la ROM, relatives à `data_dir`.
     #[serde(default)]
     pub cache_dir: Option<String>,
+    /// `emulator` : le programme vient de FarfaRomManager, la ROM est dans `rom_dir`.
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub rom_dir: Option<PathBuf>,
+    /// Émulateur : dossier des sauvegardes de ce jeu et fichiers à y prendre.
+    #[serde(default)]
+    pub saves_dir: Option<PathBuf>,
+    #[serde(default)]
+    pub save_patterns: Vec<String>,
+}
+
+impl SharedGame {
+    pub fn is_emulator(&self) -> bool {
+        self.kind.as_deref() == Some(crate::install::emulator::KIND_EMULATOR)
+    }
 }
 
 /// Un fichier de `ROM/` du serveur et ce qu'il a donné dans le dossier du jeu.
@@ -209,8 +225,13 @@ fn read_page(game_dir: &Path, rom_id: i64) -> Option<InstalledGame> {
         direct.exe = exe;
     }
     // Le dossier n'existe qu'après le premier lancement : relu à chaque fois.
-    st.saves.dir = crate::runtimes::data_dir(&shared.data_dir).map(|d| d.join(crate::install::rel_to_path(&shared.save_dir)));
-    st.saves.patterns = Vec::new();
+    if shared.is_emulator() {
+        st.saves.dir = shared.saves_dir.clone();
+        st.saves.patterns = shared.save_patterns.clone();
+    } else {
+        st.saves.dir = crate::runtimes::data_dir(&shared.data_dir).map(|d| d.join(crate::install::rel_to_path(&shared.save_dir)));
+        st.saves.patterns = Vec::new();
+    }
     Some(st)
 }
 
@@ -285,7 +306,8 @@ pub fn rekey_moved(config_dir: &Path, games: &[(i64, String)]) -> usize {
     let installed = list_installed(config_dir);
     let mut moved = 0;
     for mut st in installed.iter().cloned() {
-        if st.shared.is_some() || games.iter().any(|(id, _)| *id == st.rom_id) {
+        // Un émulateur (ID négatif) n'est pas une entrée de RomM.
+        if st.rom_id < 0 || st.shared.is_some() || games.iter().any(|(id, _)| *id == st.rom_id) {
             continue;
         }
         let dir_name = st.game_dir.file_name().map(|n| n.to_string_lossy().into_owned());

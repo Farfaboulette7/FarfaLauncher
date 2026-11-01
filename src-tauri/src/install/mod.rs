@@ -6,6 +6,7 @@
 
 pub mod detect;
 pub mod download;
+pub mod emulator;
 pub mod extract;
 pub mod state;
 
@@ -17,6 +18,7 @@ use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::{log_err, AppError, AppResult};
+use crate::manager::Catalog;
 use crate::platform::{ArchiveKind, Target};
 use crate::romm::client::RommClient;
 use crate::romm::library::{self, Game, RemoteFile};
@@ -53,6 +55,11 @@ pub struct InstallJob {
     /// Version de Proton choisie pour un jeu Windows sous Linux (`None` : la recommandée).
     pub proton: Option<String>,
     pub manifest: Manifest,
+    pub catalog: Catalog,
+    /// Adresse de FarfaRomManager (`None` : pas d'émulateur).
+    pub manager_base: Option<String>,
+    /// Installer ce jeu avec l'émulateur de sa console plutôt que sa recomp.
+    pub with_emulator: bool,
     pub runtime_lock: Arc<tokio::sync::Mutex<()>>,
     pub on_progress: Arc<dyn Fn(Progress) + Send + Sync>,
 }
@@ -77,6 +84,9 @@ impl InstallJob {
 
     pub async fn run(&self, rom_id: i64) -> AppResult<InstallOutcome> {
         self.emit(rom_id, "prepare", 0, 0);
+        if self.with_emulator {
+            return self.install_with_emulator(rom_id).await;
+        }
         if let Some((runtime, game)) = self.manifest.page(rom_id) {
             return self.install_page(rom_id, runtime, game).await;
         }
@@ -144,6 +154,10 @@ impl InstallJob {
                 data_dir: runtime.data_dir.clone(),
                 save_dir: runtime.save_dir.replace("{game}", &def.game),
                 cache_dir: runtime.cache_dir.as_ref().map(|d| d.replace("{game}", &def.game)),
+                kind: None,
+                rom_dir: None,
+                saves_dir: None,
+                save_patterns: Vec::new(),
             }),
         };
         state::write_state(&self.config_dir, &st)?;
@@ -175,6 +189,9 @@ impl InstallJob {
             cancel: self.cancel.clone(),
             proton: None,
             manifest: self.manifest.clone(),
+            catalog: self.catalog.clone(),
+            manager_base: self.manager_base.clone(),
+            with_emulator: false,
             runtime_lock: self.runtime_lock.clone(),
             on_progress: Arc::new(move |p| forward(Progress { rom_id: page_id, ..p })),
         };
@@ -452,6 +469,19 @@ pub async fn uninstall(config_dir: &Path, st: InstalledGame, keep_saves: bool) -
 /// données commun ne partent qu'avec le dernier jeu qui les utilise.
 async fn uninstall_page(config_dir: &Path, st: InstalledGame, shared: state::SharedGame, keep_saves: bool) -> AppResult<()> {
     let others = state::pages_in(config_dir, &st.game_dir).into_iter().filter(|id| *id != st.rom_id).count();
+    if shared.is_emulator() {
+        let (page, sh) = (st.clone(), shared.clone());
+        blocking(move || emulator::remove_rom_files(&page, &sh, keep_saves)).await?;
+        state::forget(config_dir, st.rom_id)?;
+        tracing::info!("« {} » désinstallé ({others} autre(s) jeu(x) sur l'émulateur, saves conservées: {keep_saves})", st.name);
+        if others == 0 {
+            if let Some(runtime) = state::find(config_dir, shared.runtime_rom_id) {
+                // L'émulateur n'a aucune sauvegarde à garder : elles sont avec les ROM.
+                uninstall_dir(config_dir, runtime, false).await?;
+            }
+        }
+        return Ok(());
+    }
     let (gd, roms, data) = (st.game_dir.clone(), st.roms.clone(), runtimes::existing_data_dir(&shared.data_dir));
     let (cache_dir, save_dir, whole_data) = (shared.cache_dir.clone(), shared.save_dir.clone(), others == 0 && !keep_saves);
     blocking(move || -> AppResult<()> {
@@ -862,6 +892,9 @@ mod tests {
             cancel: CancellationToken::new(),
             proton: None,
             manifest,
+            catalog: Catalog::default(),
+            manager_base: None,
+            with_emulator: false,
             runtime_lock: Arc::new(tokio::sync::Mutex::new(())),
             on_progress: Arc::new(|_| {}),
         };
@@ -924,6 +957,85 @@ mod tests {
         assert!(state::list_installed(&config).is_empty());
 
         std::fs::remove_dir_all(&data).unwrap();
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Vrai serveur et vrai émulateur, dans des dossiers temporaires : `FARFA_E2E_URL=… FARFA_E2E_MANAGER=…
+    /// FARFA_E2E_TOKEN=… FARFA_E2E_ROM_A=<id gba> FARFA_E2E_ROM_B=<id gba> cargo test -- --ignored emulator_e2e --nocapture`.
+    #[cfg(windows)]
+    #[tokio::test]
+    #[ignore]
+    async fn emulator_e2e() {
+        let var = |k: &str| std::env::var(k).unwrap();
+        let (a, b): (i64, i64) = (var("FARFA_E2E_ROM_A").parse().unwrap(), var("FARFA_E2E_ROM_B").parse().unwrap());
+        let client = RommClient::new(&var("FARFA_E2E_URL"), Some(var("FARFA_E2E_TOKEN"))).unwrap();
+        let base = std::env::temp_dir().join(format!("farfa-emu-e2e-{}", uuid::Uuid::new_v4()));
+        let config = base.join("config");
+        std::fs::create_dir_all(&config).unwrap();
+        let manager = client.with_base(&var("FARFA_E2E_MANAGER"));
+        let catalog: Catalog = serde_json::from_str(&manager.send(manager.get("api/catalog")).await.unwrap().text().await.unwrap()).unwrap();
+        println!("{} émulateur(s) au catalogue", catalog.emulators.len());
+        let job = InstallJob {
+            client,
+            config_dir: config.clone(),
+            install_root: base.join("Jeux"),
+            target: Target::Windows,
+            cancel: CancellationToken::new(),
+            proton: None,
+            manifest: Manifest::default(),
+            catalog,
+            manager_base: Some(var("FARFA_E2E_MANAGER")),
+            with_emulator: true,
+            runtime_lock: Arc::new(tokio::sync::Mutex::new(())),
+            on_progress: Arc::new(|_| {}),
+        };
+        let installed = |o: InstallOutcome| match o {
+            InstallOutcome::Installed { game } => game,
+            InstallOutcome::NeedsChoice { .. } => panic!("l'émulateur ne doit rien demander"),
+        };
+
+        // Premier jeu : émulateur + ROM.
+        let st = installed(job.run(a).await.unwrap());
+        let shared = st.shared.clone().unwrap();
+        let exe = st.game_dir.join(rel_to_path(st.executable.as_deref().unwrap()));
+        let rom_dir = shared.rom_dir.clone().unwrap();
+        println!("exe {} ; ROM dans {} ; lancement {:?} ; saves {:?} {:?}", exe.display(), rom_dir.display(), st.direct_launch, st.saves.dir, st.saves.patterns);
+        assert!(exe.exists() && exe.with_file_name("portable.ini").exists());
+        assert!(std::fs::read_dir(&rom_dir).unwrap().count() >= 1);
+        assert_eq!(st.saves.dir.as_deref(), Some(rom_dir.as_path()));
+        let stamp = std::fs::metadata(&exe).unwrap().modified().unwrap();
+
+        // Lancement direct, sauvegarde repérée à côté de la ROM.
+        let d = st.direct_launch.clone().unwrap();
+        let launch = crate::launch::Launch { exe: rel_to_path(&d.exe), args: &d.args, env: &d.env, cwd: None, learn: false, runner: None };
+        let running = crate::launch::spawn(&st.game_dir, launch).unwrap();
+        let pid = running.pid();
+        let waiter = tokio::task::spawn_blocking(move || running.wait(|| {}));
+        tokio::time::sleep(Duration::from_secs(8)).await;
+        std::process::Command::new("taskkill").args(["/PID", &pid.to_string()]).status().unwrap();
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        let _ = std::process::Command::new("taskkill").args(["/F", "/PID", &pid.to_string()]).status();
+        waiter.await.unwrap();
+        let loc = crate::saves::SaveLocation { dir: st.saves.dir.clone().unwrap(), patterns: st.saves.patterns.clone() };
+        let saves = crate::saves::collect(&loc).unwrap();
+        println!("sauvegardes : {:?}", saves.iter().map(|(r, _)| r).collect::<Vec<_>>());
+        assert_eq!(saves.len(), 1, "sauvegarde attendue à côté de la ROM");
+
+        // Deuxième jeu : l'émulateur n'est pas retouché.
+        let st2 = installed(job.run(b).await.unwrap());
+        assert_eq!(st2.game_dir, st.game_dir);
+        assert_eq!(std::fs::metadata(&exe).unwrap().modified().unwrap(), stamp, "émulateur réinstallé");
+
+        // Désinstaller en gardant la sauvegarde : ROM partie, sauvegarde et autre jeu intacts.
+        uninstall(&config, state::find(&config, a).unwrap(), true).await.unwrap();
+        assert!(exe.exists() && state::find(&config, b).is_some());
+        assert_eq!(crate::saves::collect(&loc).unwrap().len(), 1, "sauvegarde perdue");
+        assert_eq!(std::fs::read_dir(&rom_dir).unwrap().count(), 1, "la ROM devait partir");
+
+        // Le dernier jeu emporte l'émulateur.
+        uninstall(&config, state::find(&config, b).unwrap(), false).await.unwrap();
+        assert!(!exe.exists() && state::list_installed(&config).is_empty());
+        assert!(rom_dir.join(&saves[0].0).exists(), "la sauvegarde du premier jeu devait rester");
         let _ = std::fs::remove_dir_all(&base);
     }
 

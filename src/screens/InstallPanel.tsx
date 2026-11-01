@@ -5,8 +5,11 @@ import {
   CodChoice,
   CodModeInfo,
   downloadSize,
+  emulatorDownloadSize,
+  emulatorReady,
   formatPlaytime,
   hasUpdate,
+  isEmulatorInstall,
   formatSize,
   Game,
   isAvailable,
@@ -76,6 +79,9 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
   /** Runtime partagé déjà sur cet ordinateur et à jour : seule la ROM reste à télécharger. */
   const runtimeInst = game.runtime ? installs.installed.get(game.runtime.romId) : undefined;
   const runtimeReady = !!runtimeInst?.executable && !hasUpdate(game, runtimeInst);
+  const emulatorInst = game.emulator ? installs.installed.get(game.emulator.runtimeRomId) : undefined;
+  const emulatorUpToDate = !!emulatorInst?.executable && emulatorInst.versionRaw === game.emulator?.versionKey;
+  const installedWithEmulator = isEmulatorInstall(inst);
   const pendingChoice = !!inst && !inst.executable && !progress;
   const runningSince = installs.running.get(game.id);
   const last = installs.lastSession.get(game.id);
@@ -226,14 +232,18 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
               </button>
             )}
             {inst.shared && !busy && runningSince === undefined && !launching && (
-              <button className="n-btn n-btn--block gd-launcher" title={`Ouvre le launcher de ${inst.shared.runtimeName} (réglages, mods, autres jeux)`} onClick={onOpenMenu}>
-                Ouvrir le launcher
+              <button
+                className="n-btn n-btn--block gd-launcher"
+                title={installedWithEmulator ? `Ouvre ${inst.shared.runtimeName} et ses paramètres` : `Ouvre le launcher de ${inst.shared.runtimeName} (réglages, mods, autres jeux)`}
+                onClick={onOpenMenu}
+              >
+                {installedWithEmulator ? "Ouvrir l'émulateur" : "Ouvrir le launcher"}
               </button>
             )}
             {last && <p className="n-hint">{sessionSummary(last)}</p>}
             {update && runningSince === undefined && !busy && !launching && (
-              <button className="n-btn n-btn--block gd-update" onClick={() => installs.start(game.id)}>
-                Mettre à jour ({inst.versionRaw ? inst.version : "?"} → {game.serverVersion})
+              <button className="n-btn n-btn--block gd-update" onClick={() => installs.start(game.id, undefined, null, installedWithEmulator)}>
+                Mettre à jour ({inst.versionRaw ? inst.version : "?"} → {installedWithEmulator ? game.emulator?.version : game.serverVersion})
               </button>
             )}
           </>
@@ -250,7 +260,7 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
               className="n-btn n-btn--primary n-btn--block"
               onClick={() => installs.start(game.id, installDir ?? undefined, game.pc?.proton ? protonChoice : null)}
             >
-              Installer
+              {emulatorReady(game) ? "Installer la recomp" : "Installer"}
             </button>
             {game.pc?.proton && (
               <p className="n-hint">
@@ -281,9 +291,44 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
                 )}
               </div>
             )}
+            {emulatorReady(game) && (
+              <button className="n-btn n-btn--block gd-launcher" onClick={() => installs.start(game.id, installDir ?? undefined, null, true)}>
+                Installer avec {game.emulator?.name} ({formatSize(emulatorDownloadSize(game, emulatorUpToDate))})
+              </button>
+            )}
           </>
-        ) : (
+        ) : emulatorReady(game) ? (
+          <>
+            <button className="n-btn n-btn--primary n-btn--block" onClick={() => installs.start(game.id, installDir ?? undefined, null, true)}>
+              Installer
+            </button>
+            <p className="n-hint gd-install-dest" title={installDir ?? installs.installRoot ?? undefined}>
+              {formatSize(emulatorDownloadSize(game, emulatorUpToDate))} · avec {game.emulator?.name}
+              {emulatorUpToDate && " (déjà installé)"}
+            </p>
+            {!emulatorInst?.executable && (
+              <div className="gd-inst-actions">
+                <button className="n-link" onClick={chooseInstallDir}>
+                  Changer l'emplacement…
+                </button>
+                {installDir && (
+                  <button className="n-link" onClick={() => setInstallDir(null)}>
+                    Emplacement par défaut
+                  </button>
+                )}
+              </div>
+            )}
+          </>
+        ) : game.emulator?.available ? (
+          <p className="n-notice">
+            {game.emulator.name} a besoin d'éléments de configuration absents du serveur : {game.emulator.configMissing.join(", ")}.
+          </p>
+        ) : game.pc || game.recomp ? (
           <p className="n-alert" data-sound="none">Non disponible pour votre système{target ? ` (${TARGET_LABELS[target]})` : ""}.</p>
+        ) : (
+          <p className="n-notice" data-sound="none">
+            {game.emulator ? `Pas d'émulateur disponible pour votre système${target ? ` (${TARGET_LABELS[target]})` : ""}.` : "Pas d'émulateur disponible."}
+          </p>
         )}
 
         {error && <p className="n-alert">{error.message}</p>}
@@ -320,9 +365,11 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
                 Dossier des sauvegardes…
               </button>
             )}
-            <button className="n-link" onClick={moveGame}>
-              {inst.shared ? "Déplacer la recomp…" : "Déplacer le jeu…"}
-            </button>
+            {!installedWithEmulator && (
+              <button className="n-link" onClick={moveGame}>
+                {inst.shared ? "Déplacer la recomp…" : "Déplacer le jeu…"}
+              </button>
+            )}
             <button className="n-link" onClick={() => setDialog("uninstall")}>
               Désinstaller
             </button>
@@ -401,6 +448,7 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
         <UninstallDialog
           name={game.name}
           runtimeName={inst.shared?.runtimeName ?? null}
+          emulator={installedWithEmulator}
           onClose={() => setDialog(null)}
           onConfirm={async (keepSaves) => {
             setDialog(null);
@@ -427,12 +475,14 @@ const PC_KIND_LABELS: Record<PcKind, string> = {
 };
 
 /** Détails de l'installation, affichés dans l'onglet « Informations ». */
-export function InstallFacts({ game, installs }: { game: Game; installs: InstallsState }) {
+export function InstallFacts({ game, target, installs }: { game: Game; target: Target | null; installs: InstallsState }) {
   const inst = installs.installed.get(game.id);
   const runtimeInstalled = !!game.runtime && !!installs.installed.get(game.runtime.romId)?.executable;
+  const withEmulator = isEmulatorInstall(inst) || (!inst && !game.recomp);
+  const emulatorSystems = withEmulator ? (game.emulator?.systems ?? []) : [];
   return (
     <>
-      {game.runtime && (
+      {game.runtime && !withEmulator && (
         <>
           <dt>Recomp</dt>
           <dd>
@@ -442,8 +492,22 @@ export function InstallFacts({ game, installs }: { game: Game; installs: Install
           </dd>
         </>
       )}
+      {withEmulator && game.emulator && (
+        <>
+          <dt>Émulateur</dt>
+          <dd>
+            {game.emulator.repo ? (
+              <button className="n-link" title={game.emulator.repo} onClick={() => backend.openUrl(game.emulator!.repo!)}>
+                {game.emulator.name}
+              </button>
+            ) : (
+              game.emulator.name
+            )}
+          </dd>
+        </>
+      )}
       <dt>Version serveur</dt>
-      <dd>{game.serverVersion ?? "inconnue"}</dd>
+      <dd>{(withEmulator ? game.emulator?.version : game.serverVersion) ?? "inconnue"}</dd>
       <dt>Version installée</dt>
       <dd>{inst?.executable ? inst.version ?? "inconnue" : "non installé"}</dd>
       {inst && (
@@ -490,6 +554,12 @@ export function InstallFacts({ game, installs }: { game: Game; installs: Install
           <dd>{formatSize(downloadSize(game, runtimeInstalled && !hasUpdate(game, installs.installed.get(game.runtime?.romId ?? -1))))}</dd>
         </>
       )}
+      {!inst && !isAvailable(game) && emulatorReady(game) && game.detailsLoaded && (
+        <>
+          <dt>Téléchargement</dt>
+          <dd>{formatSize(emulatorDownloadSize(game, installs.installed.get(game.emulator?.runtimeRomId ?? -1)?.versionRaw === game.emulator?.versionKey))}</dd>
+        </>
+      )}
       <dt>Plateformes</dt>
       <dd>
         <ul className="gd-platforms">
@@ -499,8 +569,13 @@ export function InstallFacts({ game, installs }: { game: Game; installs: Install
               {game.pc.proton && " (via Proton)"}
             </li>
           )}
-          {!game.pc && game.archives.length === 0 && <li className="n-hint">aucune</li>}
-          {game.archives.map((a) => (
+          {!game.pc && game.archives.length === 0 && emulatorSystems.length === 0 && <li className="n-hint">aucune</li>}
+          {emulatorSystems.map((s) => (
+            <li key={s} className={game.emulator?.available && s === target ? "is-mine" : undefined}>
+              {TARGET_LABELS[s]}
+            </li>
+          ))}
+          {!withEmulator && game.archives.map((a) => (
             <li key={a.target} className={a.target === game.myArchive?.target ? "is-mine" : undefined}>
               {TARGET_LABELS[a.target]}
             </li>
@@ -753,11 +828,13 @@ function CodModeDialog({
 function UninstallDialog({
   name,
   runtimeName,
+  emulator,
   onClose,
   onConfirm,
 }: {
   name: string;
   runtimeName: string | null;
+  emulator: boolean;
   onClose: () => void;
   onConfirm: (keepSaves: boolean) => void;
 }) {
@@ -781,7 +858,7 @@ function UninstallDialog({
         Supprimer <strong>{name}</strong> de cet ordinateur ?
       </p>
       {runtimeName && (
-        <p className="n-hint">{runtimeName} n'est supprimé qu'avec le dernier jeu qui l'utilise. Les sauvegardes des autres jeux ne sont pas touchées.</p>
+        <p className="n-hint">{runtimeName} n'est supprimé qu'avec le dernier jeu qui l'utilise. Les sauvegardes des autres jeux ne sont pas touchées.{emulator && " La sauvegarde conservée reste dans le dossier de la ROM."}</p>
       )}
       <label className="n-check">
         <input type="checkbox" checked={keepSaves} onChange={(e) => setKeepSaves(e.target.checked)} />

@@ -44,9 +44,10 @@ pub fn install_info(state: State<'_, AppState>) -> InstallInfo {
 
 /// `dest` : dossier où créer celui du jeu, pour cette installation seulement
 /// (`None` = dossier des jeux des paramètres). `proton` : version de Proton
-/// pour un jeu Windows sous Linux (`None` = la recommandée).
+/// pour un jeu Windows sous Linux (`None` = la recommandée). `with_emulator` :
+/// installer avec l'émulateur de la console plutôt que la recomp.
 #[tauri::command]
-pub fn install_game(app: AppHandle, state: State<'_, AppState>, rom_id: i64, dest: Option<String>, proton: Option<String>) -> AppResult<()> {
+pub fn install_game(app: AppHandle, state: State<'_, AppState>, rom_id: i64, dest: Option<String>, proton: Option<String>, with_emulator: Option<bool>) -> AppResult<()> {
     let install_root = match dest.map(PathBuf::from) {
         Some(d) if d.is_absolute() => d,
         Some(_) => return Err(AppError::Internal),
@@ -55,9 +56,18 @@ pub fn install_game(app: AppHandle, state: State<'_, AppState>, rom_id: i64, des
     let client = state.client()?;
     let cancel = CancellationToken::new();
     let manifest = state.manifest();
-    if manifest.page(rom_id).is_some() {
+    let with_emulator = with_emulator == Some(true);
+    if manifest.page(rom_id).is_some() && !with_emulator {
         // Le programme partagé peut être mis à jour : aucun de ses jeux ne doit tourner.
         if manifest.family(rom_id).iter().any(|id| state.running.lock().unwrap().contains(id)) {
+            return Err(AppError::AlreadyRunning);
+        }
+    }
+    if with_emulator {
+        // Même chose pour tous les jeux installés sur des émulateurs : il peut être mis à jour.
+        let running = state.running.lock().unwrap().clone();
+        let joue_sur_emulateur = running.iter().any(|id| state::find(&state.config_dir, *id).and_then(|s| s.shared).is_some_and(|s| s.is_emulator()));
+        if joue_sur_emulateur {
             return Err(AppError::AlreadyRunning);
         }
     }
@@ -80,6 +90,9 @@ pub fn install_game(app: AppHandle, state: State<'_, AppState>, rom_id: i64, des
         cancel,
         proton,
         manifest,
+        catalog: state.catalog(),
+        manager_base: crate::manager::base_url(&state.settings()),
+        with_emulator,
         runtime_lock: state.runtime_lock.clone(),
         on_progress: Arc::new(move |p| {
             let _ = emitter.emit("install-progress", p);
@@ -174,6 +187,10 @@ pub async fn move_game(state: State<'_, AppState>, rom_id: i64, dest: String) ->
     let _busy = state.mark_busy(rom_id)?;
     state.check_family_idle(rom_id)?;
     let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
+    // Un émulateur partage ses chemins de ROM et de sauvegardes avec ses jeux : il ne se déplace pas.
+    if st.shared.as_ref().is_some_and(|s| s.is_emulator()) {
+        return Err(AppError::Internal);
+    }
     install::move_game(&state.config_dir, st, dest).await
 }
 

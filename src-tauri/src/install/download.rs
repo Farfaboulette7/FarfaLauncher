@@ -29,6 +29,19 @@ pub async fn download(
     file: &RemoteFile,
     dest: &Path,
     cancel: &CancellationToken,
+    on_progress: impl FnMut(u64),
+    on_verify: impl FnOnce(),
+) -> AppResult<()> {
+    download_from(client, &file_content_path(file), file, dest, cancel, on_progress, on_verify).await
+}
+
+/// Comme [`download`], depuis un chemin donné (fichier de FarfaRomManager).
+pub async fn download_from(
+    client: &RommClient,
+    path: &str,
+    file: &RemoteFile,
+    dest: &Path,
+    cancel: &CancellationToken,
     mut on_progress: impl FnMut(u64),
     on_verify: impl FnOnce(),
 ) -> AppResult<()> {
@@ -42,7 +55,7 @@ pub async fn download(
     let part = part_path(dest);
     let mut attempt = 0;
     loop {
-        match download_once(client, file, &part, cancel, &mut on_progress).await {
+        match download_once(client, path, file, &part, cancel, &mut on_progress).await {
             Ok(()) => break,
             Err(AppError::Cancelled) => return Err(AppError::Cancelled),
             Err(e @ (AppError::AuthInvalid | AppError::Forbidden | AppError::Disk)) => return Err(e),
@@ -75,6 +88,7 @@ async fn is_complete(dest: &Path, file: &RemoteFile) -> bool {
 
 async fn download_once(
     client: &RommClient,
+    path: &str,
     file: &RemoteFile,
     part: &Path,
     cancel: &CancellationToken,
@@ -87,7 +101,7 @@ async fn download_once(
     if have == file.size && file.size > 0 {
         return Ok(());
     }
-    let mut req = client.get_stream(&file_content_path(file));
+    let mut req = client.get_stream(path);
     if have > 0 {
         req = req.header(RANGE, format!("bytes={have}-"));
     }

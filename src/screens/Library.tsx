@@ -1,12 +1,14 @@
 import { Emblem } from "../components/Emblem";
-import { CSSProperties, ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, memo, ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
   AUTH_ERROR_CODES,
   backend,
   errorMessage,
+  emulatorReady,
   Game,
   hasUpdate,
+  InstalledGame,
   isAvailable,
   isAppError,
   LIBRARY_DONE_EVENT,
@@ -23,7 +25,7 @@ import { Marquee } from "../components/Marquee";
 import { loadSounds, play as playSound } from "../sounds";
 import { loadMusic, setMusicMuted, setMusicVersion, stopMusic } from "../music";
 import { useFavorites } from "../hooks/useFavorites";
-import { InstallsState, useInstalls } from "../hooks/useInstalls";
+import { useInstalls } from "../hooks/useInstalls";
 import { GameDetail } from "./GameDetail";
 import { Settings } from "./Settings";
 import { useReveal } from "../reveal";
@@ -32,7 +34,41 @@ import "./Library.css";
 import "./Hack.css";
 import { FullscreenButton } from "../components/FullscreenButton";
 
-type Tab = "recent" | "library" | "favorites";
+type Tab = "recent" | "library" | "recomps" | "favorites";
+/** Filtre de la bibliothèque et de la recherche. */
+type Kind = "all" | "recomp" | "emulation";
+
+const KINDS: { id: Kind; label: string }[] = [
+  { id: "all", label: "Tous" },
+  { id: "recomp", label: "Recomp" },
+  { id: "emulation", label: "Émulation" },
+];
+
+/** Une console, toutes plateformes RomM confondues (`gba` et `portage-gba`). */
+interface ConsoleGroup {
+  key: string;
+  name: string;
+  iconUrls: string[];
+  /** Plateformes chargées à la demande : leurs jeux ne sont pas dans la liste de départ. */
+  lazyIds: number[];
+  lazyCount: number;
+  hasEmulator: boolean;
+}
+
+/** Jeux chargés d'une console. */
+interface ConsolePage {
+  ids: number[];
+  hasMore: boolean;
+  loading: boolean;
+}
+
+const collator = new Intl.Collator("fr");
+
+function matchesKind(game: Game, kind: Kind): boolean {
+  if (kind === "recomp") return game.recomp;
+  if (kind === "emulation") return !!game.emulator;
+  return true;
+}
 
 /** Durées du passage vers la fiche d'un jeu (doivent suivre Hack.css). */
 const HACK_OUT_MS = 380;
@@ -49,11 +85,20 @@ interface Hack {
 const TABS: { id: Tab; label: string }[] = [
   { id: "recent", label: "Récent" },
   { id: "library", label: "Bibliothèque" },
+  { id: "recomps", label: "Recomps" },
   { id: "favorites", label: "Favoris" },
 ];
 
 /** Nombre de jeux affichés dans « Récent ». */
 const RECENT_COUNT = 24;
+/** Nom donné par le launcher à la plateforme des jeux PC. */
+const PC_PLATFORM = "Ordinateur";
+/** Distance au bas de la liste à laquelle la page suivante est demandée. */
+const LOAD_MORE_MARGIN_PX = 600;
+/** Rangées dessinées en plus au-dessus et en dessous de l'écran. */
+const OVERSCAN_ROWS = 2;
+/** Attente après la dernière frappe avant d'interroger le serveur. */
+const SEARCH_DELAY_MS = 300;
 /** Un jeu reste « nouveau » (badge NEW, compteur des plateformes) un jour,
  *  ou jusqu'à ce que sa fiche soit ouverte. */
 const NEW_FOR_MS = 24 * 3600 * 1000;
@@ -107,7 +152,14 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
   const [warning, setWarning] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState<Tab>("recent");
-  const [platformId, setPlatformId] = useState<number | null>(null);
+  const [consoleKey, setConsoleKey] = useState<string | null>(null);
+  const [kind, setKind] = useState<Kind>("all");
+  /** Jeux chargés à la demande, hors de la liste de départ. */
+  const [extra, setExtra] = useState(new Map<number, Game>());
+  const [consolePages, setConsolePages] = useState(new Map<string, ConsolePage>());
+  const [searchIds, setSearchIds] = useState<number[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [recentIds, setRecentIds] = useState<number[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [seen, setSeen] = useState(loadSeen);
   const [showSettings, setShowSettings] = useState(false);
@@ -131,6 +183,16 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
     [onLogout],
   );
   const installs = useInstalls(handleError);
+  const addExtra = useCallback((games: Game[]) => {
+    setExtra((m) => {
+      const next = new Map(m);
+      for (const g of games) {
+        // Ne pas remplacer une fiche complète par une fiche légère de la liste.
+        if (g.detailsLoaded || !next.get(g.id)?.detailsLoaded) next.set(g.id, g);
+      }
+      return next;
+    });
+  }, []);
   const favorites = useFavorites(handleError, !!session.connected);
   const reloadInstalls = installs.reload;
   const reloadFavorites = favorites.reload;
@@ -206,39 +268,165 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
   }, [refresh, handleError, session.offline]);
 
   const allGames = useMemo(() => snapshot?.games ?? [], [snapshot]);
-  // Plateformes sans jeu (dossier encore vide sur le serveur) : masquées.
+  const known = useCallback((id: number) => allGames.find((g) => g.id === id) ?? extra.get(id), [allGames, extra]);
+  /** Console d'une plateforme : son slug, ou « Ordinateur » pour les jeux PC. */
+  const keyOf = useCallback((p: Platform) => (p.name === PC_PLATFORM ? PC_PLATFORM : p.slug), []);
+  const pcPlatforms = useMemo(() => new Set((snapshot?.platforms ?? []).filter((p) => p.name === PC_PLATFORM).map((p) => p.id)), [snapshot]);
+  const gameKey = useCallback((g: Game) => (g.pc || pcPlatforms.has(g.platformId) ? PC_PLATFORM : g.console), [pcPlatforms]);
+  const groups = useMemo(() => {
+    const byKey = new Map<string, ConsoleGroup>();
+    for (const p of snapshot?.platforms ?? []) {
+      const key = keyOf(p);
+      const portage = p.fsSlug.toLowerCase().startsWith("portage");
+      const group = byKey.get(key) ?? { key, name: shortPlatformName(p.name), iconUrls: p.iconUrls, lazyIds: [], lazyCount: 0, hasEmulator: false };
+      if (!portage && key !== PC_PLATFORM) {
+        // Le dossier principal de la console donne son nom (`nes`, pas sa variante `nes-hack`).
+        if (group.lazyIds.length === 0 || p.fsSlug === p.slug) {
+          group.name = p.name;
+          group.iconUrls = p.iconUrls;
+        }
+        group.lazyIds.push(p.id);
+        group.lazyCount += p.romCount;
+      }
+      group.hasEmulator = group.hasEmulator || p.hasEmulator;
+      byKey.set(key, group);
+    }
+    return byKey;
+  }, [snapshot, keyOf]);
+  // Consoles sans jeu : masquées. Le filtre ne garde que celles qui ont de quoi jouer.
   const platforms = useMemo(
     () =>
-      (snapshot?.platforms ?? [])
-        .map((p) => {
-          const own = allGames.filter((g) => g.platformId === p.id);
-          return { platform: p, count: own.length, fresh: own.filter((g) => isNew(g, seen)).length };
+      [...groups.values()]
+        .map((group) => {
+          // Le compteur suit le filtre. Toutes les recomps sont dans la liste de départ ; un
+          // jeu chargé à la demande a l'émulateur de sa console, s'il y en a un.
+          const own = allGames.filter((g) => gameKey(g) === group.key && matchesKind(g, kind));
+          const lazy = kind === "recomp" || (kind === "emulation" && !group.hasEmulator) ? 0 : group.lazyCount;
+          return { group, count: own.length + lazy, fresh: own.filter((g) => isNew(g, seen)).length };
         })
-        .filter((p) => p.count > 0),
-    [snapshot, allGames, seen],
+        .filter((p) => p.count > 0)
+        .sort((a, b) => collator.compare(a.group.name, b.group.name)),
+    [groups, allGames, gameKey, seen, kind],
   );
-  const platform = snapshot?.platforms.find((p) => p.id === platformId) ?? null;
+  const group = consoleKey ? (groups.get(consoleKey) ?? null) : null;
+
+  /** Charge la page suivante d'une console. */
+  const loadConsole = useCallback(
+    async (target: ConsoleGroup, offset: number) => {
+      if (target.lazyIds.length === 0) return;
+      setConsolePages((m) => new Map(m).set(target.key, { ids: m.get(target.key)?.ids ?? [], hasMore: m.get(target.key)?.hasMore ?? true, loading: true }));
+      try {
+        const page = await backend.consoleGames(target.lazyIds, offset);
+        addExtra(page.games);
+        setConsolePages((m) =>
+          new Map(m).set(target.key, { ids: [...(m.get(target.key)?.ids ?? []), ...page.games.map((g) => g.id)], hasMore: page.hasMore, loading: false }),
+        );
+      } catch (e) {
+        setWarning(await handleError(e));
+        setConsolePages((m) => new Map(m).set(target.key, { ids: m.get(target.key)?.ids ?? [], hasMore: false, loading: false }));
+      }
+    },
+    [addExtra, handleError],
+  );
+  /** Avec ce filtre, cette console a-t-elle des jeux à charger ? Sinon, rien n'est demandé. */
+  const lazyUseful = !!group && kind !== "recomp" && (kind !== "emulation" || group.hasEmulator);
+  // À l'ouverture d'une console : sa première page, une seule fois.
+  useEffect(() => {
+    if (group && lazyUseful && !consolePages.has(group.key) && !session.offline) loadConsole(group, 0);
+  }, [group, lazyUseful, consolePages, loadConsole, session.offline]);
+
+  // « Récent » : les derniers ajouts de tout RomM, pas seulement les recomps.
+  useEffect(() => {
+    if (tab !== "recent" || session.offline) return;
+    backend
+      .recentGames()
+      .then((list) => {
+        addExtra(list);
+        setRecentIds(list.map((g) => g.id));
+      })
+      .catch((e) => console.warn("derniers ajouts non chargés", e));
+  }, [tab, session.offline, addExtra, snapshot?.fetchedAt]);
+
+  // Favoris hors de la liste de départ : lus sur le serveur.
+  const favoriteIds = favorites.ids;
+  useEffect(() => {
+    if (tab !== "favorites" || session.offline) return;
+    const missing = [...favoriteIds].filter((id) => !allGames.some((g) => g.id === id) && !extra.has(id));
+    if (missing.length > 0) backend.gamesByIds(missing).then(addExtra).catch((e) => console.warn("favoris non chargés", e));
+  }, [tab, favoriteIds, allGames, extra, addExtra, session.offline]);
+
+  // Fiche d'un jeu chargé à la demande : ses fichiers, à l'ouverture de sa page.
+  useEffect(() => {
+    if (selectedId === null || session.offline) return;
+    if (allGames.some((g) => g.id === selectedId) || extra.get(selectedId)?.detailsLoaded) return;
+    backend
+      .gameDetails(selectedId)
+      .then((g) => addExtra([g]))
+      .catch(async (e) => setWarning(await handleError(e)));
+  }, [selectedId, allGames, extra, addExtra, handleError, session.offline]);
+
+  // Recherche sur tout RomM, en plus de ce qui est déjà chargé.
+  const term = query.trim();
+  useEffect(() => {
+    setSearchIds([]);
+    if (term.length < 2 || session.offline || tab !== "library") {
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    let alive = true;
+    const timer = window.setTimeout(() => {
+      backend
+        .searchGames(term)
+        .then((list) => {
+          if (!alive) return;
+          addExtra(list);
+          setSearchIds(list.map((g) => g.id));
+        })
+        .catch((e) => console.warn("recherche impossible", e))
+        .finally(() => alive && setSearching(false));
+    }, SEARCH_DELAY_MS);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [term, tab, session.offline, addExtra]);
   // Écran révélé à chaque retour dessus, la grille à chaque changement de vue.
   useReveal(root, [showSettings, selectedId === null], { screen: true });
-  useReveal(grid, [tab, platformId, !!snapshot], { skipFirst: true });
+  useReveal(grid, [tab, consoleKey, !!snapshot], { skipFirst: true });
 
   /** Jeux de la vue courante, avant recherche. */
   const viewGames = useMemo(() => {
     if (tab === "recent") {
-      return [...allGames].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id - a.id).slice(0, RECENT_COUNT);
+      const recents = recentIds.map((id) => extra.get(id)).filter((g): g is Game => !!g && !allGames.some((a) => a.id === g.id));
+      return [...allGames, ...recents].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id - a.id).slice(0, RECENT_COUNT);
     }
-    if (tab === "favorites") return allGames.filter((g) => favorites.ids.has(g.id));
-    return platformId === null ? allGames : allGames.filter((g) => g.platformId === platformId);
-  }, [tab, allGames, favorites.ids, platformId]);
+    if (tab === "favorites") return [...favorites.ids].map((id) => known(id)).filter((g): g is Game => !!g);
+    if (tab === "recomps") return allGames.filter((g) => g.recomp);
+    const own = consoleKey === null ? allGames : allGames.filter((g) => gameKey(g) === consoleKey);
+    const ownIds = new Set(own.map((g) => g.id));
+    const page = consoleKey ? (consolePages.get(consoleKey)?.ids ?? []) : [];
+    const loaded = page.map((id) => extra.get(id)).filter((g): g is Game => !!g && !ownIds.has(g.id));
+    return [...own, ...loaded].sort((a, b) => collator.compare(a.name, b.name));
+  }, [tab, allGames, favorites.ids, consoleKey, consolePages, extra, recentIds, known, gameKey]);
 
-  const q = query.trim().toLocaleLowerCase("fr");
-  // Recherche : dans la vue courante (toute la bibliothèque depuis la liste des plateformes).
-  const games = q ? viewGames.filter((g) => g.name.toLocaleLowerCase("fr").includes(q)) : viewGames;
-  const showPlatforms = tab === "library" && platformId === null && !q;
+  const q = term.toLocaleLowerCase("fr");
+  // Recherche : dans la vue courante, plus les résultats de RomM (toute la bibliothèque ou la console ouverte).
+  const games = useMemo(() => {
+    const local = q ? viewGames.filter((g) => g.name.toLocaleLowerCase("fr").includes(q)) : viewGames;
+    const localIds = new Set(local.map((g) => g.id));
+    const found = q && tab === "library"
+      ? searchIds.map((id) => extra.get(id)).filter((g): g is Game => !!g && !localIds.has(g.id) && (consoleKey === null || gameKey(g) === consoleKey))
+      : [];
+    return [...local, ...found].filter((g) => matchesKind(g, kind));
+  }, [q, viewGames, tab, searchIds, extra, consoleKey, gameKey, kind]);
+  const showPlatforms = tab === "library" && consoleKey === null && !q;
+  const page = consoleKey ? consolePages.get(consoleKey) : undefined;
 
   function openTab(t: Tab) {
+    listScroll.current = 0;
     setTab(t);
-    setPlatformId(null);
+    setConsoleKey(null);
     setQuery("");
   }
 
@@ -253,8 +441,15 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
   }
 
   /** Ouvre la fiche d'un jeu en zoomant vers sa jaquette. */
+  const listScroll = useRef(0);
+  const openGameLatest = useRef<(id: number, from: HTMLElement) => void>(() => undefined);
+  openGameLatest.current = openGame;
+  // Identité stable : une carte ne se redessine pas quand une autre change.
+  const onOpenCard = useCallback((id: number, el: HTMLElement) => openGameLatest.current(id, el), []);
   function openGame(id: number, from: HTMLElement) {
     if (hack) return;
+    // La liste est recréée au retour : elle reprendra à cette position.
+    listScroll.current = grid.current?.scrollTop ?? 0;
     const r = from.getBoundingClientRect();
     openedFrom.current = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
     lastSelected.current = id;
@@ -316,7 +511,7 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
     );
   }
 
-  const selected = allGames.find((g) => g.id === selectedId) ?? null;
+  const selected = selectedId === null ? null : (known(selectedId) ?? null);
   if (selected) {
     return stage(
       <GameDetail
@@ -379,12 +574,18 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
 
       <div className="lib-toolbar">
         <div className="lib-toolbar-start">
-          {tab === "library" && platform && (
-            <button className="n-link" onClick={() => setPlatformId(null)}>
+          {tab === "library" && group && (
+            <button
+              className="n-link"
+              onClick={() => {
+                listScroll.current = 0;
+                setConsoleKey(null);
+              }}
+            >
               ← Plateformes
             </button>
           )}
-          <h2 className="n-section-title lib-view-title">{viewTitle(tab, platform)}</h2>
+          <h2 className="n-section-title lib-view-title">{viewTitle(tab, group)}</h2>
         </div>
         <input
           className="n-input lib-search n-input--soft"
@@ -394,11 +595,22 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
           onChange={(e) => setQuery(e.target.value)}
         />
         <span className="n-hint lib-count">
-          {snapshot && !showPlatforms && `${games.length} jeu${games.length > 1 ? "x" : ""}`}
+          {searching && <span className="n-spinner" />}
+          {snapshot && !showPlatforms && `${games.length} jeu${games.length > 1 ? "x" : ""}${page?.hasMore ? "+" : ""}`}
           {snapshot && showPlatforms && `${platforms.length} plateforme${platforms.length > 1 ? "s" : ""}`}
           {fetched && ` · mis à jour ${fetched}`}
         </span>
       </div>
+
+      {tab !== "recomps" && (
+        <div className="lib-kinds" role="group" aria-label="Type de jeu">
+          {KINDS.map((k) => (
+            <button key={k.id} className="n-btn lib-kind" aria-pressed={kind === k.id} onClick={() => setKind(k.id)}>
+              {k.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {session.offline && <p className="n-notice lib-msg">Serveur injoignable : affichage de la dernière liste connue.</p>}
       {error && <p className="n-alert lib-msg">{error}</p>}
@@ -420,7 +632,7 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
         </div>
       )}
 
-      <main className="lib-grid-wrap n-appear" key={`${tab}:${platformId}`} ref={grid}>
+      <main className="lib-grid-wrap n-appear" key={`${tab}:${consoleKey}`} ref={grid}>
         {!snapshot && loading && (
           <p className="lib-empty">
             <span className="n-spinner" /> Chargement de la bibliothèque…
@@ -428,16 +640,29 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
         )}
         {showPlatforms && snapshot && (
           <ul className="lib-platforms">
-            {platforms.map(({ platform: p, count, fresh }) => (
-              <li key={p.id}>
-                <PlatformCard platform={p} count={count} fresh={fresh} onOpen={() => setPlatformId(p.id)} />
+            {platforms.map(({ group: g, count, fresh }) => (
+              <li key={g.key}>
+                <PlatformCard group={g} count={count} fresh={fresh} onOpen={() => {
+                  listScroll.current = 0;
+                  setConsoleKey(g.key);
+                }} />
               </li>
             ))}
           </ul>
         )}
-        {!showPlatforms && snapshot && games.length === 0 && <p className="lib-empty">{emptyMessage(tab, q, favorites.loading)}</p>}
+        {!showPlatforms && snapshot && games.length === 0 && !page?.loading && !searching && <p className="lib-empty">{emptyMessage(tab, q, favorites.loading, kind)}</p>}
+        {!showPlatforms && tab !== "recent" && (
+          <VirtualGrid
+            games={games}
+            initialScroll={listScroll}
+            renderCard={(g) => (
+              <GameCard game={g} fresh={isNew(g, seen)} inst={installs.installed.get(g.id)} busy={installs.progress.has(g.id)} favorite={favorites.ids.has(g.id)} onOpen={onOpenCard} />
+            )}
+          />
+        )}
         {!showPlatforms &&
-          (tab === "recent" ? groupByDay(games) : [{ day: null, games }]).map(({ day, games: list }) => (
+          tab === "recent" &&
+          groupByDay(games).map(({ day, games: list }) => (
             <section key={day ?? "all"} className="lib-day">
               {day && (
                 <h3 className="lib-day-title">
@@ -450,25 +675,31 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
               <ul className="lib-grid">
                 {list.map((g) => (
                   <li key={g.id}>
-                    <GameCard game={g} fresh={isNew(g, seen)} installs={installs} favorite={favorites.ids.has(g.id)} onOpen={(el) => openGame(g.id, el)} />
+                    <GameCard game={g} fresh={isNew(g, seen)} inst={installs.installed.get(g.id)} busy={installs.progress.has(g.id)} favorite={favorites.ids.has(g.id)} onOpen={onOpenCard} />
                   </li>
                 ))}
               </ul>
             </section>
           ))}
+        {!showPlatforms && !q && group && lazyUseful && page?.hasMore && (
+          <LoadMore loading={page.loading} onVisible={() => !page.loading && loadConsole(group, page.ids.length)} />
+        )}
       </main>
     </div>,
   );
 }
 
-function viewTitle(tab: Tab, platform: Platform | null): string {
+function viewTitle(tab: Tab, group: ConsoleGroup | null): string {
   if (tab === "recent") return "Derniers ajouts";
   if (tab === "favorites") return "Mes favoris";
-  return platform ? platform.name : "Plateformes";
+  if (tab === "recomps") return "Jeux avec une recomp";
+  return group ? group.name : "Plateformes";
 }
 
-function emptyMessage(tab: Tab, q: string, favoritesLoading: boolean): string {
+function emptyMessage(tab: Tab, q: string, favoritesLoading: boolean, kind: Kind): string {
   if (q) return "Aucun jeu ne correspond.";
+  if (kind === "recomp") return "Aucune recomp ici.";
+  if (kind === "emulation") return "Aucun jeu avec un émulateur ici.";
   if (tab === "favorites") return favoritesLoading ? "Chargement des favoris…" : "Aucun favori pour l'instant : ouvrez un jeu et cliquez « ☆ Favori ».";
   return "Aucun jeu sur le serveur.";
 }
@@ -490,12 +721,124 @@ function shortPlatformName(name: string): string {
   return name.replace(/^portages?\s+/i, "").trim() || name;
 }
 
-function PlatformCard({ platform, count, fresh, onOpen }: { platform: Platform; count: number; fresh: number; onOpen: () => void }) {
-  const { src } = useFirstImage(platform.iconUrls);
+/**
+ * Grille où seules les rangées proches de l'écran existent : une console compte des
+ * milliers de jeux, et les recréer tous au retour d'une fiche figerait la fenêtre.
+ * Les rangées absentes sont remplacées par une marge de la même hauteur.
+ */
+function VirtualGrid({ games, initialScroll, renderCard }: { games: Game[]; initialScroll: { current: number }; renderCard: (g: Game) => ReactNode }) {
+  const list = useRef<HTMLUListElement>(null);
+  const [metrics, setMetrics] = useState<{ cols: number; rowH: number } | null>(null);
+  const [top, setTop] = useState(0);
+  const [viewH, setViewH] = useState(window.innerHeight);
+  const restored = useRef(false);
+
+  useLayoutEffect(() => {
+    const ul = list.current;
+    const scroller = ul?.closest(".lib-grid-wrap");
+    if (!ul || !scroller) return;
+    const measure = () => {
+      const first = ul.firstElementChild as HTMLElement | null;
+      if (!first) return;
+      const style = getComputedStyle(ul);
+      const cols = Math.max(1, style.gridTemplateColumns.split(" ").length);
+      const rowH = first.offsetHeight + (parseFloat(style.rowGap) || 0);
+      setMetrics((m) => (m && m.cols === cols && m.rowH === rowH ? m : { cols, rowH }));
+      setViewH(scroller.clientHeight);
+    };
+    const update = () => setTop(Math.max(0, scroller.scrollTop - ul.offsetTop));
+    let frame = 0;
+    const onScroll = () => {
+      if (!frame) {
+        frame = requestAnimationFrame(() => {
+          frame = 0;
+          update();
+        });
+      }
+    };
+    const ro = new ResizeObserver(measure);
+    ro.observe(ul);
+    ro.observe(scroller);
+    scroller.addEventListener("scroll", onScroll, { passive: true });
+    measure();
+    update();
+    return () => {
+      ro.disconnect();
+      scroller.removeEventListener("scroll", onScroll);
+      cancelAnimationFrame(frame);
+    };
+  }, []);
+
+  const rows = metrics ? Math.ceil(games.length / metrics.cols) : 0;
+  let start = 0;
+  let end = games.length;
+  if (metrics && metrics.rowH > 0) {
+    const firstRow = Math.max(0, Math.floor(top / metrics.rowH) - OVERSCAN_ROWS);
+    const lastRow = Math.min(rows, Math.ceil((top + viewH) / metrics.rowH) + OVERSCAN_ROWS);
+    start = firstRow * metrics.cols;
+    end = Math.min(games.length, lastRow * metrics.cols);
+  } else {
+    // Avant la mesure : juste de quoi mesurer une carte.
+    end = Math.min(games.length, 1);
+  }
+  const before = metrics ? Math.floor(start / metrics.cols) * metrics.rowH : 0;
+  const after = metrics ? Math.max(0, (rows - Math.ceil(end / metrics.cols)) * metrics.rowH) : 0;
+
+  // Retour d'une fiche : la position d'avant, une fois la hauteur de la liste connue.
+  useLayoutEffect(() => {
+    if (restored.current || !metrics) return;
+    const scroller = list.current?.closest(".lib-grid-wrap");
+    if (!scroller) return;
+    restored.current = true;
+    if (initialScroll.current > 0 && games.length > 0) {
+      scroller.scrollTop = initialScroll.current;
+      setTop(Math.max(0, scroller.scrollTop - (list.current?.offsetTop ?? 0)));
+    }
+  }, [metrics, games.length, initialScroll]);
+
   return (
-    <button className="pcard n-marquee-host" onClick={onOpen} title={platform.name}>
+    <ul className="lib-grid" ref={list} style={{ paddingTop: before, paddingBottom: after }}>
+      {games.slice(start, end).map((g) => (
+        <li key={g.id}>{renderCard(g)}</li>
+      ))}
+    </ul>
+  );
+}
+
+/** Page suivante d'une console, chargée quand le bas de la liste arrive à l'écran. */
+function LoadMore({ loading, onVisible }: { loading: boolean; onVisible: () => void }) {
+  const el = useRef<HTMLDivElement>(null);
+  const latest = useRef({ loading, onVisible });
+  latest.current = { loading, onVisible };
+  // Position relue à chaque défilement et à la fin de chaque page : une page peut laisser le bas
+  // encore à l'écran, sans qu'aucun changement ne soit signalé.
+  const check = useCallback(() => {
+    const node = el.current;
+    const scroller = node?.closest(".lib-grid-wrap");
+    if (!node || !scroller || latest.current.loading) return;
+    if (node.getBoundingClientRect().top < scroller.getBoundingClientRect().bottom + LOAD_MORE_MARGIN_PX) latest.current.onVisible();
+  }, []);
+  useEffect(() => {
+    const scroller = el.current?.closest(".lib-grid-wrap");
+    scroller?.addEventListener("scroll", check, { passive: true });
+    return () => scroller?.removeEventListener("scroll", check);
+  }, [check]);
+  useEffect(() => {
+    if (!loading) requestAnimationFrame(check);
+  }, [loading, check]);
+  return (
+    <div className="lib-more" ref={el}>
+      {loading && <span className="n-spinner" />}
+    </div>
+  );
+}
+
+function PlatformCard({ group, count, fresh, onOpen }: { group: ConsoleGroup; count: number; fresh: number; onOpen: () => void }) {
+  const { src } = useFirstImage(group.iconUrls);
+  return (
+    <button className="pcard n-marquee-host" onClick={onOpen} title={group.name}>
       <span className="pcard-icon">{src ? <img src={src} alt="" draggable={false} /> : <span className="pcard-glyph">◆</span>}</span>
-      <Marquee className="pcard-name" text={shortPlatformName(platform.name)} />
+      <span className="pcard-name">{shortPlatformName(group.name)}</span>
       <span className="pcard-foot">
         <span className="pcard-count">
           {count} jeu{count > 1 ? "x" : ""}
@@ -511,33 +854,40 @@ function PlatformCard({ platform, count, fresh, onOpen }: { platform: Platform; 
   );
 }
 
-function GameCard({
+/** Comment jouer à ce jeu, s'il n'est pas installé. */
+function playBadge(game: Game): { label: string; cls: string } | null {
+  if (game.pc) return !isAvailable(game) && game.detailsLoaded ? { label: "Non disponible", cls: "card-badge--muted" } : null;
+  if (game.recomp && (isAvailable(game) || !game.detailsLoaded)) return { label: "Recomp", cls: "card-badge--recomp" };
+  if (emulatorReady(game)) return { label: "Émulation", cls: "card-badge--emu" };
+  if (game.recomp) return { label: "Non disponible", cls: "card-badge--muted" };
+  return { label: "Pas d'émulateur disponible", cls: "card-badge--muted" };
+}
+
+const GameCard = memo(function GameCard({
   game,
   fresh,
-  installs,
+  inst,
+  busy,
   favorite,
   onOpen,
 }: {
   game: Game;
   fresh: boolean;
-  installs: InstallsState;
+  inst: InstalledGame | undefined;
+  busy: boolean;
   favorite: boolean;
-  onOpen: (el: HTMLElement) => void;
+  onOpen: (id: number, el: HTMLElement) => void;
 }) {
-  const inst = installs.installed.get(game.id);
-  const busy = installs.progress.has(game.id);
   const badge = busy
     ? { label: "Installation…", cls: "" }
     : hasUpdate(game, inst)
       ? { label: "Mise à jour disponible", cls: "" }
       : inst?.executable
         ? { label: "Installé", cls: "card-badge--ok" }
-        : !isAvailable(game) && game.detailsLoaded
-          ? { label: "Non disponible", cls: "card-badge--muted" }
-          : null;
+        : playBadge(game);
   const [kind, setKind] = useState<"box" | "flat" | null>(null);
   return (
-    <button className={`card n-marquee-host${kind === "box" ? " card--box3d" : ""}${fresh ? " card--new" : ""}`} data-sound-hover="game" data-game-id={game.id} onClick={(e) => onOpen(e.currentTarget)} title={game.name}>
+    <button className={`card n-marquee-host${kind === "box" ? " card--box3d" : ""}${fresh ? " card--new" : ""}`} data-sound-hover="game" data-game-id={game.id} onClick={(e) => onOpen(game.id, e.currentTarget)} title={game.name}>
       <div className="card-cover">
         <BoxArt game={game} onKind={setKind} />
         {kind === null && !game.boxFaces && <span className="card-placeholder">{game.name}</span>}
@@ -549,7 +899,7 @@ function GameCard({
           </span>
         )}
       </div>
-      <Marquee className="card-name" text={game.name} />
+      <Marquee className="card-name" text={game.name} onHover />
     </button>
   );
-}
+});

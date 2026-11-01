@@ -144,6 +144,12 @@ en place n'est pas retéléchargée lors d'une mise à jour de la recomp.
 directement dans `RECOMP/` sont pris en compte, et des milliers de fichiers dans un jeu
 ralentissent fortement RomM.
 
+**Émulation** : le launcher montre tous les jeux de RomM. Quand FarfaRomManager a un émulateur pour la console, il
+l'installe une fois dans `Emulateurs/<id>/`, télécharge la ROM dans `Roms/<console>/<jeu>/`, et « Jouer » lance le jeu directement.
+Si un jeu a une recomp et un émulateur, la recomp est proposée en premier. Sa sauvegarde est envoyée sur RomM après chaque
+session, comme pour une recomp. L'adresse est celle de RomM avec `manager` à la place du premier niveau, modifiable dans
+*Paramètres → Émulateurs*. Les jeux de `portage-*` et « Ordinateur » sont chargés au démarrage, les autres consoles à leur ouverture.
+
 **Recomps à plusieurs jeux** (Gen1recomp : Rouge, Bleu, Or…) : une page par jeu, un seul programme installé. La clé
 `recomps` d'`assets.json` (serveur des assets) relie les entrées RomM :
 

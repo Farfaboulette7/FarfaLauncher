@@ -39,6 +39,8 @@ pub struct RawRom {
     platform_id: i64,
     #[serde(default)]
     platform_fs_slug: String,
+    #[serde(default)]
+    platform_slug: String,
     name: Option<String>,
     fs_name: String,
     full_path: String,
@@ -149,6 +151,9 @@ pub struct Platform {
     pub rom_count: u32,
     /// Icônes servies par RomM, à essayer dans l'ordre (comme son interface web).
     pub icon_urls: Vec<String>,
+    /// Un émulateur tourne sur ce système pour cette console.
+    #[serde(default)]
+    pub has_emulator: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -206,6 +211,15 @@ pub struct Game {
     /// Jeu lancé par un runtime partagé : archives, mods et version sont les siens.
     #[serde(default)]
     pub runtime: Option<GameRuntime>,
+    /// Console d'origine (slug RomM), commune à `gba` et `portage-gba`.
+    #[serde(default)]
+    pub console: String,
+    /// Ce jeu a une recomp.
+    #[serde(default)]
+    pub recomp: bool,
+    /// Émulateur disponible pour sa console.
+    #[serde(default)]
+    pub emulator: Option<crate::manager::EmulatorOffer>,
     pub version_file: Option<RemoteFile>,
     /// Contenu de VERSION.txt côté serveur.
     pub server_version: Option<String>,
@@ -222,14 +236,15 @@ pub struct Game {
     pub updated_at: String,
 }
 
-/// Plateformes `portage-*` du serveur, triées par nom.
+/// Plateformes du serveur qui ont des jeux, triées par nom. Les `portage-*` et les
+/// jeux PC sont chargés d'un coup ; les autres consoles à l'ouverture de leur liste.
 pub async fn list_platforms(client: &RommClient) -> AppResult<Vec<Platform>> {
     let raws: Vec<RawPlatform> = client.get_json("api/platforms").await?;
     let total = raws.len();
     let base = client.base();
     let mut platforms: Vec<Platform> = raws
         .into_iter()
-        .filter(|p| is_portage(&p.fs_slug) || crate::pc::is_pc_folder(&p.fs_slug))
+        .filter(|p| is_portage(&p.fs_slug) || crate::pc::is_pc_folder(&p.fs_slug) || p.rom_count > 0)
         .map(|p| {
             let pc = crate::pc::is_pc_folder(&p.fs_slug);
             let icon_urls = [&p.fs_slug, &p.slug]
@@ -243,11 +258,12 @@ pub async fn list_platforms(client: &RommClient) -> AppResult<Vec<Platform>> {
                 fs_slug: p.fs_slug,
                 rom_count: p.rom_count,
                 icon_urls,
+                has_emulator: false,
             }
         })
         .collect();
     if platforms.is_empty() {
-        tracing::error!("aucune plateforme {PLATFORM_PREFIX}-* parmi {total} plateformes");
+        tracing::error!("aucune plateforme avec des jeux parmi {total} plateformes");
         return Err(AppError::PlatformMissing);
     }
     platforms.sort_by_key(|p| p.name.to_lowercase());
@@ -265,7 +281,7 @@ fn is_pc_rom(r: &RawRom) -> bool {
     path.trim_end_matches('/').rsplit('/').skip(1).take(2).any(crate::pc::is_pc_folder)
 }
 
-fn is_portage(fs_slug: &str) -> bool {
+pub fn is_portage(fs_slug: &str) -> bool {
     fs_slug.to_ascii_lowercase().starts_with(PLATFORM_PREFIX)
 }
 
@@ -274,7 +290,7 @@ fn is_portage(fs_slug: &str) -> bool {
 /// qu'un jeu lent à décrire par RomM ne bloque pas toute la bibliothèque.
 pub async fn list_games(client: &RommClient, platforms: &[Platform], me: Target) -> AppResult<Vec<Game>> {
     let mut raws: Vec<RawRom> = Vec::new();
-    for p in platforms {
+    for p in platforms.iter().filter(|p| is_portage(&p.fs_slug) || crate::pc::is_pc_folder(&p.fs_slug)) {
         list_platform_games(client, p.id, &mut raws).await?;
     }
     let base = client.base().to_string();
@@ -305,6 +321,39 @@ async fn list_platform_games(client: &RommClient, platform_id: i64, raws: &mut V
             return Ok(());
         }
     }
+}
+
+/// Une page de jeux d'une ou plusieurs plateformes, triée par nom (sans leurs fichiers).
+pub async fn list_games_page(client: &RommClient, platform_ids: &[i64], me: Target, offset: usize, limit: usize) -> AppResult<(Vec<Game>, bool)> {
+    let ids: String = platform_ids.iter().map(|id| format!("&platform_ids={id}")).collect();
+    let path = format!(
+        "api/roms?with_char_index=false&with_filter_values=false&with_rom_id_index=false&with_total=false\
+         &order_by=name&order_dir=asc&limit={limit}&offset={offset}{ids}"
+    );
+    let page: RawPage = client.get_json(&path).await?;
+    let more = page.items.len() == limit;
+    Ok((page.items.into_iter().map(|r| to_game(r, client.base(), me, false)).collect(), more))
+}
+
+/// Recherche dans tout RomM (sans les fichiers des jeux).
+pub async fn search_games(client: &RommClient, term: &str, me: Target, limit: usize) -> AppResult<Vec<Game>> {
+    let path = format!(
+        "api/roms?with_char_index=false&with_filter_values=false&with_rom_id_index=false&with_total=false\
+         &search_term={}&limit={limit}",
+        urlencode(term)
+    );
+    let page: RawPage = client.get_json(&path).await?;
+    Ok(page.items.into_iter().map(|r| to_game(r, client.base(), me, false)).collect())
+}
+
+/// Derniers jeux ajoutés sur tout RomM (sans leurs fichiers).
+pub async fn recent_games(client: &RommClient, me: Target, limit: usize) -> AppResult<Vec<Game>> {
+    let path = format!(
+        "api/roms?with_char_index=false&with_filter_values=false&with_rom_id_index=false&with_total=false\
+         &order_by=id&order_dir=desc&limit={limit}"
+    );
+    let page: RawPage = client.get_json(&path).await?;
+    Ok(page.items.into_iter().map(|r| to_game(r, client.base(), me, false)).collect())
 }
 
 impl Game {
@@ -439,6 +488,10 @@ fn top_folder(rel: &str) -> Option<String> {
 
 fn to_game(r: RawRom, base: &str, me: Target, details_loaded: bool) -> Game {
     let pc_rom = is_pc_rom(&r);
+    // Entrée de console : pas de RECOMP/ ni de ROM/, tous ses fichiers sont la ROM.
+    let plain_rom = !pc_rom && !r.platform_fs_slug.is_empty() && !is_portage(&r.platform_fs_slug);
+    let portage = is_portage(&r.platform_fs_slug);
+    let console = r.platform_slug.clone();
     let files: Vec<(RemoteFile, Option<String>)> = r
         .files
         .into_iter()
@@ -471,6 +524,14 @@ fn to_game(r: RawRom, base: &str, me: Target, details_loaded: bool) -> Game {
     let mut manuals = Vec::new();
     let mut version_file = None;
     for (f, category) in files {
+        if plain_rom {
+            if category.as_deref() == Some("manual") && f.file_name.to_ascii_lowercase().ends_with(".pdf") {
+                manuals.push(Manual::File { file: f });
+            } else {
+                rom_files.push(f);
+            }
+            continue;
+        }
         match top_folder(&f.rel_path).as_deref() {
             // Jeu PC : ses fichiers sont décrits par `pc` (livrets gardés).
             Some("recomp" | "rom" | "mods") | None if pc.is_some() => {}
@@ -559,6 +620,9 @@ fn to_game(r: RawRom, base: &str, me: Target, details_loaded: bool) -> Game {
         mods,
         pc,
         runtime: None,
+        console,
+        recomp: portage,
+        emulator: None,
         version_file,
         server_version: None,
         server_version_raw: None,

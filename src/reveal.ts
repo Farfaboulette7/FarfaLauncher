@@ -130,10 +130,14 @@ function makeCopy(source: HTMLElement): HTMLSpanElement {
 export function reveal(root: Element) {
   stopIn(root);
   const now = performance.now();
-  const fields = Array.from(root.querySelectorAll<HTMLElement>(FIELDS)).filter(
+  const bottom = window.innerHeight;
+  const fields = Array.from(root.querySelectorAll<HTMLElement>(FIELDS)).filter((el) => {
     // Un champ dans un autre champ suit son parent.
-    (el, _i, all) => !all.some((p) => p !== el && p.contains(el)),
-  );
+    if (el.parentElement?.closest(FIELDS) && root.contains(el.parentElement.closest(FIELDS))) return false;
+    // Hors de l'écran, personne ne le voit : pas d'animation (une console a des milliers de jeux).
+    const r = el.getBoundingClientRect();
+    return r.bottom > 0 && r.top < bottom;
+  });
   fields.forEach((el, i) => {
     const delay = Math.min(i * STAGGER_MS, MAX_DELAY_MS);
     el.style.setProperty("--reveal-delay", `${delay}ms`);

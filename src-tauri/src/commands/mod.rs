@@ -32,9 +32,11 @@ pub fn log_frontend(level: String, message: String) {
 
 #[tauri::command]
 pub fn open_url(app: tauri::AppHandle, state: State<'_, AppState>, url: String) -> AppResult<()> {
-    // N'ouvre que des pages du serveur RomM configuré (ex. page d'approbation).
+    // N'ouvre que des pages du serveur RomM configuré (ex. page d'approbation)…
     let server = state.server_url()?;
-    if !url.starts_with(&format!("{server}/")) {
+    // … ou le dépôt GitHub d'une recomp ou d'un émulateur connus.
+    let known_repo = state.catalog().knows_repo(&url) || state.manifest().runtimes.iter().any(|r| r.repo == url);
+    if !url.starts_with(&format!("{server}/")) && !known_repo {
         return Err(AppError::Internal);
     }
     crate::external::open_url(&app, &url)

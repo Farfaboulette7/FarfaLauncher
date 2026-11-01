@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { open } from "@tauri-apps/plugin-dialog";
-import { AssetsInfo, backend, errorMessage, SessionInfo } from "../api/backend";
+import { AssetsInfo, backend, errorMessage, ManagerInfo, SessionInfo } from "../api/backend";
 import { clearImageMemo } from "../hooks/useCachedImage";
 import { InstallsState } from "../hooks/useInstalls";
 import { Dialog } from "../components/Dialog";
@@ -31,6 +31,8 @@ export function Settings({ session, installs, onBack, onLogout, onCacheCleared, 
   const [sound, setSound] = useState(soundSettings());
   const [assets, setAssets] = useState<AssetsInfo | null>(null);
   const [assetsInput, setAssetsInput] = useState("");
+  const [manager, setManager] = useState<ManagerInfo | null>(null);
+  const [managerInput, setManagerInput] = useState("");
   const [music, setMusic] = useState(musicSettings());
   const [motion, setMotion] = useState(backdropMotion());
   const root = useRef<HTMLDivElement>(null);
@@ -63,9 +65,17 @@ export function Settings({ session, installs, onBack, onLogout, onCacheCleared, 
     }, ok);
   }
 
+  function saveManagerUrl(url: string | null, ok: string) {
+    return act(async () => {
+      setManager(await backend.setManagerUrl(url));
+      setManagerInput("");
+    }, ok);
+  }
+
   useEffect(() => {
     getVersion().then(setVersion).catch(() => undefined);
     backend.assetsInfo().then(setAssets).catch(() => undefined);
+    backend.managerInfo().then(setManager).catch(() => undefined);
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !document.querySelector(".dialog-backdrop")) onBack();
     };
@@ -259,6 +269,48 @@ export function Settings({ session, installs, onBack, onLogout, onCacheCleared, 
                     type="button"
                     onClick={() => saveAssetsUrl(null, "Adresse par défaut rétablie.")}
                   >
+                    Adresse par défaut
+                  </button>
+                )}
+              </form>
+            </div>
+          </section>
+
+          <section className="n-panel">
+            <div className="n-panel-header">Émulateurs</div>
+            <div className="n-panel-body settings-section">
+              <dl className="gd-facts">
+                <dt>FarfaRomManager</dt>
+                <dd>
+                  {manager === null ? "…" : (manager.url ?? "aucun")}
+                  {manager && !manager.custom && manager.url && " (déduit de l'adresse RomM)"}
+                </dd>
+              </dl>
+              <p className="n-hint">
+                Ce serveur fournit les émulateurs et leurs éléments de configuration. Par défaut, son adresse est celle de RomM
+                avec « manager » à la place du premier mot. Elle s'applique au prochain rafraîchissement.
+              </p>
+              <form
+                className="settings-actions"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (managerInput.trim()) saveManagerUrl(managerInput, "Adresse de FarfaRomManager enregistrée.");
+                }}
+              >
+                <input
+                  className="n-input"
+                  type="url"
+                  inputMode="url"
+                  placeholder="https://manager.exemple.fr"
+                  value={managerInput}
+                  onChange={(e) => setManagerInput(e.target.value)}
+                  spellCheck={false}
+                />
+                <button className="n-btn" type="submit" disabled={!managerInput.trim()}>
+                  Enregistrer
+                </button>
+                {manager?.custom && (
+                  <button className="n-btn" type="button" onClick={() => saveManagerUrl(null, "Adresse par défaut rétablie.")}>
                     Adresse par défaut
                   </button>
                 )}

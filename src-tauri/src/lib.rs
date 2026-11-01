@@ -7,6 +7,7 @@ mod gamepad;
 mod install;
 mod launch;
 mod logging;
+mod manager;
 mod pc;
 mod platform;
 mod romm;
@@ -15,6 +16,9 @@ mod saves;
 mod secrets;
 mod settings;
 mod state;
+
+/// Au-delà, les jaquettes les plus anciennes sont retirées au démarrage (elles se retéléchargent).
+const IMAGE_CACHE_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
 use tauri::Manager;
 
@@ -41,6 +45,13 @@ pub fn run() {
                 app.manage(guard);
             }
             saves::set_prefixes_dir(pc::proton::prefixes_dir(&config_dir));
+            let images = cache_dir.join("images");
+            std::thread::spawn(move || {
+                let removed = cache::prune_dir(&images, IMAGE_CACHE_MAX_BYTES);
+                if removed > 0 {
+                    tracing::info!("cache des images : {} Mo libérés", removed / (1024 * 1024));
+                }
+            });
             let state = state::AppState::new(config_dir, log_dir, cache_dir, default_install_root);
             // Fenêtre créée cachée : affichée directement au bon format.
             if let Some(window) = app.get_webview_window("main") {
@@ -75,6 +86,13 @@ pub fn run() {
             commands::library::manual_path,
             commands::library::game_playtime,
             commands::library::clear_cache,
+            commands::library::console_games,
+            commands::library::search_games,
+            commands::library::recent_games,
+            commands::library::games_by_ids,
+            commands::library::game_details,
+            commands::library::manager_info,
+            commands::library::set_manager_url,
             commands::library::favorites_list,
             commands::library::favorite_set,
             commands::sounds::sound_paths,

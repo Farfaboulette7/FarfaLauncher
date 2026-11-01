@@ -35,3 +35,4 @@ desktop.ini
 
 # Sons du launcher : non redistribuables, servis par le serveur des assets (voir README).
 Ressources/
+src-tauri/target-test/

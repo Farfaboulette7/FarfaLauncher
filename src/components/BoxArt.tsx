@@ -29,7 +29,8 @@ export function BoxArt({ game, interactive = false, autoSpin = false, onKind }: 
   const faces = game.boxFaces;
   const front = useCachedImage(faces?.front);
   const side = useCachedImage(faces?.side);
-  const back = useCachedImage(faces?.back);
+  // Dans une grille, le dos ne se voit jamais : une image de moins par jeu.
+  const back = useCachedImage(interactive ? faces?.back : null);
   const facesFailed = !faces || front.failed || side.failed;
   const flat = useBoxArt(facesFailed ? game : { box3dUrl: null, coverUrl: null });
 

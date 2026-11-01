@@ -107,6 +107,35 @@ fn extension_of(url: &str) -> &str {
 
 /// Chemin local d'un fichier distant, téléchargé s'il n'est pas déjà en cache.
 /// `key` identifie la version du fichier (URL avec cache-busting, id + date…).
+/// Garde le cache des images sous `max_bytes` en retirant les plus anciennes :
+/// parcourir une console de milliers de jeux ne doit pas remplir le disque.
+pub fn prune_dir(dir: &Path, max_bytes: u64) -> u64 {
+    let Ok(rd) = std::fs::read_dir(dir) else { return 0 };
+    let mut files: Vec<(std::time::SystemTime, u64, PathBuf)> = rd
+        .filter_map(Result::ok)
+        .filter_map(|e| {
+            let m = e.metadata().ok()?;
+            m.is_file().then(|| (m.modified().unwrap_or(std::time::UNIX_EPOCH), m.len(), e.path()))
+        })
+        .collect();
+    let mut total: u64 = files.iter().map(|f| f.1).sum();
+    if total <= max_bytes {
+        return 0;
+    }
+    files.sort_by_key(|f| f.0);
+    let mut removed = 0;
+    for (_, size, path) in files {
+        if total <= max_bytes {
+            break;
+        }
+        if std::fs::remove_file(&path).is_ok() {
+            total -= size;
+            removed += size;
+        }
+    }
+    removed
+}
+
 pub async fn cached_download(
     client: &RommClient,
     dir: &Path,
@@ -174,6 +203,23 @@ pub async fn cached_download_checked(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prune_removes_the_oldest_until_under_the_limit() {
+        let dir = std::env::temp_dir().join(format!("farfa-prune-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for (nom, age) in [("vieux", 300u64), ("moyen", 200), ("recent", 100)] {
+            let p = dir.join(nom);
+            std::fs::write(&p, vec![0u8; 10]).unwrap();
+            let f = std::fs::File::options().write(true).open(&p).unwrap();
+            f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(age)).unwrap();
+        }
+        assert_eq!(prune_dir(&dir, 30), 0);
+        assert_eq!(prune_dir(&dir, 15), 20);
+        assert!(!dir.join("vieux").exists() && !dir.join("moyen").exists() && dir.join("recent").exists());
+        assert_eq!(prune_dir(&dir.join("absent"), 1), 0);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn clear_only_touches_our_cache() {

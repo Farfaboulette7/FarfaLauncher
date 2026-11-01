@@ -8,13 +8,14 @@
 //! serveur des assets (réservé aux utilisateurs connectés). Une copie reste sur
 //! le disque pour démarrer sans serveur.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 use crate::assets;
 use crate::error::{AppError, AppResult};
+use crate::manager::Catalog;
 use crate::platform::Target;
 use crate::romm::client::RommClient;
 use crate::romm::library::{self, Game, GameRuntime};
@@ -194,7 +195,7 @@ pub async fn refresh(state: &AppState) {
     }
 }
 
-fn link(runtime: &Runtime, game: &RuntimeGame) -> GameRuntime {
+pub fn link(runtime: &Runtime, game: &RuntimeGame) -> GameRuntime {
     GameRuntime { rom_id: runtime.rom_id, name: runtime.name.clone(), repo: runtime.repo.clone(), game: game.game.clone() }
 }
 
@@ -225,6 +226,12 @@ pub async fn list_library(
         }
     }
     Ok((platforms, games))
+}
+
+/// Ajoute à un jeu ce que le catalogue sait de lui : recomp et émulateur.
+pub fn annotate(game: &mut Game, catalog: &Catalog, recomps: &HashSet<i64>, me: Target) {
+    game.recomp = game.recomp || game.runtime.is_some() || recomps.contains(&game.id);
+    game.emulator = if game.pc.is_some() || game.console.is_empty() { None } else { catalog.offer(&game.console, me) };
 }
 
 /// Détails d'un jeu : ses propres fichiers, plus ceux de son runtime s'il en a un.
@@ -264,6 +271,11 @@ pub fn data_dir(name: &str) -> Option<PathBuf> {
 pub fn pick_exe(candidates: &[String], exe: &str, version: Option<&str>) -> Option<String> {
     let exe = exe.to_lowercase();
     let name = |c: &str| c.rsplit('/').next().unwrap_or(c).to_lowercase();
+    // Le nom exact d'abord : `mGBA.exe` plutôt que `mgba-sdl.exe`.
+    let exact = |c: &str| Path::new(&name(c)).file_stem().is_some_and(|s| s.to_string_lossy() == exe);
+    if let Some(c) = candidates.iter().find(|c| exact(c)) {
+        return Some(c.clone());
+    }
     let matching: Vec<&String> = candidates.iter().filter(|c| name(c).starts_with(&exe)).collect();
     let version = version.map(|v| v.trim_start_matches(['v', 'V'])).filter(|v| !v.is_empty());
     matching
@@ -295,6 +307,23 @@ mod tests {
         assert_eq!(games.iter().filter(|g| g.runtime.is_some()).count(), manifest.games.len());
         let runtime = library::fetch_game_details(&client, 10550, Target::Windows).await.unwrap();
         let page = fetch_details(&client, &manifest, manifest.page_ids()[0], Target::Windows).await.unwrap();
+        let debut = std::time::Instant::now();
+        let (console, plus) = library::list_games_page(&client, &[8], Target::Windows, 0, 60).await.unwrap();
+        println!("console GBA : {} jeux en {:?}, suite : {plus}, premier : {} ({} fichier(s) dans la liste)", console.len(), debut.elapsed(), console[0].name, console[0].rom_files.len());
+        assert_eq!(console.len(), 60);
+        assert!(plus && console.iter().all(|g| g.console == "gba" && !g.recomp));
+        let (suite, _) = library::list_games_page(&client, &[8], Target::Windows, 60, 60).await.unwrap();
+        assert!(suite.iter().all(|g| console.iter().all(|c| c.id != g.id)), "pages qui se chevauchent");
+        let debut = std::time::Instant::now();
+        let trouves = library::search_games(&client, "Mario Kart", Target::Windows, 60).await.unwrap();
+        println!("recherche : {:?} en {:?}", trouves.iter().map(|g| format!("{} [{}]", g.name, g.console)).collect::<Vec<_>>(), debut.elapsed());
+        assert!(!trouves.is_empty());
+        let recents = library::recent_games(&client, Target::Windows, 24).await.unwrap();
+        println!("récents : {} jeux, premier {}", recents.len(), recents[0].name);
+        let details = library::fetch_game_details(&client, 835, Target::Windows).await.unwrap();
+        println!("entrée de console 835 : {} ROM {:?}", details.rom_files.len(), details.rom_files.iter().map(|f| f.rel_path.as_str()).collect::<Vec<_>>());
+        assert_eq!(details.rom_files.len(), 1);
+        assert_eq!(details.rom_files[0].rel_path, details.rom_files[0].file_name);
         println!("{} : {} ROM, archive {:?}, version {:?}, {} mod(s)", page.name, page.rom_files.len(), page.my_archive.as_ref().map(|a| &a.file.file_name), page.server_version, page.mods.len());
         assert_eq!(page.rom_files.len(), 1);
         assert_eq!(page.server_version_raw, runtime.server_version_raw);
@@ -351,5 +380,8 @@ mod tests {
         assert_eq!(pick_exe(&list, "gen1recomp", Some("v9")).unwrap(), list[0]);
         assert_eq!(pick_exe(&["sub/Gen1Recomp.exe".to_string()], "gen1recomp", None).unwrap(), "sub/Gen1Recomp.exe");
         assert!(pick_exe(&list, "zelda", None).is_none());
+        // Un programme annexe au nom voisin n'est pas choisi, même s'il vient avant.
+        let mgba = vec!["mgba-sdl.exe".to_string(), "mGBA.exe".to_string()];
+        assert_eq!(pick_exe(&mgba, "mGBA", Some("0.10.5")).unwrap(), "mGBA.exe");
     }
 }
