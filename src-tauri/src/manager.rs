@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::assets;
 use crate::error::{log_err, AppError};
-use crate::platform::Target;
-use crate::romm::library::RemoteFile;
+use crate::platform::{ArchiveKind, Target, ALL_TARGETS};
+use crate::romm::library::{PlatformArchive, RemoteFile};
 use crate::settings::Settings;
 use crate::state::AppState;
 
@@ -29,14 +29,76 @@ pub struct Catalog {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct CatalogRecomp {
+    pub id: String,
+    pub name: String,
     pub repo: String,
+    /// Launcher à plusieurs jeux : ID de son entrée historique dans RomM, clé de l'installation.
+    pub entry_rom_id: Option<i64>,
+    pub version: EmulatorVersion,
+    pub files: Vec<ManagerFile>,
+    pub mods: Vec<CatalogMod>,
+    pub launch: RecompLaunch,
     pub games: Vec<CatalogRecompGame>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CatalogMod {
+    pub name: String,
+    pub files: Vec<ManagerFile>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct RecompLaunch {
+    pub exe: Option<String>,
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
+    pub data_dir: Option<String>,
+    pub save_dir: Option<String>,
+    pub cache_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct CatalogRecompGame {
     pub rom_id: Option<i64>,
+    /// Identifiant du jeu pour un launcher à plusieurs jeux.
+    pub game: Option<String>,
+}
+
+impl CatalogRecomp {
+    /// Un launcher qui lance plusieurs jeux : il s'installe une fois, à part de ses pages.
+    pub fn is_shared(&self) -> bool {
+        self.games.iter().any(|g| g.game.is_some()) && self.launch.data_dir.is_some()
+    }
+
+    /// Clé de l'installation : l'entrée historique si elle existe, sinon un ID propre au launcher.
+    pub fn runtime_rom_id(&self) -> i64 {
+        self.entry_rom_id.unwrap_or_else(|| runtime_id(&format!("recomp:{}", self.id)))
+    }
+
+    pub fn archives(&self, me: Target) -> (Vec<PlatformArchive>, Option<PlatformArchive>) {
+        let mut archives: Vec<PlatformArchive> = ALL_TARGETS
+            .iter()
+            .filter_map(|t| {
+                let f = self.files.iter().find(|f| f.system.as_deref() == Some(t.suffix()))?;
+                Some(PlatformArchive { target: *t, kind: ArchiveKind::Zip, score: u8::MAX, file: f.remote() })
+            })
+            .collect();
+        archives.sort_by_key(|a| ALL_TARGETS.iter().position(|t| *t == a.target));
+        let mine = me.candidates().iter().find_map(|t| archives.iter().find(|a| a.target == *t)).cloned();
+        (archives, mine)
+    }
+
+    pub fn mod_files(&self) -> Vec<RemoteFile> {
+        self.mods
+            .iter()
+            .flat_map(|m| {
+                m.files.iter().map(move |f| RemoteFile { rel_path: format!("MODS/{}/{}", m.name, f.name), ..f.remote() })
+            })
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,7 +122,7 @@ pub struct Emulator {
     pub config_missing: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EmulatorVersion {
     /// Identifiant exact de la version, comparé pour détecter une mise à jour.
     pub cle: String,
@@ -102,7 +164,9 @@ pub struct ManagerFile {
 
 impl ManagerFile {
     pub fn remote(&self) -> RemoteFile {
-        RemoteFile { id: 0, file_name: self.name.clone(), rel_path: self.name.clone(), size: self.size, sha1: Some(self.sha1.clone()), md5: None }
+        // Identifiant stable tiré du SHA-1 : l'onglet Mods s'en sert pour désigner un fichier.
+        let id = self.sha1.get(..12).and_then(|h| i64::from_str_radix(h, 16).ok()).unwrap_or(0);
+        RemoteFile { id, file_name: self.name.clone(), rel_path: self.name.clone(), size: self.size, sha1: Some(self.sha1.clone()), md5: None, from_manager: true }
     }
 
     pub fn download_path(&self) -> String {
@@ -173,6 +237,14 @@ impl Catalog {
         })
     }
 
+    pub fn recomp(&self, id: &str) -> Option<&CatalogRecomp> {
+        self.recomps.iter().find(|r| r.id == id)
+    }
+
+    pub fn recomp_for_rom(&self, rom_id: i64) -> Option<&CatalogRecomp> {
+        self.recomps.iter().find(|r| r.games.iter().any(|g| g.rom_id == Some(rom_id)))
+    }
+
     /// Jeux qui ont une recomp au catalogue.
     pub fn recomp_rom_ids(&self) -> HashSet<i64> {
         self.recomps.iter().flat_map(|r| r.games.iter().filter_map(|g| g.rom_id)).collect()
@@ -215,9 +287,57 @@ pub async fn refresh(state: &AppState) {
     }
 }
 
+/// Installations déjà à la version du catalogue : `VERSION.txt` n'étant plus la référence, leur
+/// texte de version est remplacé par la clé du catalogue pour ne pas les retélécharger.
+pub fn align_versions(config_dir: &Path, catalog: &Catalog) -> usize {
+    let mut aligned = 0;
+    for mut st in crate::install::state::list_installed(config_dir) {
+        if st.shared.is_some() {
+            continue;
+        }
+        let recomp = catalog.recomp_for_rom(st.rom_id).or_else(|| catalog.recomps.iter().find(|r| r.is_shared() && r.runtime_rom_id() == st.rom_id));
+        let Some(r) = recomp else { continue };
+        if st.version_raw.as_deref() == Some(r.version.cle.as_str()) || st.version.as_deref() != Some(r.version.nom.as_str()) {
+            continue;
+        }
+        st.version_raw = Some(r.version.cle.clone());
+        match crate::install::state::write_state(config_dir, &st) {
+            Ok(()) => aligned += 1,
+            Err(e) => tracing::warn!("version de « {} » non alignée: {}", st.name, e.code()),
+        }
+    }
+    aligned
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exposes_recomp_files_for_the_system() {
+        let text = r#"{"recomps":[{"id":"p","name":"Gen1recomp","repo":"https://github.com/a/b","entryRomId":10550,
+          "version":{"cle":"k","nom":"v1"},
+          "files":[{"name":"p_Windows.zip","size":3,"sha1":"00000000000a00000000000000000000000000aa","system":"Windows"},{"name":"p_Linux.zip","size":4,"sha1":"bb","system":"Linux"}],
+          "mods":[{"name":"M","files":[{"name":"m.zip","size":1,"sha1":"00000000000b00000000000000000000000000cc"}]}],
+          "launch":{"exe":"gen1recomp","args":["--game={game}"],"env":[],"dataDir":"d","saveDir":"saves/{game}","cacheDir":null},
+          "games":[{"romId":7,"game":"red"},{"romId":null,"game":"blue"}]},
+          {"id":"seul","name":"S","repo":"","version":{"cle":"k2","nom":"1"},"files":[],"mods":[],"launch":{"args":[],"env":[]},"games":[{"romId":9}]}]}"#;
+        let c: Catalog = serde_json::from_str(text).unwrap();
+        let r = c.recomp("p").unwrap();
+        assert!(r.is_shared() && r.runtime_rom_id() == 10550);
+        assert!(!c.recomp("seul").unwrap().is_shared());
+        assert!(c.recomp("seul").unwrap().runtime_rom_id() < 0);
+        assert_eq!(c.recomp_for_rom(9).unwrap().id, "seul");
+        let (all, mine) = r.archives(Target::SteamOS);
+        assert_eq!(all.len(), 2);
+        let mine = mine.unwrap();
+        assert_eq!(mine.file.file_name, "p_Linux.zip");
+        assert!(mine.file.from_manager);
+        let mods = r.mod_files();
+        assert_eq!(mods[0].rel_path, "MODS/M/m.zip");
+        assert_eq!(mods[0].id, 0xb);
+        assert!(r.archives(Target::MacArm).1.is_none());
+    }
 
     fn emu(id: &str, consoles: &[&str], systems: &[&str]) -> Emulator {
         Emulator {

@@ -21,7 +21,7 @@ use crate::error::{log_err, AppError, AppResult};
 use crate::manager::Catalog;
 use crate::platform::{ArchiveKind, Target};
 use crate::romm::client::RommClient;
-use crate::romm::library::{self, Game, RemoteFile};
+use crate::romm::library::{Game, RemoteFile};
 use crate::runtimes::{self, Manifest, Runtime, RuntimeGame};
 use download::disk_error;
 use extract::INTERNAL_DIR;
@@ -91,7 +91,7 @@ impl InstallJob {
             return self.install_page(rom_id, runtime, game).await;
         }
         // Toujours les informations fraîches du serveur (identifiants de fichiers à jour).
-        let game = library::fetch_game_details(&self.client, rom_id, self.target).await?;
+        let game = runtimes::fetch_details(&self.client, &self.manifest, &self.catalog, rom_id, self.target).await?;
         if let Some(pc) = game.pc.clone() {
             return crate::pc::install::run(self, game, pc).await;
         }
@@ -170,7 +170,7 @@ impl InstallJob {
     /// Runtime installé et à jour. Sa progression s'affiche sur la page `page_id`.
     async fn ensure_runtime(&self, page_id: i64, runtime: &Runtime) -> AppResult<InstalledGame> {
         // Sans ses ROMs : chaque jeu apporte la sienne.
-        let mut game = library::fetch_game_details(&self.client, runtime.rom_id, self.target).await?;
+        let mut game = runtimes::fetch_runtime(&self.client, &self.catalog, runtime, self.target).await?;
         game.rom_files.clear();
         if let Some(current) = state::find(&self.config_dir, runtime.rom_id) {
             let up_to_date = game.server_version_raw.is_none() || game.server_version_raw == current.version_raw;
@@ -240,7 +240,7 @@ impl InstallJob {
         let mut offset = 0u64;
         let mut last = Instant::now() - Duration::from_secs(1);
         for (file, dest) in &files {
-            download::download(&self.client, file, dest, &self.cancel, |got| {
+            download::download_any(&self.client, self.manager_base.as_deref(), file, dest, &self.cancel, |got| {
                 if last.elapsed() >= Duration::from_millis(200) || got == file.size {
                     last = Instant::now();
                     self.emit(rom_id, "download", offset + got, total);
@@ -837,7 +837,7 @@ mod tests {
     fn unchanged_roms_are_not_fetched_again() {
         let root = std::env::temp_dir().join(format!("farfa-roms-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("data/romfs")).unwrap();
-        let f = RemoteFile { id: 1, file_name: "MHGU-data.extract.zip".into(), rel_path: "ROM/MHGU-data.extract.zip".into(), size: 10, sha1: None, md5: None };
+        let f = RemoteFile { id: 1, file_name: "MHGU-data.extract.zip".into(), rel_path: "ROM/MHGU-data.extract.zip".into(), size: 10, sha1: None, md5: None, from_manager: false };
         let src = state::RomSource { rel_path: f.rel_path.clone(), size: 10, sha1: None, md5: None, placed: vec!["data".into()] };
         assert!(is_extract_archive(&f.file_name) && !is_extract_archive("game.zip"));
         assert!(unchanged_rom(std::slice::from_ref(&src), &f, &root).is_some());
@@ -957,6 +957,80 @@ mod tests {
         assert!(state::list_installed(&config).is_empty());
 
         std::fs::remove_dir_all(&data).unwrap();
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Recomps servies par FarfaRomManager, dans des dossiers temporaires : `FARFA_E2E_URL=… FARFA_E2E_MANAGER=…
+    /// FARFA_E2E_TOKEN=… cargo test -- --ignored recomp_manager_e2e --nocapture`.
+    #[cfg(windows)]
+    #[tokio::test]
+    #[ignore]
+    async fn recomp_manager_e2e() {
+        let var = |k: &str| std::env::var(k).unwrap();
+        let client = RommClient::new(&var("FARFA_E2E_URL"), Some(var("FARFA_E2E_TOKEN"))).unwrap();
+        let base = std::env::temp_dir().join(format!("farfa-recomp-e2e-{}", uuid::Uuid::new_v4()));
+        let config = base.join("config");
+        std::fs::create_dir_all(&config).unwrap();
+        let manager = client.with_base(&var("FARFA_E2E_MANAGER"));
+        let catalog: Catalog = serde_json::from_str(&manager.send(manager.get("api/catalog")).await.unwrap().text().await.unwrap()).unwrap();
+        let manifest = Manifest::default().with_catalog(&catalog);
+        println!("{} recomps, runtime(s) partagé(s) : {:?}", catalog.recomps.len(), manifest.runtimes.iter().map(|r| (&r.id, r.rom_id)).collect::<Vec<_>>());
+        let job = InstallJob {
+            client,
+            config_dir: config.clone(),
+            install_root: base.join("Jeux"),
+            target: Target::Windows,
+            cancel: CancellationToken::new(),
+            proton: None,
+            manifest: manifest.clone(),
+            catalog: catalog.clone(),
+            manager_base: Some(var("FARFA_E2E_MANAGER")),
+            with_emulator: false,
+            runtime_lock: Arc::new(tokio::sync::Mutex::new(())),
+            on_progress: Arc::new(|_| {}),
+        };
+        let installed = |o: InstallOutcome| match o {
+            InstallOutcome::Installed { game } => game,
+            InstallOutcome::NeedsChoice { game } => panic!("{} : choix demandé parmi {:?}", game.name, game.pending_candidates),
+        };
+
+        // Launcher à plusieurs jeux : programme du gestionnaire, ROM de RomM.
+        let runtime = &manifest.runtimes[0];
+        let recomp = catalog.recomp(&runtime.id).unwrap();
+        let (premier, second) = (manifest.games[0].rom_id, manifest.games[1].rom_id);
+        let st = installed(job.run(premier).await.unwrap());
+        let exe = st.game_dir.join(rel_to_path(st.executable.as_deref().unwrap()));
+        println!("{} sur {} : {:?} {:?}", st.name, st.version.as_deref().unwrap_or("?"), exe.file_name(), st.direct_launch.as_ref().map(|d| &d.args));
+        assert!(exe.exists());
+        assert_eq!(st.version_raw.as_deref(), Some(recomp.version.cle.as_str()));
+        let stamp = std::fs::metadata(&exe).unwrap().modified().unwrap();
+        let st2 = installed(job.run(second).await.unwrap());
+        assert_eq!(std::fs::metadata(&exe).unwrap().modified().unwrap(), stamp, "runtime réinstallé");
+        assert_eq!(st2.game_dir, st.game_dir);
+
+        // Recomp à un seul jeu : même chemin qu'avant, seul le programme change de source.
+        let seule = catalog.recomps.iter().filter(|r| !r.is_shared() && r.files.iter().any(|f| f.system.as_deref() == Some("Windows")) && r.games.iter().any(|g| g.rom_id.is_some())).min_by_key(|r| r.files.iter().map(|f| f.size).sum::<u64>()).unwrap();
+        let rom = seule.games[0].rom_id.unwrap();
+        println!("recomp à un jeu : {} (ROM {rom})", seule.name);
+        match job.run(rom).await.unwrap() {
+            InstallOutcome::Installed { game } => {
+                assert_eq!(game.version_raw.as_deref(), Some(seule.version.cle.as_str()));
+                assert!(game.game_dir.join(rel_to_path(game.executable.as_deref().unwrap())).exists());
+                println!("  installée : {:?} {} ROM", game.executable, game.roms.len());
+                assert!(!game.roms.is_empty(), "la ROM de RomM devait être posée");
+            }
+            InstallOutcome::NeedsChoice { game } => {
+                println!("  plusieurs exécutables : {:?}", game.pending_candidates);
+                assert_eq!(game.version_raw.as_deref(), Some(seule.version.cle.as_str()));
+            }
+        }
+
+        // Déjà à la version du catalogue : pas de mise à jour. Autre version : une vraie mise à jour.
+        let mut ancien = state::find(&config, recomp.runtime_rom_id()).unwrap();
+        ancien.version_raw = Some("Pokemon\nVersion : texte de VERSION.txt".into());
+        state::write_state(&config, &ancien).unwrap();
+        assert_eq!(crate::manager::align_versions(&config, &catalog), 1);
+        assert_eq!(state::find(&config, recomp.runtime_rom_id()).unwrap().version_raw.as_deref(), Some(recomp.version.cle.as_str()));
         let _ = std::fs::remove_dir_all(&base);
     }
 

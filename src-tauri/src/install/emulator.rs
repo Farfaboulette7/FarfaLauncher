@@ -297,7 +297,7 @@ mod tests {
     use super::*;
 
     fn f(name: &str, size: u64) -> RemoteFile {
-        RemoteFile { id: 1, file_name: name.into(), rel_path: name.into(), size, sha1: None, md5: None }
+        RemoteFile { id: 1, file_name: name.into(), rel_path: name.into(), size, sha1: None, md5: None, from_manager: false }
     }
 
     #[test]

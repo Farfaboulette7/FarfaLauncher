@@ -82,8 +82,13 @@ async fn start_refresh(app: &AppHandle, state: &AppState) -> AppResult<LibrarySn
     let target = platform::detect();
     runtimes::refresh(state).await;
     crate::manager::refresh(state).await;
+    runtimes::combine(state);
     let manifest = state.manifest();
     let catalog = state.catalog();
+    let aligned = crate::manager::align_versions(&state.config_dir, &catalog);
+    if aligned > 0 {
+        tracing::info!("{aligned} installation(s) déjà à la version du catalogue");
+    }
     let recomps = catalog.recomp_rom_ids();
     let (platforms, mut games) = runtimes::list_library(&client, &manifest, target, |ids| install_state::rekey_moved(&state.config_dir, ids)).await?;
 
@@ -119,18 +124,18 @@ async fn start_refresh(app: &AppHandle, state: &AppState) -> AppResult<LibrarySn
         // Chaque runtime une seule fois, quel que soit son nombre de jeux.
         let mut shared = HashMap::new();
         for runtime in &manifest.runtimes {
-            match library::fetch_game_details(&client, runtime.rom_id, target).await {
+            match runtimes::fetch_runtime(&client, &catalog, runtime, target).await {
                 Ok(game) => {
                     shared.insert(runtime.rom_id, game);
                 }
                 Err(e) => tracing::warn!("runtime {} non chargé: {}", runtime.id, e.code()),
             }
         }
-        let (shared, manifest) = (&shared, &manifest);
+        let (shared, manifest, detail_catalog) = (&shared, &manifest, &catalog);
         let mut results = stream::iter(ids)
             .map(|id| {
                 let client = client.clone();
-                async move { (id, runtimes::fetch_details_with(&client, manifest, shared, id, target).await) }
+                async move { (id, runtimes::fetch_details_with(&client, manifest, detail_catalog, shared, id, target).await) }
             })
             .buffer_unordered(DETAIL_CONCURRENCY);
         while let Some((id, res)) = results.next().await {
@@ -303,7 +308,7 @@ pub async fn games_by_ids(state: State<'_, AppState>, ids: Vec<i64>) -> AppResul
 #[tauri::command]
 pub async fn game_details(state: State<'_, AppState>, rom_id: i64) -> AppResult<Game> {
     let me = platform::detect();
-    let game = runtimes::fetch_details(&state.client()?, &state.manifest(), rom_id, me).await?;
+    let game = runtimes::fetch_details(&state.client()?, &state.manifest(), &state.catalog(), rom_id, me).await?;
     Ok(annotated(&state, vec![game], me).remove(0))
 }
 

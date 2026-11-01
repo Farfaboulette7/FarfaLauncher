@@ -120,6 +120,9 @@ pub struct RemoteFile {
     pub size: u64,
     pub sha1: Option<String>,
     pub md5: Option<String>,
+    /// Fichier de FarfaRomManager (`files/<sha1>`), pas de RomM.
+    #[serde(default)]
+    pub from_manager: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -372,6 +375,54 @@ impl Game {
         self.details_loaded = false;
     }
 
+    /// Programme d'un launcher à plusieurs jeux, tel que le décrit le catalogue : il n'a pas de page.
+    pub fn from_catalog(recomp: &crate::manager::CatalogRecomp, me: Target) -> Game {
+        let mut game = Game {
+            id: recomp.runtime_rom_id(),
+            platform_id: 0,
+            name: recomp.name.clone(),
+            folder_name: recomp.name.clone(),
+            summary: None,
+            cover_url: None,
+            box3d_url: None,
+            box_faces: None,
+            screenshot_urls: Vec::new(),
+            video_url: None,
+            genres: Vec::new(),
+            developers: Vec::new(),
+            release_year: None,
+            manuals: Vec::new(),
+            archives: Vec::new(),
+            my_archive: None,
+            rom_files: Vec::new(),
+            mods: Vec::new(),
+            pc: None,
+            runtime: None,
+            console: String::new(),
+            recomp: true,
+            emulator: None,
+            version_file: None,
+            server_version: None,
+            server_version_raw: None,
+            details_loaded: true,
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        game.use_catalog(recomp, me);
+        game
+    }
+
+    /// La recomp, sa version et ses mods viennent de FarfaRomManager ; la ROM reste celle de RomM.
+    pub fn use_catalog(&mut self, recomp: &crate::manager::CatalogRecomp, me: Target) {
+        let (archives, mine) = recomp.archives(me);
+        self.archives = archives;
+        self.my_archive = mine;
+        self.mods = recomp.mod_files();
+        self.version_file = None;
+        self.server_version = Some(recomp.version.nom.clone());
+        self.server_version_raw = Some(recomp.version.cle.clone());
+    }
+
     /// Jeu d'un runtime : la recomp, sa version et ses mods sont ceux du runtime.
     pub fn use_runtime(&mut self, runtime: &Game) {
         self.archives = runtime.archives.clone();
@@ -506,6 +557,7 @@ fn to_game(r: RawRom, base: &str, me: Target, details_loaded: bool) -> Game {
                     size: f.file_size_bytes,
                     sha1: f.sha1_hash.filter(|h| !h.is_empty()),
                     md5: f.md5_hash.filter(|h| !h.is_empty()),
+                    from_manager: false,
                 },
                 category,
             )

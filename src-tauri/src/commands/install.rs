@@ -165,7 +165,7 @@ async fn game_details(state: &AppState, rom_id: i64) -> AppResult<Game> {
         .and_then(|s| s.games.iter().find(|g| g.id == rom_id && g.details_loaded).cloned());
     match cached {
         Some(g) => Ok(g),
-        None => runtimes::fetch_details(&state.client()?, &state.manifest(), rom_id, platform::detect()).await,
+        None => runtimes::fetch_details(&state.client()?, &state.manifest(), &state.catalog(), rom_id, platform::detect()).await,
     }
 }
 

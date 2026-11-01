@@ -35,6 +35,24 @@ pub async fn download(
     download_from(client, &file_content_path(file), file, dest, cancel, on_progress, on_verify).await
 }
 
+/// Comme [`download`], depuis RomM ou FarfaRomManager selon l'origine du fichier.
+pub async fn download_any(
+    client: &RommClient,
+    manager_base: Option<&str>,
+    file: &RemoteFile,
+    dest: &Path,
+    cancel: &CancellationToken,
+    on_progress: impl FnMut(u64),
+    on_verify: impl FnOnce(),
+) -> AppResult<()> {
+    if !file.from_manager {
+        return download(client, file, dest, cancel, on_progress, on_verify).await;
+    }
+    let base = manager_base.ok_or(AppError::Download)?;
+    let sha1 = file.sha1.as_deref().ok_or(AppError::Download)?;
+    download_from(&client.with_base(base), &format!("files/{sha1}"), file, dest, cancel, on_progress, on_verify).await
+}
+
 /// Comme [`download`], depuis un chemin donné (fichier de FarfaRomManager).
 pub async fn download_from(
     client: &RommClient,

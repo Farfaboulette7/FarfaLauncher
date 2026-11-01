@@ -109,6 +109,33 @@ fn expand(text: &str, game: &str, rom: &str) -> String {
 }
 
 impl Manifest {
+    /// Le catalogue de FarfaRomManager prime ; `assets.json` reste pour ce qu'il ne connaît pas.
+    pub fn with_catalog(self, catalog: &Catalog) -> Manifest {
+        let mut runtimes: Vec<Runtime> = Vec::new();
+        let mut games: Vec<RuntimeGame> = Vec::new();
+        for r in catalog.recomps.iter().filter(|r| r.is_shared()) {
+            runtimes.push(Runtime {
+                id: r.id.clone(),
+                name: r.name.clone(),
+                repo: r.repo.clone(),
+                rom_id: r.runtime_rom_id(),
+                exe: r.launch.exe.clone().unwrap_or_else(|| r.id.clone()),
+                data_dir: r.launch.data_dir.clone().unwrap_or_default(),
+                save_dir: r.launch.save_dir.clone().unwrap_or_default(),
+                cache_dir: r.launch.cache_dir.clone(),
+                args: r.launch.args.clone(),
+                env: r.launch.env.clone(),
+            });
+            games.extend(r.games.iter().filter_map(|g| Some(RuntimeGame { runtime: r.id.clone(), game: g.game.clone()?, rom_id: g.rom_id? })));
+        }
+        let keep_old = |r: &Runtime| !runtimes.iter().any(|n| n.rom_id == r.rom_id);
+        let old_runtimes: Vec<Runtime> = self.runtimes.iter().filter(|r| keep_old(r)).cloned().collect();
+        let old_ids: Vec<String> = old_runtimes.iter().map(|r| r.id.clone()).collect();
+        games.extend(self.games.into_iter().filter(|g| old_ids.contains(&g.runtime)));
+        runtimes.extend(old_runtimes);
+        Manifest { runtimes, games }.validated()
+    }
+
     fn parse(text: &str) -> AppResult<Self> {
         let file: AssetsFile = serde_json::from_str(text).map_err(|e| crate::error::log_err(AppError::Server, "assets.json invalide", e))?;
         Ok(file.recomps.validated())
@@ -188,8 +215,7 @@ pub async fn refresh(state: &AppState) {
     match text.and_then(|t| Manifest::parse(&t)) {
         Ok(manifest) => {
             manifest.save_cached(&state.config_dir);
-            tracing::info!("{} runtime(s) partagé(s), {} jeu(x)", manifest.runtimes.len(), manifest.games.len());
-            *state.manifest.lock().unwrap() = manifest;
+            tracing::info!("{} runtime(s) partagé(s) dans assets.json, {} jeu(x)", manifest.runtimes.len(), manifest.games.len());
         }
         Err(e) => tracing::warn!("manifeste des recomps indisponible ({}), copie locale gardée", e.code()),
     }
@@ -197,6 +223,29 @@ pub async fn refresh(state: &AppState) {
 
 pub fn link(runtime: &Runtime, game: &RuntimeGame) -> GameRuntime {
     GameRuntime { rom_id: runtime.rom_id, name: runtime.name.clone(), repo: runtime.repo.clone(), game: game.game.clone() }
+}
+
+/// Manifeste en vigueur, d'après les dernières copies d'`assets.json` et du catalogue.
+pub fn combine(state: &AppState) {
+    let manifest = Manifest::load_cached(&state.config_dir).with_catalog(&state.catalog());
+    *state.manifest.lock().unwrap() = manifest;
+}
+
+/// Programme d'un runtime : décrit par le catalogue, sinon par son entrée RomM.
+pub async fn fetch_runtime(client: &RommClient, catalog: &Catalog, runtime: &Runtime, me: Target) -> AppResult<Game> {
+    match catalog.recomp(&runtime.id) {
+        Some(r) => Ok(Game::from_catalog(r, me)),
+        None => library::fetch_game_details(client, runtime.rom_id, me).await,
+    }
+}
+
+/// Détails d'une recomp à un seul jeu : son programme vient du catalogue s'il la connaît.
+async fn fetch_single(client: &RommClient, catalog: &Catalog, rom_id: i64, me: Target) -> AppResult<Game> {
+    let mut game = library::fetch_game_details(client, rom_id, me).await?;
+    if let Some(r) = catalog.recomp_for_rom(rom_id).filter(|r| !r.is_shared()) {
+        game.use_catalog(r, me);
+    }
+    Ok(game)
 }
 
 /// Page d'un jeu sans les fichiers de son runtime : sa ROM est dans son `ROM/`.
@@ -235,20 +284,20 @@ pub fn annotate(game: &mut Game, catalog: &Catalog, recomps: &HashSet<i64>, me: 
 }
 
 /// Détails d'un jeu : ses propres fichiers, plus ceux de son runtime s'il en a un.
-pub async fn fetch_details(client: &RommClient, manifest: &Manifest, rom_id: i64, me: Target) -> AppResult<Game> {
+pub async fn fetch_details(client: &RommClient, manifest: &Manifest, catalog: &Catalog, rom_id: i64, me: Target) -> AppResult<Game> {
     let Some((runtime, _)) = manifest.page(rom_id) else {
-        return library::fetch_game_details(client, rom_id, me).await;
+        return fetch_single(client, catalog, rom_id, me).await;
     };
-    let shared = library::fetch_game_details(client, runtime.rom_id, me).await?;
+    let shared = fetch_runtime(client, catalog, runtime, me).await?;
     let mut page = fetch_page(client, manifest, rom_id, me).await?;
     page.use_runtime(&shared);
     Ok(page)
 }
 
 /// Détails d'un jeu pendant un rafraîchissement : chaque runtime n'y est lu qu'une fois.
-pub async fn fetch_details_with(client: &RommClient, manifest: &Manifest, shared: &HashMap<i64, Game>, rom_id: i64, me: Target) -> AppResult<Game> {
+pub async fn fetch_details_with(client: &RommClient, manifest: &Manifest, catalog: &Catalog, shared: &HashMap<i64, Game>, rom_id: i64, me: Target) -> AppResult<Game> {
     let Some((runtime, _)) = manifest.page(rom_id) else {
-        return library::fetch_game_details(client, rom_id, me).await;
+        return fetch_single(client, catalog, rom_id, me).await;
     };
     let rt = shared.get(&runtime.rom_id).ok_or(AppError::Server)?;
     let mut page = fetch_page(client, manifest, rom_id, me).await?;
@@ -306,7 +355,7 @@ mod tests {
         assert!(!games.iter().any(|g| manifest.is_runtime(g.id)));
         assert_eq!(games.iter().filter(|g| g.runtime.is_some()).count(), manifest.games.len());
         let runtime = library::fetch_game_details(&client, 10550, Target::Windows).await.unwrap();
-        let page = fetch_details(&client, &manifest, manifest.page_ids()[0], Target::Windows).await.unwrap();
+        let page = fetch_details(&client, &manifest, &Catalog::default(), manifest.page_ids()[0], Target::Windows).await.unwrap();
         let debut = std::time::Instant::now();
         let (console, plus) = library::list_games_page(&client, &[8], Target::Windows, 0, 60).await.unwrap();
         println!("console GBA : {} jeux en {:?}, suite : {plus}, premier : {} ({} fichier(s) dans la liste)", console.len(), debut.elapsed(), console[0].name, console[0].rom_files.len());
@@ -337,6 +386,22 @@ mod tests {
           {"id":"bad","name":"B","repo":"","romId":99,"exe":"b","dataDir":"../..","saveDir":"s"}],
         "games":[{"runtime":"gen1recomp","game":"red","romId":1},{"runtime":"gen1recomp","game":"blue","romId":2},
           {"runtime":"bad","game":"x","romId":3},{"runtime":"gen1recomp","game":"../x","romId":4}]}}"#;
+
+    #[test]
+    fn the_catalog_replaces_the_same_runtime_of_assets_json() {
+        let catalog: Catalog = serde_json::from_str(r#"{"recomps":[{"id":"pokemon","name":"Gen1recomp","repo":"https://github.com/n/m","entryRomId":10,
+            "version":{"cle":"k","nom":"v1"},"launch":{"exe":"gen1recomp","args":["--game={game}"],"dataDir":"pokemon-love2d","saveDir":"saves/{game}","cacheDir":"{game}"},
+            "games":[{"romId":1,"game":"red"},{"romId":null,"game":"absent"},{"romId":2,"game":"blue"}]},
+            {"id":"seul","name":"S","repo":"","version":{"cle":"k","nom":"1"},"games":[{"romId":50}]}]}"#).unwrap();
+        let m = Manifest::parse(TEXT).unwrap().with_catalog(&catalog);
+        assert_eq!(m.runtimes.len(), 1);
+        assert_eq!(m.runtimes[0].id, "pokemon");
+        assert_eq!(m.runtimes[0].repo, "https://github.com/n/m");
+        assert_eq!(m.page_ids(), [1, 2]);
+        assert!(m.is_runtime(10) && !m.is_runtime(50));
+        // Rien au catalogue : assets.json reste en place.
+        assert_eq!(Manifest::parse(TEXT).unwrap().with_catalog(&Catalog::default()).runtimes[0].id, "gen1recomp");
+    }
 
     #[test]
     fn reads_and_validates_the_manifest() {

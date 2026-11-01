@@ -54,7 +54,8 @@ pub async fn download_mod(app: AppHandle, state: State<'_, AppState>, rom_id: i6
     let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
     let client = state.client()?;
     // Fichier à jour côté serveur (identifiants actuels).
-    let game = runtimes::fetch_details(&client, &state.manifest(), rom_id, platform::detect()).await?;
+    let game = runtimes::fetch_details(&client, &state.manifest(), &state.catalog(), rom_id, platform::detect()).await?;
+    let manager_base = crate::manager::base_url(&state.settings());
     let file = game.mods.iter().find(|m| m.id == file_id).cloned().ok_or(AppError::NotAvailable)?;
     let key = (rom_id, file_id);
     let cancel = CancellationToken::new();
@@ -72,8 +73,9 @@ pub async fn download_mod(app: AppHandle, state: State<'_, AppState>, rom_id: i6
     tauri::async_runtime::spawn(async move {
         let mut last = Instant::now() - Duration::from_secs(1);
         let total = file.size;
-        let result = download::download(
+        let result = download::download_any(
             &client,
+            manager_base.as_deref(),
             &file,
             &dest,
             &cancel,

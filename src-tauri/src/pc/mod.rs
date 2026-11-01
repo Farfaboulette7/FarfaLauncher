@@ -240,6 +240,7 @@ pub(crate) fn file(rel: &str, size: u64) -> RemoteFile {
         id: 1,
         file_name: rel.rsplit('/').next().unwrap().to_string(),
         rel_path: rel.to_string(),
+        from_manager: false,
         size,
         sha1: None,
         md5: None,

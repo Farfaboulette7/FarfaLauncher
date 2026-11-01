@@ -50,8 +50,8 @@ pub struct AppState {
 impl AppState {
     pub fn new(config_dir: PathBuf, log_dir: PathBuf, cache_dir: PathBuf, default_install_root: PathBuf) -> Self {
         let settings = settings::load(&config_dir);
-        let manifest = crate::runtimes::Manifest::load_cached(&config_dir);
         let catalog = crate::manager::Catalog::load_cached(&config_dir);
+        let manifest = crate::runtimes::Manifest::load_cached(&config_dir).with_catalog(&catalog);
         // Persiste immédiatement le device_id généré au premier lancement.
         if let Err(e) = settings::save(&config_dir, &settings) {
             tracing::error!("impossible d'enregistrer les paramètres initiaux: {e}");
