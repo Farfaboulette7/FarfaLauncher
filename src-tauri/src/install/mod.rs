@@ -962,6 +962,62 @@ mod tests {
 
     /// Recomps servies par FarfaRomManager, dans des dossiers temporaires : `FARFA_E2E_URL=… FARFA_E2E_MANAGER=…
     /// FARFA_E2E_TOKEN=… cargo test -- --ignored recomp_manager_e2e --nocapture`.
+    /// Vrai serveur : reprise depuis RomM puis envois sur FarfaRomManager, sur un jeu sans
+    /// sauvegarde ; tout est retiré à la fin. `FARFA_E2E_URL`, `_TOKEN`, `_MANAGER`.
+    #[tokio::test]
+    #[ignore]
+    async fn recomp_saves_e2e() {
+        use crate::romm::saves as romm;
+        use crate::save_store::RecompSave;
+        let var = |k: &str| std::env::var(k).unwrap();
+        let client = RommClient::new(&var("FARFA_E2E_URL"), Some(var("FARFA_E2E_TOKEN"))).unwrap();
+        let base = var("FARFA_E2E_MANAGER");
+        let manager = client.with_base(&base);
+        let catalog: Catalog = serde_json::from_str(&manager.send(manager.get("api/catalog")).await.unwrap().text().await.unwrap()).unwrap();
+        let mut free = None;
+        for r in &catalog.recomps {
+            for g in &r.games {
+                let Some(rom_id) = g.rom_id else { continue };
+                let game = g.game.clone().unwrap_or_else(|| r.id.clone());
+                let save = RecompSave::new(client.clone(), &base, rom_id, &r.id, &game);
+                if save.find().await.unwrap().is_none() && romm::find(&client, rom_id).await.unwrap().is_none() {
+                    free = Some((save, rom_id, format!("api/saves/{}/{game}", r.id)));
+                }
+            }
+        }
+        let (save, rom_id, path) = free.expect("aucun jeu de recomp sans sauvegarde");
+        println!("essai sur {path} (ROM {rom_id})");
+        let zip = |text: &str| {
+            let mut out = std::io::Cursor::new(Vec::new());
+            let mut w = zip::ZipWriter::new(&mut out);
+            w.start_file("test.sav", zip::write::SimpleFileOptions::default()).unwrap();
+            std::io::Write::write_all(&mut w, text.as_bytes()).unwrap();
+            w.finish().unwrap();
+            out.into_inner()
+        };
+
+        let on_romm = romm::upload(&client, rom_id, zip("depuis romm")).await.unwrap();
+        let imported = save.import_from_romm().await;
+        let hash = crate::saves::hash_zip;
+        let check = async {
+            let imported = imported.unwrap().expect("sauvegarde reprise");
+            assert_eq!(hash(&save.download().await.unwrap()).unwrap(), hash(&zip("depuis romm")).unwrap());
+            assert_eq!(save.find().await.unwrap().unwrap().updated_at, imported.updated_at);
+            // Sur RomM, elle reste en place.
+            assert_eq!(romm::find(&client, rom_id).await.unwrap().unwrap().id, on_romm.id);
+            let next = zip("depuis le launcher");
+            let date = save.upload(next.clone()).await.unwrap();
+            assert_ne!(date, imported.updated_at);
+            assert_eq!(save.download().await.unwrap(), next);
+        }
+        .await;
+        client.send(client.post("api/saves/delete", &serde_json::json!({ "saves": [on_romm.id] }))).await.unwrap();
+        manager.send(manager.delete(&path, &())).await.unwrap();
+        assert!(save.find().await.unwrap().is_none());
+        assert!(romm::find(&client, rom_id).await.unwrap().is_none());
+        check
+    }
+
     #[cfg(windows)]
     #[tokio::test]
     #[ignore]

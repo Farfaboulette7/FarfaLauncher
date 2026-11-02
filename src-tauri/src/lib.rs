@@ -12,6 +12,7 @@ mod pc;
 mod platform;
 mod romm;
 mod runtimes;
+mod save_store;
 mod saves;
 mod secrets;
 mod settings;

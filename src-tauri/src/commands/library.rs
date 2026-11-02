@@ -170,6 +170,7 @@ async fn start_refresh(app: &AppHandle, state: &AppState) -> AppResult<LibrarySn
         }
         state.refreshing.store(false, Ordering::SeqCst);
         let _ = app.emit("library-done", RefreshDone { failed });
+        crate::save_store::import_all(&state.config_dir, &catalog, &state.settings(), &client).await;
     });
     Ok(snapshot)
 }

@@ -214,6 +214,9 @@ pub struct Game {
     /// Jeu lancé par un runtime partagé : archives, mods et version sont les siens.
     #[serde(default)]
     pub runtime: Option<GameRuntime>,
+    /// Ce qui distingue cette ROM de ses homonymes (`USA, Europe · Rev 1`).
+    #[serde(default)]
+    pub variant: Option<String>,
     /// Console d'origine (slug RomM), commune à `gba` et `portage-gba`.
     #[serde(default)]
     pub console: String,
@@ -398,6 +401,7 @@ impl Game {
             mods: Vec::new(),
             pc: None,
             runtime: None,
+            variant: None,
             console: String::new(),
             recomp: true,
             emulator: None,
@@ -532,6 +536,27 @@ fn relative_path(rom_full_path: &str, rom_fs_name: &str, file_full_path: &str) -
     }
 }
 
+/// Étiquettes `(…)` et `[…]` d'un nom de ROM, telles qu'écrites dans le fichier.
+fn rom_variant(fs_name: &str) -> Option<String> {
+    let mut tags = Vec::new();
+    let mut start = None;
+    for (i, c) in fs_name.char_indices() {
+        match c {
+            '(' | '[' if start.is_none() => start = Some(i + 1),
+            ')' | ']' => {
+                if let Some(s) = start.take() {
+                    let tag = fs_name[s..i].trim();
+                    if !tag.is_empty() {
+                        tags.push(tag);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    (!tags.is_empty()).then(|| tags.join(" · "))
+}
+
 fn top_folder(rel: &str) -> Option<String> {
     let (first, rest) = rel.split_once('/')?;
     (!rest.is_empty()).then(|| first.to_ascii_lowercase())
@@ -651,6 +676,7 @@ fn to_game(r: RawRom, base: &str, me: Target, details_loaded: bool) -> Game {
         developers = meta.publishers;
     }
 
+    let variant = plain_rom.then(|| rom_variant(&r.fs_name)).flatten();
     Game {
         id: r.id,
         platform_id: r.platform_id,
@@ -672,6 +698,7 @@ fn to_game(r: RawRom, base: &str, me: Target, details_loaded: bool) -> Game {
         mods,
         pc,
         runtime: None,
+        variant,
         console,
         recomp: portage,
         emulator: None,
@@ -728,6 +755,16 @@ mod tests {
         assert!(is_portage("Portage-N64"));
         assert!(!is_portage("farfa-portage"));
         assert!(!is_portage("ngc"));
+    }
+
+    #[test]
+    fn rom_variants() {
+        assert_eq!(rom_variant("Pokemon - FireRed Version (USA, Europe) (Rev 1).gba").as_deref(), Some("USA, Europe · Rev 1"));
+        assert_eq!(rom_variant("Pokemon - Version Rouge Feu (F).gba").as_deref(), Some("F"));
+        assert_eq!(rom_variant("Pokemon - Version Rouge Feu (France).gba").as_deref(), Some("France"));
+        assert_eq!(rom_variant("Monsters, Inc. (Europe) (En,Es,Nl) [b1].gba").as_deref(), Some("Europe · En,Es,Nl · b1"));
+        assert_eq!(rom_variant("Pokemon FireRed"), None);
+        assert_eq!(rom_variant("Jeu () (.gba"), None);
     }
 
     #[test]

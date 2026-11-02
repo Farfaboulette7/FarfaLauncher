@@ -224,6 +224,8 @@ export interface Game {
   pc: PcGame | null;
   /** Jeu lancé par un runtime partagé : archives, mods et version sont les siens. */
   runtime: GameRuntime | null;
+  /** Ce qui distingue cette ROM de ses homonymes (`USA, Europe · Rev 1`). */
+  variant?: string | null;
   /** Console d'origine, commune à `gba` et `portage-gba`. */
   console: string;
   /** Ce jeu a une recomp. */

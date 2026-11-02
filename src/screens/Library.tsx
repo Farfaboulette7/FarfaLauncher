@@ -34,8 +34,8 @@ import "./Library.css";
 import "./Hack.css";
 import { FullscreenButton } from "../components/FullscreenButton";
 
-type Tab = "recent" | "library" | "recomps" | "favorites";
-/** Filtre de la bibliothèque et de la recherche. */
+type Tab = "recent" | "library" | "favorites";
+/** Filtre de la bibliothèque, des favoris et de la recherche. */
 type Kind = "all" | "recomp" | "emulation";
 
 const KINDS: { id: Kind; label: string }[] = [
@@ -64,10 +64,15 @@ interface ConsolePage {
 
 const collator = new Intl.Collator("fr");
 
+/** Comment ce jeu se joue sur ce système : la recomp d'abord, comme sur sa fiche. */
+function playMode(game: Game): "recomp" | "emulation" | null {
+  if (game.pc) return null;
+  if (game.recomp && (isAvailable(game) || !game.detailsLoaded)) return "recomp";
+  return emulatorReady(game) ? "emulation" : null;
+}
+
 function matchesKind(game: Game, kind: Kind): boolean {
-  if (kind === "recomp") return game.recomp;
-  if (kind === "emulation") return !!game.emulator;
-  return true;
+  return kind === "all" || playMode(game) === kind;
 }
 
 /** Durées du passage vers la fiche d'un jeu (doivent suivre Hack.css). */
@@ -85,7 +90,6 @@ interface Hack {
 const TABS: { id: Tab; label: string }[] = [
   { id: "recent", label: "Récent" },
   { id: "library", label: "Bibliothèque" },
-  { id: "recomps", label: "Recomps" },
   { id: "favorites", label: "Favoris" },
 ];
 
@@ -402,7 +406,6 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
       return [...allGames, ...recents].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id - a.id).slice(0, RECENT_COUNT);
     }
     if (tab === "favorites") return [...favorites.ids].map((id) => known(id)).filter((g): g is Game => !!g);
-    if (tab === "recomps") return allGames.filter((g) => g.recomp);
     const own = consoleKey === null ? allGames : allGames.filter((g) => gameKey(g) === consoleKey);
     const ownIds = new Set(own.map((g) => g.id));
     const page = consoleKey ? (consolePages.get(consoleKey)?.ids ?? []) : [];
@@ -411,6 +414,8 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
   }, [tab, allGames, favorites.ids, consoleKey, consolePages, extra, recentIds, known, gameKey]);
 
   const q = term.toLocaleLowerCase("fr");
+  // « Récent » montre tous les derniers ajouts, sans filtre.
+  const shownKind: Kind = tab === "recent" ? "all" : kind;
   // Recherche : dans la vue courante, plus les résultats de RomM (toute la bibliothèque ou la console ouverte).
   const games = useMemo(() => {
     const local = q ? viewGames.filter((g) => g.name.toLocaleLowerCase("fr").includes(q)) : viewGames;
@@ -418,8 +423,8 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
     const found = q && tab === "library"
       ? searchIds.map((id) => extra.get(id)).filter((g): g is Game => !!g && !localIds.has(g.id) && (consoleKey === null || gameKey(g) === consoleKey))
       : [];
-    return [...local, ...found].filter((g) => matchesKind(g, kind));
-  }, [q, viewGames, tab, searchIds, extra, consoleKey, gameKey, kind]);
+    return [...local, ...found].filter((g) => matchesKind(g, shownKind));
+  }, [q, viewGames, tab, searchIds, extra, consoleKey, gameKey, shownKind]);
   const showPlatforms = tab === "library" && consoleKey === null && !q;
   const page = consoleKey ? consolePages.get(consoleKey) : undefined;
 
@@ -602,7 +607,7 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
         </span>
       </div>
 
-      {tab !== "recomps" && (
+      {tab !== "recent" && (
         <div className="lib-kinds" role="group" aria-label="Type de jeu">
           {KINDS.map((k) => (
             <button key={k.id} className="n-btn lib-kind" aria-pressed={kind === k.id} onClick={() => setKind(k.id)}>
@@ -650,7 +655,7 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
             ))}
           </ul>
         )}
-        {!showPlatforms && snapshot && games.length === 0 && !page?.loading && !searching && <p className="lib-empty">{emptyMessage(tab, q, favorites.loading, kind)}</p>}
+        {!showPlatforms && snapshot && games.length === 0 && !page?.loading && !searching && <p className="lib-empty">{emptyMessage(tab, q, favorites.loading, shownKind)}</p>}
         {!showPlatforms && tab !== "recent" && (
           <VirtualGrid
             games={games}
@@ -692,7 +697,6 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
 function viewTitle(tab: Tab, group: ConsoleGroup | null): string {
   if (tab === "recent") return "Derniers ajouts";
   if (tab === "favorites") return "Mes favoris";
-  if (tab === "recomps") return "Jeux avec une recomp";
   return group ? group.name : "Plateformes";
 }
 
@@ -857,8 +861,9 @@ function PlatformCard({ group, count, fresh, onOpen }: { group: ConsoleGroup; co
 /** Comment jouer à ce jeu, s'il n'est pas installé. */
 function playBadge(game: Game): { label: string; cls: string } | null {
   if (game.pc) return !isAvailable(game) && game.detailsLoaded ? { label: "Non disponible", cls: "card-badge--muted" } : null;
-  if (game.recomp && (isAvailable(game) || !game.detailsLoaded)) return { label: "Recomp", cls: "card-badge--recomp" };
-  if (emulatorReady(game)) return { label: "Émulation", cls: "card-badge--emu" };
+  const mode = playMode(game);
+  if (mode === "recomp") return { label: "Recomp", cls: "card-badge--recomp" };
+  if (mode === "emulation") return { label: "Émulation", cls: "card-badge--emu" };
   if (game.recomp) return { label: "Non disponible", cls: "card-badge--muted" };
   return { label: "Pas d'émulateur disponible", cls: "card-badge--muted" };
 }
@@ -887,12 +892,17 @@ const GameCard = memo(function GameCard({
         : playBadge(game);
   const [kind, setKind] = useState<"box" | "flat" | null>(null);
   return (
-    <button className={`card n-marquee-host${kind === "box" ? " card--box3d" : ""}${fresh ? " card--new" : ""}`} data-sound-hover="game" data-game-id={game.id} onClick={(e) => onOpen(game.id, e.currentTarget)} title={game.name}>
+    <button className={`card n-marquee-host${kind === "box" ? " card--box3d" : ""}${fresh ? " card--new" : ""}`} data-sound-hover="game" data-game-id={game.id} onClick={(e) => onOpen(game.id, e.currentTarget)} title={game.variant ? `${game.name} · ${game.variant}` : game.name}>
       <div className="card-cover">
         <BoxArt game={game} onKind={setKind} />
         {kind === null && !game.boxFaces && <span className="card-placeholder">{game.name}</span>}
         {fresh && <span className="n-new card-new">NEW</span>}
-        {badge && <span className={`card-badge ${badge.cls}`}>{badge.label}</span>}
+        {(game.variant || badge) && (
+          <div className="card-tags">
+            {game.variant && <span className="card-variant">{game.variant}</span>}
+            {badge && <span className={`card-badge ${badge.cls}`}>{badge.label}</span>}
+          </div>
+        )}
         {favorite && (
           <span className="card-fav" title="Favori">
             ★

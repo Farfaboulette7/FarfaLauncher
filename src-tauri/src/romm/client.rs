@@ -120,6 +120,11 @@ impl RommClient {
         self.authed(self.http.post(self.url(path)).multipart(form))
     }
 
+    /// PUT d'un fichier entier, sans délai global : à fixer selon l'envoi.
+    pub fn put_bytes(&self, path: &str, body: Vec<u8>) -> RequestBuilder {
+        self.authed(self.http.put(self.url(path)).header(reqwest::header::CONTENT_TYPE, "application/zip").body(body))
+    }
+
     pub async fn send(&self, req: RequestBuilder) -> AppResult<Response> {
         let resp = req.send().await.map_err(|e| log_err(AppError::ServerUnreachable, "requête HTTP", error_chain(&e)))?;
         check_status(resp).await

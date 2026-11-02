@@ -14,7 +14,7 @@ use crate::install::state::{self, InstalledGame};
 use crate::install::extract::INTERNAL_DIR;
 use crate::install::rel_to_path;
 use crate::romm::client::RommClient;
-use crate::romm::saves as server;
+use crate::save_store::SaveStore;
 use crate::saves::{self, SaveLocation};
 use crate::state::AppState;
 
@@ -103,6 +103,10 @@ fn reenable_if_found(config_dir: &std::path::Path, st: &mut InstalledGame) -> bo
     false
 }
 
+fn store_of(state: &AppState, client: RommClient, st: &InstalledGame) -> SaveStore {
+    SaveStore::of(&state.catalog(), &state.settings(), client, st)
+}
+
 fn server_unavailable(e: &AppError) -> bool {
     matches!(e, AppError::ServerUnreachable | AppError::Server | AppError::AuthInvalid)
 }
@@ -123,7 +127,7 @@ pub async fn save_check(state: State<'_, AppState>, rom_id: i64) -> AppResult<Sa
         // y a une sauvegarde sur le serveur à poser avant de jouer.
         if !st.saves.searched_after_play {
             let on_server = match state.client() {
-                Ok(client) => matches!(server::find(&client, rom_id).await, Ok(Some(_))),
+                Ok(client) => matches!(store_of(&state, client, &st).find().await, Ok(Some(_))),
                 Err(_) => false,
             };
             if !on_server {
@@ -135,7 +139,8 @@ pub async fn save_check(state: State<'_, AppState>, rom_id: i64) -> AppResult<Sa
         return Ok(SaveCheck::Unknown { suggestions });
     };
     let Ok(client) = state.client() else { return Ok(SaveCheck::Ready) };
-    let remote = match server::find(&client, rom_id).await {
+    let store = store_of(&state, client, &st);
+    let remote = match store.find().await {
         Ok(Some(s)) => s,
         Ok(None) => return Ok(SaveCheck::Ready),
         Err(e) if server_unavailable(&e) => {
@@ -151,7 +156,7 @@ pub async fn save_check(state: State<'_, AppState>, rom_id: i64) -> AppResult<Sa
     let remote_hash = if st.saves.synced_server.as_deref() == Some(remote.updated_at.as_str()) {
         st.saves.synced_hash.clone()
     } else {
-        saves::hash_zip(&server::download(&client, &remote).await?)?
+        saves::hash_zip(&store.download(&remote).await?)?
     };
     if local_hash == remote_hash {
         st.saves.synced_hash = local_hash;
@@ -204,9 +209,9 @@ pub async fn before_play(state: &AppState, rom_id: i64, choice: SaveChoice) -> A
             state::write_state(&state.config_dir, &st)?;
         }
         SaveChoice::Server => {
-            let client = state.client()?;
-            let remote = server::find(&client, rom_id).await?.ok_or(AppError::Server)?;
-            let bytes = server::download(&client, &remote).await?;
+            let store = store_of(state, state.client()?, &st);
+            let remote = store.find().await?.ok_or(AppError::Server)?;
+            let bytes = store.download(&remote).await?;
             let backups = st.game_dir.join(INTERNAL_DIR).join("backups");
             let backup = backups.join(format!("saves-{}", state::now()));
             let (loc2, bytes2) = (loc.clone(), bytes.clone());
@@ -307,9 +312,9 @@ pub async fn after_play(state: &AppState, client: Option<RommClient>, rom_id: i6
         }
         let client = client.ok_or(AppError::AuthInvalid)?;
         let size = zip.len();
-        let uploaded = server::upload(&client, rom_id, zip).await?;
+        let updated_at = store_of(state, client, &st).upload(zip).await?;
         st.saves.synced_hash = hash;
-        st.saves.synced_server = Some(uploaded.updated_at);
+        st.saves.synced_server = Some(updated_at);
         state::write_state(&state.config_dir, &st)?;
         tracing::info!("« {} » : sauvegarde envoyée ({size} octets)", st.name);
         Ok(SaveUpload::Uploaded)

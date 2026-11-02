@@ -68,7 +68,7 @@ export function GameDetail({ game, platform, target, installs, favorite, onToggl
         <div className="gd-title-row">
           <div className="gd-title-block">
             <Marquee as="h1" className="n-title gd-title" text={game.name} />
-            {platform && <p className="n-subtitle gd-platform">{platform.name}</p>}
+            {platform && <p className="n-subtitle gd-platform">{game.variant ? `${platform.name} · ${game.variant}` : platform.name}</p>}
           </div>
           <div className="gd-header-actions">
             <FullscreenButton />

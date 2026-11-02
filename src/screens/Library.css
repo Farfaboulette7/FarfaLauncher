@@ -270,10 +270,18 @@
   letter-spacing: var(--nier-tracking-wide);
   color: var(--nier-high);
 }
-.card-badge {
+.card-tags {
   position: absolute;
   left: 0;
   bottom: 10px;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  max-width: 100%;
+}
+.card-badge {
   padding: 3px 10px;
   font-size: var(--fs-xs);
   letter-spacing: var(--nier-tracking-wide);
@@ -281,6 +289,18 @@
   color: var(--nier-high);
 }
 .card-badge--muted { background: var(--nier-low); }
+/* Ce qui distingue une ROM de ses homonymes (région, révision…), au-dessus du badge. */
+.card-variant {
+  max-width: 100%;
+  padding: 2px 8px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--fs-xs);
+  letter-spacing: var(--nier-tracking);
+  background: var(--nier-high);
+  color: var(--nier-low);
+}
 .card-name {
   max-width: 100%;
   padding: 8px 10px 10px;
@@ -306,7 +326,6 @@
 
 /* Boîte 3D : posée sur la carte, sans fond ni recadrage. */
 .card--box3d .card-cover { background: transparent; overflow: visible; }
-.card-badge,
 .card-fav { z-index: 1; }
 
 /* Linux (WebKitGTK) : un filtre qui change au survol fait clignoter la carte,
