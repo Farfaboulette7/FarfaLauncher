@@ -24,8 +24,6 @@ Téléchargez le fichier de votre système dans la
 |---|---|
 | Windows | `FarfaLauncher_x.y.z_x64-setup.exe` |
 | Linux / Steam Deck | `FarfaLauncher_x.y.z_amd64.AppImage` |
-| macOS (Apple Silicon : M1, M2…) | `FarfaLauncher_x.y.z_aarch64.dmg` |
-| macOS (Intel) | `FarfaLauncher_x.y.z_x64.dmg` |
 
 Ensuite, FaRFa project **se met à jour tout seul** : il vérifie au démarrage et propose
 la nouvelle version (aussi : *Paramètres → Vérifier les mises à jour*).
@@ -50,16 +48,6 @@ chmod +x FarfaLauncher_*.AppImage
 
 Sur Steam Deck, faites-le en mode Bureau. Vous pouvez ensuite ajouter l'AppImage à Steam
 (*Ajouter un jeu non-Steam*) pour le lancer depuis le mode Jeu.
-
-### macOS
-
-L'application n'est pas notarisée par Apple. Après l'avoir glissée dans *Applications*,
-si macOS dit qu'elle est « endommagée » ou « ne peut pas être ouverte », ouvrez le
-Terminal et tapez :
-
-```bash
-xattr -cr /Applications/FarfaLauncher.app
-```
 
 ### Bon à savoir
 
@@ -232,7 +220,7 @@ expose les nouveaux fichiers (le script de mise à jour le fait).
 - **Réutilisation** : l'interface de NieRDeck est en React ; son style est repris et
   adapté à la souris, au clavier et aux grands écrans.
 - **Mises à jour signées** intégrées (plugin updater de Tauri) et compilation
-  Windows / Linux / macOS depuis GitHub Actions.
+  Windows / Linux depuis GitHub Actions.
 - Rust est bien outillé pour le reste du cahier des charges : téléchargement avec reprise,
   extraction zip, trousseau OS (`keyring`), suivi des processus enfants (temps de jeu).
 
@@ -281,7 +269,7 @@ git push && git push origin v0.2.0
 ```
 
 Le workflow [`release.yml`](.github/workflows/release.yml) vérifie que le tag correspond
-aux versions des fichiers, compile Windows / Linux / macOS (Apple Silicon et Intel),
+aux versions des fichiers, compile Windows et Linux (AppImage),
 signe les paquets de mise à jour et publie la release avec `latest.json`, que les
 launchers installés consultent au démarrage.
 
