@@ -5,6 +5,7 @@ mod error;
 mod external;
 mod gamepad;
 mod install;
+mod language;
 mod launch;
 mod logging;
 mod manager;

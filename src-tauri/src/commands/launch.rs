@@ -132,11 +132,21 @@ pub async fn play_game(
     // Jeu déjà relevé derrière le launcher : lancé directement.
     let open_menu = menu == Some(true) && st.shared.is_some();
     let direct = st.direct_launch.as_ref().filter(|d| !open_menu && !st.prefer_launcher && st.game_dir.join(rel_to_path(&d.exe)).exists());
+    // Recomp ou émulateur : français par défaut, posé avant le lancement.
+    let mut env: Vec<(String, String)> = direct.map(|d| d.env.clone()).unwrap_or_default();
+    if prepared.is_none() {
+        let rules = state.catalog().language_for_install(&st);
+        if !rules.is_empty() {
+            let program = st.game_dir.join(rel_to_path(direct.map(|d| d.exe.as_str()).unwrap_or(&exe)));
+            let exe_dir = program.parent().unwrap_or(&st.game_dir).to_path_buf();
+            env.extend(crate::language::prepare(&st.game_dir, &exe_dir, &rules));
+        }
+    }
     let spec = match (&prepared, direct) {
         (Some(p), _) => Launch { exe: p.exe.clone(), args: &p.args, env: &[], cwd: p.cwd.clone(), learn: false, runner: p.runner.as_ref() },
-        (None, Some(d)) => Launch { exe: rel_to_path(&d.exe), args: &d.args, env: &d.env, cwd: d.cwd.as_deref().map(rel_to_path), learn: false, runner: None },
+        (None, Some(d)) => Launch { exe: rel_to_path(&d.exe), args: &d.args, env: &env, cwd: d.cwd.as_deref().map(rel_to_path), learn: false, runner: None },
         // Jeu d'un runtime : son lancement est connu, le menu de la recomp n'a rien à apprendre.
-        (None, None) => Launch { exe: rel_to_path(&exe), args: &[], env: &[], cwd: None, learn: st.shared.is_none(), runner: None },
+        (None, None) => Launch { exe: rel_to_path(&exe), args: &[], env: &env, cwd: None, learn: st.shared.is_none(), runner: None },
     };
     let running = match launch::spawn(&st.game_dir, spec) {
         Ok(r) => r,

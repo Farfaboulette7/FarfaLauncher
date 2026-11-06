@@ -55,14 +55,131 @@ fn expand(text: &str, rom: &Path, rom_dir: &Path, rom_stem: &str) -> String {
     text.replace("{rom}", &rom.to_string_lossy()).replace("{romdir}", &rom_dir.to_string_lossy()).replace("{romstem}", rom_stem)
 }
 
-/// Dossier des sauvegardes d'un jeu : à côté de la ROM, ou relatif à l'exécutable.
-fn saves_dir(emulator: &Emulator, rom_dir: &Path, game_dir: &Path, exe: &str) -> Option<PathBuf> {
-    match emulator.saves.dir.as_deref()? {
-        "{romdir}" => Some(rom_dir.to_path_buf()),
-        rel => {
-            let exe_dir = game_dir.join(rel_to_path(exe)).parent().map(Path::to_path_buf).unwrap_or_else(|| game_dir.to_path_buf());
-            Some(exe_dir.join(rel_to_path(rel)))
+/// Identifiant d'un disque : GameCube ou Wii (`GZ2P01`, dans son en-tête) ou PSP
+/// (`ULES00151`, dans `UMD_DATA.BIN`, aussi au format CHD).
+pub fn disc_id(path: &Path) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let ext = path.extension()?.to_string_lossy().to_ascii_lowercase();
+    if ext == "chd" {
+        return psp_id(&mut ChdSectors::open(path)?);
+    }
+    // RVZ / WIA : copie de l'en-tête du disque à 0x58 ; CISO : 0x8000 ; WBFS : 0x200.
+    let offset = match ext.as_str() {
+        "iso" | "gcm" => 0,
+        "rvz" | "wia" => 0x58,
+        "ciso" => 0x8000,
+        "wbfs" => 0x200,
+        _ => return None,
+    };
+    let mut file = std::fs::File::open(path).ok()?;
+    file.seek(SeekFrom::Start(offset)).ok()?;
+    let mut id = [0u8; 6];
+    file.read_exact(&mut id).ok()?;
+    if id.iter().all(u8::is_ascii_alphanumeric) {
+        return Some(String::from_utf8_lossy(&id).into_owned());
+    }
+    (ext == "iso").then(|| psp_id(&mut IsoSectors(file))).flatten()
+}
+
+const SECTOR: usize = 2048;
+
+/// Secteurs de 2048 octets d'une image de disque.
+trait Sectors {
+    fn sector(&mut self, lba: u64) -> Option<Vec<u8>>;
+}
+
+struct IsoSectors(std::fs::File);
+
+impl Sectors for IsoSectors {
+    fn sector(&mut self, lba: u64) -> Option<Vec<u8>> {
+        use std::io::{Read, Seek, SeekFrom};
+        self.0.seek(SeekFrom::Start(lba * SECTOR as u64)).ok()?;
+        let mut buf = vec![0; SECTOR];
+        self.0.read_exact(&mut buf).ok()?;
+        Some(buf)
+    }
+}
+
+/// CHD de DVD (`chdman createdvd`) : des blocs de secteurs de 2048 octets.
+struct ChdSectors {
+    chd: chd::Chd<std::io::BufReader<std::fs::File>>,
+    hunk_size: u64,
+    compressed: Vec<u8>,
+}
+
+impl ChdSectors {
+    fn open(path: &Path) -> Option<Self> {
+        let file = std::io::BufReader::new(std::fs::File::open(path).ok()?);
+        let chd = chd::Chd::open(file, None).ok()?;
+        let hunk_size = u64::from(chd.header().hunk_size());
+        (hunk_size >= SECTOR as u64 && hunk_size % SECTOR as u64 == 0).then_some(Self { chd, hunk_size, compressed: Vec::new() })
+    }
+}
+
+impl Sectors for ChdSectors {
+    fn sector(&mut self, lba: u64) -> Option<Vec<u8>> {
+        let offset = lba * SECTOR as u64;
+        let mut out = self.chd.get_hunksized_buffer();
+        let mut hunk = self.chd.hunk(u32::try_from(offset / self.hunk_size).ok()?).ok()?;
+        hunk.read_hunk_in(&mut self.compressed, &mut out).ok()?;
+        let start = (offset % self.hunk_size) as usize;
+        out.get(start..start + SECTOR).map(<[u8]>::to_vec)
+    }
+}
+
+/// `UMD_DATA.BIN` à la racine du disque PSP (ISO 9660) : « ULES-00151|… ».
+fn psp_id(disc: &mut dyn Sectors) -> Option<String> {
+    let pvd = disc.sector(16)?;
+    if &pvd[1..6] != b"CD001" {
+        return None;
+    }
+    let root = &pvd[156..190];
+    let (lba, size) = (u32::from_le_bytes(root[2..6].try_into().ok()?), u32::from_le_bytes(root[10..14].try_into().ok()?));
+    for i in 0..u64::from(size).div_ceil(SECTOR as u64).min(16) {
+        let dir = disc.sector(u64::from(lba) + i)?;
+        let mut pos = 0;
+        while pos + 33 < dir.len() && dir[pos] != 0 {
+            let len = dir[pos] as usize;
+            let name_len = dir[pos + 32] as usize;
+            let name = dir.get(pos + 33..pos + 33 + name_len)?;
+            if name.eq_ignore_ascii_case(b"UMD_DATA.BIN;1") || name.eq_ignore_ascii_case(b"UMD_DATA.BIN") {
+                let data = disc.sector(u64::from(u32::from_le_bytes(dir[pos + 2..pos + 6].try_into().ok()?)))?;
+                let text = String::from_utf8_lossy(&data[..data.iter().position(|&b| b == b'|').unwrap_or(16).min(16)]).replace('-', "");
+                return (text.len() == 9 && text.bytes().all(|b| b.is_ascii_alphanumeric())).then_some(text);
+            }
+            pos += len.max(1);
         }
+    }
+    None
+}
+
+/// Variables d'un disque : `{discid}` (identifiant entier), `{gameid}` (4 caractères),
+/// `{gameidhex}` (dossier Wii) et `{region}` (cartes mémoire GameCube).
+fn expand_disc(text: &str, id: Option<&str>) -> Option<String> {
+    if !text.contains("{gameid") && !text.contains("{region}") && !text.contains("{discid}") {
+        return Some(text.to_string());
+    }
+    let id = id?;
+    let text = text.replace("{discid}", id);
+    let short = &id[..4];
+    let region = match id.as_bytes()[3] {
+        b'E' | b'N' => "USA",
+        b'J' => "JAP",
+        b'K' | b'Q' | b'T' => "KOR",
+        _ => "EUR",
+    };
+    let hex: String = short.bytes().map(|b| format!("{b:02x}")).collect();
+    Some(text.replace("{gameidhex}", &hex).replace("{gameid}", short).replace("{region}", region))
+}
+
+/// Dossier des sauvegardes d'un jeu : à côté de la ROM, relatif à l'exécutable, ou dans
+/// les dossiers de l'utilisateur (`{appdata}/…`).
+fn saves_dir(dir: Option<&str>, rom_dir: &Path, game_dir: &Path, exe: &str, disc: Option<&str>) -> Option<PathBuf> {
+    let exe_dir = game_dir.join(rel_to_path(exe)).parent().map(Path::to_path_buf).unwrap_or_else(|| game_dir.to_path_buf());
+    match expand_disc(dir?, disc)?.as_str() {
+        "{romdir}" => Some(rom_dir.to_path_buf()),
+        dir if dir.starts_with('{') => crate::language::expand(dir, &exe_dir),
+        rel => Some(exe_dir.join(rel_to_path(rel))),
     }
 }
 
@@ -109,6 +226,8 @@ impl InstallJob {
         let main = main_rom(&game.rom_files).ok_or(AppError::NotAvailable)?;
         let rom_path = rom_dir.join(rom_rel(main));
         let rom_stem = stem(&main.file_name);
+        let disc = disc_id(&rom_path);
+        let (save_dir, save_patterns) = emulator.saves.for_console(&game.console);
         let args = emulator.launch.args.iter().map(|a| expand(a, &rom_path, &rom_dir, rom_stem)).collect();
         let env = emulator.launch.env.iter().map(|(k, v)| (k.clone(), expand(v, &rom_path, &rom_dir, rom_stem))).collect();
         let now = state::now();
@@ -146,8 +265,8 @@ impl InstallJob {
                 cache_dir: None,
                 kind: Some(KIND_EMULATOR.to_string()),
                 rom_dir: Some(rom_dir.clone()),
-                saves_dir: saves_dir(&emulator, &rom_dir, &installed.game_dir, &exe),
-                save_patterns: emulator.saves.patterns.iter().map(|p| expand(p, &rom_path, &rom_dir, rom_stem)).collect(),
+                saves_dir: saves_dir(save_dir, &rom_dir, &installed.game_dir, &exe, disc.as_deref()),
+                save_patterns: save_patterns.iter().filter_map(|p| expand_disc(&expand(p, &rom_path, &rom_dir, rom_stem), disc.as_deref())).collect(),
             }),
         };
         state::write_state(&self.config_dir, &st)?;
@@ -356,5 +475,88 @@ mod tests {
         // Déjà parti : pas une erreur.
         remove_rom_files(&st, &shared, false).unwrap();
         std::fs::remove_dir_all(&root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod disc_tests {
+    use super::*;
+
+    #[test]
+    fn reads_disc_ids_and_names_dolphin_folders() {
+        let dir = std::env::temp_dir().join(format!("farfa-disc-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut rvz = b"RVZ\x01".to_vec();
+        rvz.resize(0x58, 0);
+        rvz.extend_from_slice(b"GZ2P01\0\0");
+        std::fs::write(dir.join("tp.rvz"), &rvz).unwrap();
+        std::fs::write(dir.join("sms.iso"), b"GMSE01\0\0rest").unwrap();
+        std::fs::write(dir.join("x.nes"), b"NES\x1a").unwrap();
+        assert_eq!(disc_id(&dir.join("tp.rvz")).as_deref(), Some("GZ2P01"));
+        assert_eq!(disc_id(&dir.join("sms.iso")).as_deref(), Some("GMSE01"));
+        assert_eq!(disc_id(&dir.join("x.nes")), None);
+        assert_eq!(expand_disc("GC/{region}/Card A", Some("GZ2P01")).as_deref(), Some("GC/EUR/Card A"));
+        assert_eq!(expand_disc("*-{gameid}-*.gci", Some("GMSE01")).as_deref(), Some("*-GMSE-*.gci"));
+        assert_eq!(expand_disc("{gameidhex}", Some("SMNP01")).as_deref(), Some("534d4e50"));
+        // Sans identifiant lisible : pas de dossier deviné au hasard.
+        assert_eq!(expand_disc("GC/{region}", None), None);
+        assert_eq!(expand_disc("prb", None).as_deref(), Some("prb"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn picks_the_saves_of_the_console() {
+        let saves: crate::manager::EmulatorSaves = serde_json::from_str(
+            r#"{"dir":"User","patterns":[],"variants":[
+              {"system":"windows","console":"ngc","dir":"User/GC/{region}/Card A","patterns":["*-{gameid}-*.gci"]},
+              {"system":"linux","console":"ngc","dir":"{appdata}/dolphin-emu/GC/{region}/Card A","patterns":["*-{gameid}-*.gci"]},
+              {"system":"windows","console":"wii","dir":"User/Wii/title/00010000","patterns":["{gameidhex}"]},
+              {"system":"linux","console":"wii","dir":"{appdata}/dolphin-emu/Wii/title/00010000","patterns":["{gameidhex}"]}]}"#,
+        )
+        .unwrap();
+        let (dir, patterns) = saves.for_console("wii");
+        if cfg!(windows) {
+            assert_eq!(dir, Some("User/Wii/title/00010000"));
+        } else {
+            assert_eq!(dir, Some("{appdata}/dolphin-emu/Wii/title/00010000"));
+        }
+        assert_eq!(patterns, ["{gameidhex}"]);
+        assert_eq!(saves.for_console("gba").0, Some("User"));
+    }
+}
+
+#[cfg(test)]
+mod psp_tests {
+    /// `FARFA_E2E_CHD=<jeu PSP .chd> cargo test -- --ignored psp_chd_id --nocapture`.
+    #[test]
+    #[ignore]
+    fn psp_chd_id() {
+        let path = std::path::PathBuf::from(std::env::var("FARFA_E2E_CHD").unwrap());
+        let id = super::disc_id(&path);
+        println!("{} → {id:?}", path.display());
+        assert!(id.is_some_and(|i| i.len() == 9));
+    }
+
+    #[test]
+    fn psp_iso_id() {
+        // Disque ISO 9660 minimal : PVD au secteur 16, racine au 18, UMD_DATA.BIN au 19.
+        let mut iso = vec![0u8; 20 * 2048];
+        let pvd = 16 * 2048;
+        iso[pvd] = 1;
+        iso[pvd + 1..pvd + 6].copy_from_slice(b"CD001");
+        iso[pvd + 156 + 2..pvd + 156 + 6].copy_from_slice(&18u32.to_le_bytes());
+        iso[pvd + 156 + 10..pvd + 156 + 14].copy_from_slice(&2048u32.to_le_bytes());
+        let dir = 18 * 2048;
+        let name = b"UMD_DATA.BIN;1";
+        iso[dir] = (33 + name.len()) as u8;
+        iso[dir + 2..dir + 6].copy_from_slice(&19u32.to_le_bytes());
+        iso[dir + 32] = name.len() as u8;
+        iso[dir + 33..dir + 33 + name.len()].copy_from_slice(name);
+        iso[19 * 2048..19 * 2048 + 15].copy_from_slice(b"ULES-00151|0001");
+        let path = std::env::temp_dir().join(format!("farfa-psp-{}.iso", uuid::Uuid::new_v4()));
+        std::fs::write(&path, &iso).unwrap();
+        assert_eq!(super::disc_id(&path).as_deref(), Some("ULES00151"));
+        assert_eq!(super::expand_disc("{discid}*", Some("ULES00151")).as_deref(), Some("ULES00151*"));
+        std::fs::remove_file(&path).unwrap();
     }
 }

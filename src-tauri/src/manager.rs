@@ -39,6 +39,8 @@ pub struct CatalogRecomp {
     pub mods: Vec<CatalogMod>,
     pub launch: RecompLaunch,
     pub games: Vec<CatalogRecompGame>,
+    /// Comment la mettre en français.
+    pub language: Vec<crate::language::LanguageRule>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -120,6 +122,9 @@ pub struct Emulator {
     pub config: Vec<ManagerFile>,
     #[serde(default)]
     pub config_missing: Vec<String>,
+    /// Comment le mettre en français.
+    #[serde(default)]
+    pub language: Vec<crate::language::LanguageRule>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -141,11 +146,43 @@ pub struct EmulatorLaunch {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, rename_all = "camelCase")]
 pub struct EmulatorSaves {
     /// `{romdir}` ou relatif au dossier de l'exécutable.
     pub dir: Option<String>,
+    /// Autre dossier pour un système (`windows`, `linux`) : `{appdata}/…` et ses équivalents.
+    pub by_system: std::collections::HashMap<String, String>,
     pub patterns: Vec<String>,
+    /// Dossier et fichiers propres à une console (et éventuellement un système), avant les autres.
+    pub variants: Vec<SaveVariant>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SaveVariant {
+    pub system: Option<String>,
+    pub console: Option<String>,
+    pub dir: Option<String>,
+    pub patterns: Vec<String>,
+}
+
+impl EmulatorSaves {
+    /// Dossier pour ce système.
+    pub fn dir_here(&self) -> Option<&str> {
+        self.by_system.get(crate::language::current_system()).or(self.dir.as_ref()).map(String::as_str)
+    }
+
+    /// Dossier et motifs pour un jeu de cette console, sur ce système.
+    pub fn for_console(&self, console: &str) -> (Option<&str>, &[String]) {
+        let here = crate::language::current_system();
+        let variant = self.variants.iter().find(|v| {
+            v.system.as_deref().is_none_or(|s| s == here) && v.console.as_deref().is_none_or(|c| c == console)
+        });
+        match variant {
+            Some(v) => (v.dir.as_deref().or(self.dir_here()), if v.patterns.is_empty() { &self.patterns } else { &v.patterns }),
+            None => (self.dir_here(), &self.patterns),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -239,6 +276,25 @@ impl Catalog {
 
     pub fn recomp(&self, id: &str) -> Option<&CatalogRecomp> {
         self.recomps.iter().find(|r| r.id == id)
+    }
+
+    /// Réglages de langue du programme qui lance ce jeu : sa recomp ou son émulateur.
+    pub fn language_for_install(&self, st: &crate::install::state::InstalledGame) -> Vec<crate::language::LanguageRule> {
+        match &st.shared {
+            Some(s) if s.is_emulator() => {
+                self.emulators.iter().find(|e| runtime_id(&e.id) == s.runtime_rom_id).map(|e| e.language.clone()).unwrap_or_default()
+            }
+            _ => self.recomp_for_install(st).map(|r| r.language.clone()).unwrap_or_default(),
+        }
+    }
+
+    /// Recomp qui fait tourner ce jeu installé (pas lancé par un émulateur).
+    pub fn recomp_for_install(&self, st: &crate::install::state::InstalledGame) -> Option<&CatalogRecomp> {
+        match &st.shared {
+            Some(s) if s.is_emulator() => None,
+            Some(s) => self.recomps.iter().find(|r| r.is_shared() && r.runtime_rom_id() == s.runtime_rom_id),
+            None => self.recomp_for_rom(st.rom_id).or_else(|| self.recomps.iter().find(|r| r.is_shared() && r.runtime_rom_id() == st.rom_id)),
+        }
     }
 
     pub fn recomp_for_rom(&self, rom_id: i64) -> Option<&CatalogRecomp> {
@@ -351,6 +407,7 @@ mod tests {
             saves: EmulatorSaves::default(),
             config: vec![],
             config_missing: vec![],
+            language: vec![],
         }
     }
 
@@ -391,5 +448,27 @@ mod tests {
         assert!(runtime_id("mgba") < 0);
         assert_eq!(runtime_id("mgba"), runtime_id("mgba"));
         assert_ne!(runtime_id("mgba"), runtime_id("melonds"));
+    }
+}
+
+#[cfg(test)]
+mod saves_tests {
+    use super::*;
+
+    #[test]
+    fn emulator_saves_and_language_by_system() {
+        let e: Emulator = serde_json::from_str(
+            r#"{"id":"punes","name":"puNES","consoles":["nes"],"version":{"cle":"k","nom":"v0.111"},
+              "saves":{"dir":"prb","bySystem":{"linux":"{appdata}/puNES/prb"},"patterns":["{romstem}.prb"]},
+              "language":[{"system":"windows","format":"ini","file":"{exedir}/puNES.cfg","key":"language","value":"french"}]}"#,
+        )
+        .unwrap();
+        let expected = if cfg!(windows) { "prb" } else { "{appdata}/puNES/prb" };
+        assert_eq!(e.saves.dir_here(), Some(expected));
+        assert_eq!(e.language.len(), 1);
+        // Catalogue d'avant : ni bySystem ni language.
+        let old: Emulator = serde_json::from_str(r#"{"id":"m","name":"m","consoles":[],"version":{"cle":"","nom":""},"saves":{"dir":"{romdir}","patterns":[]}}"#).unwrap();
+        assert_eq!(old.saves.dir_here(), Some("{romdir}"));
+        assert!(old.language.is_empty());
     }
 }

@@ -1169,6 +1169,201 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// Vrai serveur, puNES lancé : `FARFA_E2E_ROM` (jeu NES à pile), plus URL, TOKEN, MANAGER.
+    #[cfg(windows)]
+    #[tokio::test]
+    #[ignore]
+    async fn punes_e2e() {
+        let var = |k: &str| std::env::var(k).unwrap();
+        let rom: i64 = var("FARFA_E2E_ROM").parse().unwrap();
+        let client = RommClient::new(&var("FARFA_E2E_URL"), Some(var("FARFA_E2E_TOKEN"))).unwrap();
+        let base = std::env::temp_dir().join(format!("farfa-punes-e2e-{}", uuid::Uuid::new_v4()));
+        let config = base.join("config");
+        std::fs::create_dir_all(&config).unwrap();
+        let manager = client.with_base(&var("FARFA_E2E_MANAGER"));
+        let catalog: Catalog = serde_json::from_str(&manager.send(manager.get("api/catalog")).await.unwrap().text().await.unwrap()).unwrap();
+        let job = InstallJob {
+            client,
+            config_dir: config.clone(),
+            install_root: base.join("Jeux"),
+            target: Target::Windows,
+            cancel: CancellationToken::new(),
+            proton: None,
+            manifest: Manifest::default(),
+            catalog: catalog.clone(),
+            manager_base: Some(var("FARFA_E2E_MANAGER")),
+            with_emulator: true,
+            runtime_lock: Arc::new(tokio::sync::Mutex::new(())),
+            on_progress: Arc::new(|_| {}),
+        };
+        let st = match job.run(rom).await.unwrap() {
+            InstallOutcome::Installed { game } => game,
+            InstallOutcome::NeedsChoice { .. } => panic!("l'émulateur ne doit rien demander"),
+        };
+        let shared = st.shared.clone().unwrap();
+        let exe = st.game_dir.join(rel_to_path(st.executable.as_deref().unwrap()));
+        let cfg = exe.with_file_name("puNES.cfg");
+        println!("exe {} ; saves {:?} {:?}", exe.display(), shared.saves_dir, shared.save_patterns);
+        assert_eq!(shared.runtime_name, "puNES");
+        assert!(cfg.exists(), "puNES.cfg (mode portable) attendu");
+        assert_eq!(shared.saves_dir.as_deref(), Some(exe.with_file_name("prb").as_path()));
+
+        // Comme play_game : règles de langue, puis lancement direct.
+        let rules = catalog.language_for_install(&st);
+        let exe_dir = exe.parent().unwrap().to_path_buf();
+        let env = crate::language::prepare(&st.game_dir, &exe_dir, &rules);
+        assert!(env.is_empty());
+        assert_eq!(std::fs::read_to_string(&cfg).unwrap().trim(), "language=french");
+        let d = st.direct_launch.clone().unwrap();
+        let launch = crate::launch::Launch { exe: rel_to_path(&d.exe), args: &d.args, env: &d.env, cwd: None, learn: false, runner: None };
+        let running = crate::launch::spawn(&st.game_dir, launch).unwrap();
+        let pid = running.pid();
+        let waiter = tokio::task::spawn_blocking(move || running.wait(|| {}));
+        tokio::time::sleep(Duration::from_secs(20)).await;
+        // Fermeture normale (pas /F) : puNES écrit sa pile et ses réglages en partant.
+        std::process::Command::new("taskkill").args(["/PID", &pid.to_string()]).status().unwrap();
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        let _ = std::process::Command::new("taskkill").args(["/F", "/PID", &pid.to_string()]).status();
+        waiter.await.unwrap();
+        let text = std::fs::read_to_string(&cfg).unwrap();
+        println!("puNES.cfg après la partie : {} lignes, langue : {:?}", text.lines().count(), text.lines().find(|l| l.starts_with("language")));
+        assert!(text.lines().any(|l| l.split('=').map(str::trim).collect::<Vec<_>>() == ["language", "french"]));
+        let loc = crate::saves::SaveLocation { dir: shared.saves_dir.clone().unwrap(), patterns: shared.save_patterns.clone() };
+        let saves = crate::saves::collect(&loc).unwrap();
+        println!("sauvegardes : {:?}", saves.iter().map(|(r, _)| r).collect::<Vec<_>>());
+        assert_eq!(saves.len(), 1, "sauvegarde .prb attendue dans prb/");
+        println!("dossier de test : {}", base.display());
+    }
+
+    /// Vrai serveur, Dolphin lancé : `FARFA_E2E_ROM` (jeu GameCube), plus URL, TOKEN, MANAGER.
+    #[cfg(windows)]
+    #[tokio::test]
+    #[ignore]
+    async fn dolphin_e2e() {
+        let var = |k: &str| std::env::var(k).unwrap();
+        let rom: i64 = var("FARFA_E2E_ROM").parse().unwrap();
+        let client = RommClient::new(&var("FARFA_E2E_URL"), Some(var("FARFA_E2E_TOKEN"))).unwrap();
+        let base = std::env::temp_dir().join(format!("farfa-dolphin-e2e-{}", uuid::Uuid::new_v4()));
+        let config = base.join("config");
+        std::fs::create_dir_all(&config).unwrap();
+        let manager = client.with_base(&var("FARFA_E2E_MANAGER"));
+        let catalog: Catalog = serde_json::from_str(&manager.send(manager.get("api/catalog")).await.unwrap().text().await.unwrap()).unwrap();
+        let job = InstallJob {
+            client,
+            config_dir: config.clone(),
+            install_root: base.join("Jeux"),
+            target: Target::Windows,
+            cancel: CancellationToken::new(),
+            proton: None,
+            manifest: Manifest::default(),
+            catalog: catalog.clone(),
+            manager_base: Some(var("FARFA_E2E_MANAGER")),
+            with_emulator: true,
+            runtime_lock: Arc::new(tokio::sync::Mutex::new(())),
+            on_progress: Arc::new(|_| {}),
+        };
+        let st = match job.run(rom).await.unwrap() {
+            InstallOutcome::Installed { game } => game,
+            InstallOutcome::NeedsChoice { .. } => panic!("l'émulateur ne doit rien demander"),
+        };
+        let shared = st.shared.clone().unwrap();
+        let exe = st.game_dir.join(rel_to_path(st.executable.as_deref().unwrap()));
+        let exe_dir = exe.parent().unwrap().to_path_buf();
+        let rom_file = std::fs::read_dir(shared.rom_dir.as_ref().unwrap()).unwrap().filter_map(Result::ok).map(|e| e.path()).next().unwrap();
+        let id = crate::install::emulator::disc_id(&rom_file);
+        println!("exe {} ; disque {:?} ; saves {:?} {:?} ; lancement {:?}", exe.display(), id, shared.saves_dir, shared.save_patterns, st.direct_launch.as_ref().map(|d| &d.args));
+        assert_eq!(shared.runtime_name, "Dolphin");
+        assert!(exe_dir.join("portable.txt").exists());
+        let id = id.expect("identifiant du disque lisible");
+        let region = if id.as_bytes()[3] == b'E' { "USA" } else { "EUR" };
+        assert_eq!(shared.saves_dir.as_deref(), Some(exe_dir.join("User").join("GC").join(region).join("Card A").as_path()));
+        assert_eq!(shared.save_patterns, [format!("*-{}-*.gci", &id[..4])]);
+
+        let rules = catalog.language_for_install(&st);
+        crate::language::prepare(&st.game_dir, &exe_dir, &rules);
+        let ini = exe_dir.join("User").join("Config").join("Dolphin.ini");
+        println!("Dolphin.ini avant :\n{}", std::fs::read_to_string(&ini).unwrap());
+        let d = st.direct_launch.clone().unwrap();
+        let launch = crate::launch::Launch { exe: rel_to_path(&d.exe), args: &d.args, env: &d.env, cwd: None, learn: false, runner: None };
+        let running = crate::launch::spawn(&st.game_dir, launch).unwrap();
+        let pid = running.pid();
+        let waiter = tokio::task::spawn_blocking(move || running.wait(|| {}));
+        tokio::time::sleep(Duration::from_secs(35)).await;
+        std::process::Command::new("taskkill").args(["/PID", &pid.to_string()]).status().unwrap();
+        tokio::time::sleep(Duration::from_secs(8)).await;
+        let _ = std::process::Command::new("taskkill").args(["/F", "/PID", &pid.to_string()]).status();
+        waiter.await.unwrap();
+        let text = std::fs::read_to_string(&ini).unwrap();
+        let get = |k: &str| text.lines().find(|l| l.split('=').next().map(str::trim) == Some(k)).map(|l| l.split('=').nth(1).unwrap_or("").trim().to_string());
+        println!("après : {} lignes ; LanguageCode {:?} ; SelectedLanguage {:?} ; PermissionAsked {:?}", text.lines().count(), get("LanguageCode"), get("SelectedLanguage"), get("PermissionAsked"));
+        assert_eq!(get("LanguageCode").as_deref(), Some("fr"));
+        assert_eq!(get("SelectedLanguage").as_deref(), Some("2"));
+        println!("carte mémoire : {:?}", std::fs::read_dir(shared.saves_dir.as_ref().unwrap()).map(|r| r.filter_map(Result::ok).map(|e| e.file_name()).collect::<Vec<_>>()));
+        println!("dossier de test : {}", base.display());
+    }
+
+    /// Vrai serveur, PPSSPP lancé : `FARFA_E2E_ROM` (jeu PSP en .chd), plus URL, TOKEN, MANAGER.
+    #[cfg(windows)]
+    #[tokio::test]
+    #[ignore]
+    async fn ppsspp_e2e() {
+        let var = |k: &str| std::env::var(k).unwrap();
+        let rom: i64 = var("FARFA_E2E_ROM").parse().unwrap();
+        let client = RommClient::new(&var("FARFA_E2E_URL"), Some(var("FARFA_E2E_TOKEN"))).unwrap();
+        let base = std::env::temp_dir().join(format!("farfa-ppsspp-e2e-{}", uuid::Uuid::new_v4()));
+        let config = base.join("config");
+        std::fs::create_dir_all(&config).unwrap();
+        let manager = client.with_base(&var("FARFA_E2E_MANAGER"));
+        let catalog: Catalog = serde_json::from_str(&manager.send(manager.get("api/catalog")).await.unwrap().text().await.unwrap()).unwrap();
+        let job = InstallJob {
+            client,
+            config_dir: config.clone(),
+            install_root: base.join("Jeux"),
+            target: Target::Windows,
+            cancel: CancellationToken::new(),
+            proton: None,
+            manifest: Manifest::default(),
+            catalog: catalog.clone(),
+            manager_base: Some(var("FARFA_E2E_MANAGER")),
+            with_emulator: true,
+            runtime_lock: Arc::new(tokio::sync::Mutex::new(())),
+            on_progress: Arc::new(|_| {}),
+        };
+        let st = match job.run(rom).await.unwrap() {
+            InstallOutcome::Installed { game } => game,
+            InstallOutcome::NeedsChoice { .. } => panic!("l'émulateur ne doit rien demander"),
+        };
+        let shared = st.shared.clone().unwrap();
+        let exe = st.game_dir.join(rel_to_path(st.executable.as_deref().unwrap()));
+        let exe_dir = exe.parent().unwrap().to_path_buf();
+        println!("exe {} ; saves {:?} {:?}", exe.display(), shared.saves_dir, shared.save_patterns);
+        assert_eq!(shared.runtime_name, "PPSSPP");
+        assert_eq!(shared.saves_dir.as_deref(), Some(exe_dir.join("memstick").join("PSP").join("SAVEDATA").as_path()));
+        assert_eq!(shared.save_patterns.len(), 1);
+        assert!(shared.save_patterns[0].len() == 10 && shared.save_patterns[0].ends_with('*'), "motif {{discid}}* attendu");
+
+        let rules = catalog.language_for_install(&st);
+        crate::language::prepare(&st.game_dir, &exe_dir, &rules);
+        let ini = exe_dir.join("memstick").join("PSP").join("SYSTEM").join("ppsspp.ini");
+        let d = st.direct_launch.clone().unwrap();
+        let launch = crate::launch::Launch { exe: rel_to_path(&d.exe), args: &d.args, env: &d.env, cwd: None, learn: false, runner: None };
+        let running = crate::launch::spawn(&st.game_dir, launch).unwrap();
+        let pid = running.pid();
+        let waiter = tokio::task::spawn_blocking(move || running.wait(|| {}));
+        tokio::time::sleep(Duration::from_secs(35)).await;
+        std::process::Command::new("taskkill").args(["/PID", &pid.to_string()]).status().unwrap();
+        tokio::time::sleep(Duration::from_secs(8)).await;
+        let _ = std::process::Command::new("taskkill").args(["/F", "/PID", &pid.to_string()]).status();
+        waiter.await.unwrap();
+        let text = std::fs::read_to_string(&ini).unwrap();
+        let get = |k: &str| text.lines().find(|l| l.split('=').next().map(str::trim) == Some(k)).map(|l| l.split('=').nth(1).unwrap_or("").trim().to_string());
+        println!("ppsspp.ini après : {} lignes ; Language {:?} ; GameLanguage {:?} ; CheckForNewVersion {:?}", text.lines().count(), get("Language"), get("GameLanguage"), get("CheckForNewVersion"));
+        assert_eq!(get("Language").as_deref(), Some("fr_FR"));
+        assert_eq!(get("GameLanguage").as_deref(), Some("2"));
+        println!("SAVEDATA : {:?}", std::fs::read_dir(shared.saves_dir.as_ref().unwrap()).map(|r| r.filter_map(Result::ok).map(|e| e.file_name()).collect::<Vec<_>>()));
+        println!("dossier de test : {}", base.display());
+    }
+
     #[test]
     fn uninstall_keeps_only_saves() {
         let root = std::env::temp_dir().join(format!("farfa-uninstall-{}", uuid::Uuid::new_v4()));
