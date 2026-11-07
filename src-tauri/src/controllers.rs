@@ -24,7 +24,7 @@ pub struct PlayerPad {
 /// Nombre de joueurs qu'un format sait attribuer (0 : format inconnu).
 pub fn ports(format: &str) -> usize {
     match format_name(format) {
-        "dolphin" | "punes" | "aurora" | "recharged" => 4,
+        "dolphin" | "punes" | "aurora" | "recharged" | "eden" => 4,
         "mgba" | "ppsspp" => 1,
         _ => 0,
     }
@@ -81,6 +81,7 @@ pub fn apply(format: &str, players: &[Option<PlayerPad>], pads: &[PadInfo], exe_
     }
     match format_name(format) {
         "dolphin" => dolphin::apply(&ports, pads, exe_dir),
+        "eden" => eden::apply(&ports, pads, exe_dir),
         "punes" => punes::apply(&ports, pads, exe_dir),
         "aurora" => aurora::apply(&ports, &params(format), exe_dir),
         "recharged" => recharged::apply(&ports, pads, exe_dir),
@@ -277,6 +278,120 @@ mod dolphin {
         write(&gc_path, &gc_before, &gc_text)?;
         write(&wii_path, &wii_before, &wii_text)?;
         write(&main_path, &main_before, &main_text)
+    }
+}
+
+/// Eden et ses dérivés (Eglantine) : `user/config/qt-config.ini` en mode portable,
+/// section [Controls], une entrée par bouton comme les écrit Eden quand on choisit
+/// la manette dans ses réglages (SDL 3, comme le launcher).
+mod eden {
+    use super::*;
+
+    /// Bouton Switch → élément de la manette SDL (disposition par position :
+    /// A à droite, B en bas), comme `GetDefaultButtonBinding` d'Eden.
+    const BUTTONS: [(&str, &str); 22] = [
+        ("a", "east"),
+        ("b", "south"),
+        ("x", "north"),
+        ("y", "west"),
+        ("lstick", "leftstick"),
+        ("rstick", "rightstick"),
+        ("l", "leftshoulder"),
+        ("r", "rightshoulder"),
+        ("zl", "lefttrigger"),
+        ("zr", "righttrigger"),
+        ("plus", "start"),
+        ("minus", "back"),
+        ("dleft", "dpleft"),
+        ("dup", "dpup"),
+        ("dright", "dpright"),
+        ("ddown", "dpdown"),
+        ("slleft", "leftshoulder"),
+        ("srleft", "rightshoulder"),
+        ("home", "guide"),
+        ("screenshot", "misc1"),
+        ("slright", "leftshoulder"),
+        ("srright", "rightshoulder"),
+    ];
+
+    /// GUID tel qu'Eden l'écrit : celui de SDL sans la somme du nom (octets 2 et 3).
+    pub fn guid(pad: &PadInfo) -> String {
+        let g = pad.guid.to_ascii_lowercase();
+        if g.len() == 32 {
+            format!("{}0000{}", &g[..4], &g[8..])
+        } else {
+            g
+        }
+    }
+
+    fn source(pad: &PadInfo, all: &[PadInfo]) -> String {
+        let g = guid(pad);
+        format!("port:{},guid:{g}", rank(pad, all, |p| guid(p) == g))
+    }
+
+    fn input<'a>(pad: &'a PadInfo, element: &str) -> Option<&'a str> {
+        pad.bindings.iter().find(|(k, _)| *k == element).map(|(_, v)| v.as_str())
+    }
+
+    fn axis(pad: &PadInfo, element: &str) -> Option<String> {
+        input(pad, element)?.strip_prefix("axis:").map(str::to_string)
+    }
+
+    pub fn entries(pad: &PadInfo, all: &[PadInfo], player: usize) -> Vec<(String, String)> {
+        let src = source(pad, all);
+        let mut out = Vec::new();
+        for (switch, element) in BUTTONS {
+            let value = match input(pad, element) {
+                // Gâchette analogique : appuyée à mi-course.
+                Some(i) if i.starts_with("axis:") => format!("\"engine:sdl,{src},{i},threshold:0.500000,invert:+\""),
+                Some(i) => format!("\"engine:sdl,{src},{i}\""),
+                None => "\"\"".to_string(),
+            };
+            out.push((format!("player_{player}_button_{switch}"), value));
+        }
+        for (stick, x, y) in [("lstick", "leftx", "lefty"), ("rstick", "rightx", "righty")] {
+            let value = match (axis(pad, x), axis(pad, y)) {
+                (Some(ax), Some(ay)) => format!(
+                    "\"engine:sdl,{src},axis_x:{ax},axis_y:{ay},offset_x:0.000000,offset_y:0.000000,invert_x:+,invert_y:+,deadzone:0.150000\""
+                ),
+                _ => "\"\"".to_string(),
+            };
+            out.push((format!("player_{player}_{stick}"), value));
+        }
+        out
+    }
+
+    pub fn apply(ports: &[Option<PadInfo>], all: &[PadInfo], exe_dir: &Path) -> Result<(), String> {
+        let path = path_for("{exedir}/user/config/qt-config.ini", "{exedir}/user/config/qt-config.ini", exe_dir)?;
+        let before = read(&path);
+        let mut text = before.clone();
+        for i in 0..8 {
+            let connected = format!("Controls.player_{i}_connected");
+            match ports.get(i).cloned().flatten() {
+                Some(pad) => {
+                    // Même manette au même port qu'avant : les réglages faits dans Eden restent.
+                    let same = ini_value(&text, "Controls", &format!("player_{i}_button_a"))
+                        .is_some_and(|v| source(&pad, all).split(',').all(|part| v.split([',', '"']).any(|p| p == part)));
+                    if !same {
+                        for (key, value) in entries(&pad, all, i) {
+                            text = set_ini(&text, &format!("Controls.{key}\\default"), "false");
+                            text = set_ini(&text, &format!("Controls.{key}"), &value);
+                        }
+                    }
+                    text = set_ini(&text, &format!("{connected}\\default"), "false");
+                    text = set_ini(&text, &connected, "true");
+                }
+                // Joueur 1 sans manette : le clavier d'Eden reste.
+                None if i == 0 => {}
+                None => {
+                    if ini_value(&text, "Controls", &format!("player_{i}_connected")).is_some_and(|v| v == "true") {
+                        text = set_ini(&text, &format!("{connected}\\default"), "false");
+                        text = set_ini(&text, &connected, "false");
+                    }
+                }
+            }
+        }
+        write(&path, &before, &text)
     }
 }
 
@@ -641,6 +756,7 @@ mod tests {
             xinput,
             serial: None,
             order: pad as u64,
+            bindings: Vec::new(),
         }
     }
 
@@ -787,6 +903,38 @@ mod tests {
         let b = pad(2, "PS5 Controller", "g2", "s", None);
         apply("dolphin", &players, &[a, b], &dir).unwrap();
         assert_eq!(read(&cfg.join("GCPadNew.ini")), tuned);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Manette Xbox (XInput), comparée à ce qu'écrit Suyu pour la même manette.
+    #[test]
+    fn eden_xbox() {
+        let mut x = pad(3, "Xbox Series X Controller", "030003f05e040000ff02000000007801", "xinput0", Some(0));
+        let mut b: Vec<(&'static str, String)> = ["south", "east", "west", "north", "leftshoulder", "rightshoulder", "back", "start", "leftstick", "rightstick", "guide"]
+            .iter()
+            .zip([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+            .map(|(k, n)| (*k, format!("button:{n}")))
+            .collect();
+        b.extend([("dpup", "hat:0,direction:up".to_string()), ("leftx", "axis:0".into()), ("lefty", "axis:1".into()), ("lefttrigger", "axis:2".into()), ("rightx", "axis:3".into()), ("righty", "axis:4".into()), ("righttrigger", "axis:5".into())]);
+        x.bindings = b;
+        let e: std::collections::HashMap<String, String> = eden::entries(&x, &[x.clone()], 0).into_iter().collect();
+        let g = "port:0,guid:030000005e040000ff02000000007801";
+        assert_eq!(e["player_0_button_a"], format!("\"engine:sdl,{g},button:1\""));
+        assert_eq!(e["player_0_button_plus"], format!("\"engine:sdl,{g},button:7\""));
+        assert_eq!(e["player_0_button_dup"], format!("\"engine:sdl,{g},hat:0,direction:up\""));
+        assert_eq!(e["player_0_button_zl"], format!("\"engine:sdl,{g},axis:2,threshold:0.500000,invert:+\""));
+        assert!(e["player_0_lstick"].contains("axis_x:0,axis_y:1"));
+        assert_eq!(e["player_0_button_screenshot"], "\"\"");
+
+        let dir = std::env::temp_dir().join(format!("farfa-eden-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        apply("eden", &[], &[x.clone()], &dir).unwrap();
+        let text = std::fs::read_to_string(dir.join("user/config/qt-config.ini")).unwrap();
+        assert!(text.contains("[Controls]\n") && text.contains("player_0_connected=true") && text.contains(r"player_0_button_b\default=false"));
+        // Réglage changé dans Eden avec la même manette : gardé.
+        std::fs::write(dir.join("user/config/qt-config.ini"), text.replace(&format!("{g},button:1"), &format!("{g},button:0"))).unwrap();
+        apply("eden", &[], &[x], &dir).unwrap();
+        assert!(std::fs::read_to_string(dir.join("user/config/qt-config.ini")).unwrap().contains(&format!("player_0_button_a=\"engine:sdl,{g},button:0\"")));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

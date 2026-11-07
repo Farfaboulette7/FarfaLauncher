@@ -131,6 +131,9 @@ pub struct Emulator {
     /// Format d'attribution des manettes aux joueurs (controllers.rs).
     #[serde(default)]
     pub controllers: Option<String>,
+    /// Questions posées au lancement et touche qui y répond (dialogs.rs).
+    #[serde(default)]
+    pub dialogs: Vec<crate::dialogs::DialogAnswer>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -308,6 +311,11 @@ impl Catalog {
         }
     }
 
+    /// Réponses automatiques de l'émulateur de ce jeu installé.
+    pub fn dialogs_for_install(&self, st: &crate::install::state::InstalledGame) -> Vec<crate::dialogs::DialogAnswer> {
+        self.emulator_for_install(st).map(|e| e.dialogs.clone()).unwrap_or_default()
+    }
+
     /// Recomp qui fait tourner ce jeu installé (pas lancé par un émulateur).
     pub fn recomp_for_install(&self, st: &crate::install::state::InstalledGame) -> Option<&CatalogRecomp> {
         match &st.shared {
@@ -429,6 +437,7 @@ mod tests {
             config_missing: vec![],
             language: vec![],
             controllers: None,
+            dialogs: vec![],
         }
     }
 

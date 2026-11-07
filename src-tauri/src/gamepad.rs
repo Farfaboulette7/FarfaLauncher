@@ -70,6 +70,87 @@ pub struct PadInfo {
     /// Ordre d'arrivée, pour l'attribution par défaut des joueurs.
     #[serde(skip)]
     pub order: u64,
+    /// Entrée brute de chaque élément de la manette, comme l'écrit Eden
+    /// (`south` → `button:0`, `lefttrigger` → `axis:2`, `dpup` → `hat:0,direction:up`).
+    #[serde(skip)]
+    pub bindings: Vec<(&'static str, String)>,
+}
+
+fn button_key(b: SDL_GamepadButton) -> Option<&'static str> {
+    Some(match b {
+        SDL_GamepadButton::SOUTH => "south",
+        SDL_GamepadButton::EAST => "east",
+        SDL_GamepadButton::WEST => "west",
+        SDL_GamepadButton::NORTH => "north",
+        SDL_GamepadButton::BACK => "back",
+        SDL_GamepadButton::GUIDE => "guide",
+        SDL_GamepadButton::START => "start",
+        SDL_GamepadButton::LEFT_STICK => "leftstick",
+        SDL_GamepadButton::RIGHT_STICK => "rightstick",
+        SDL_GamepadButton::LEFT_SHOULDER => "leftshoulder",
+        SDL_GamepadButton::RIGHT_SHOULDER => "rightshoulder",
+        SDL_GamepadButton::DPAD_UP => "dpup",
+        SDL_GamepadButton::DPAD_DOWN => "dpdown",
+        SDL_GamepadButton::DPAD_LEFT => "dpleft",
+        SDL_GamepadButton::DPAD_RIGHT => "dpright",
+        SDL_GamepadButton::MISC1 => "misc1",
+        _ => return None,
+    })
+}
+
+fn axis_key(a: SDL_GamepadAxis) -> Option<&'static str> {
+    Some(match a {
+        SDL_GamepadAxis::LEFTX => "leftx",
+        SDL_GamepadAxis::LEFTY => "lefty",
+        SDL_GamepadAxis::RIGHTX => "rightx",
+        SDL_GamepadAxis::RIGHTY => "righty",
+        SDL_GamepadAxis::LEFT_TRIGGER => "lefttrigger",
+        SDL_GamepadAxis::RIGHT_TRIGGER => "righttrigger",
+        _ => return None,
+    })
+}
+
+/// Correspondance de la manette (SDL_GetGamepadBindings), la première pour chaque élément.
+///
+/// # Safety
+/// `pad` est une manette ouverte, sur le fil de SDL.
+unsafe fn bindings(pad: *mut SDL_Gamepad) -> Vec<(&'static str, String)> {
+    let mut out: Vec<(&'static str, String)> = Vec::new();
+    let mut count = 0;
+    let list = SDL_GetGamepadBindings(pad, &mut count);
+    if list.is_null() {
+        return out;
+    }
+    for i in 0..count.max(0) as usize {
+        let b = &**list.add(i);
+        let key = match b.output_type {
+            SDL_GamepadBindingType::BUTTON => button_key(b.output.button),
+            SDL_GamepadBindingType::AXIS => axis_key(b.output.axis.axis),
+            _ => None,
+        };
+        let input = match b.input_type {
+            SDL_GamepadBindingType::BUTTON => Some(format!("button:{}", b.input.button)),
+            SDL_GamepadBindingType::AXIS => Some(format!("axis:{}", b.input.axis.axis)),
+            SDL_GamepadBindingType::HAT => {
+                let direction = match b.input.hat.hat_mask {
+                    1 => "up",
+                    2 => "right",
+                    4 => "down",
+                    8 => "left",
+                    _ => "",
+                };
+                (!direction.is_empty()).then(|| format!("hat:{},direction:{direction}", b.input.hat.hat))
+            }
+            _ => None,
+        };
+        if let (Some(key), Some(input)) = (key, input) {
+            if !out.iter().any(|(k, _)| *k == key) {
+                out.push((key, input));
+            }
+        }
+    }
+    sdl3_sys::stdinc::SDL_free(list.cast());
+    out
 }
 
 pub fn connected() -> Vec<PadInfo> {
@@ -161,6 +242,7 @@ fn open(id: SDL_JoystickID, order: u64) -> Option<(*mut SDL_Gamepad, PadInfo)> {
             xinput,
             serial,
             order,
+            bindings: bindings(pad),
         };
         Some((pad, info))
     }

@@ -166,6 +166,8 @@ pub async fn play_game(
     let started = OffsetDateTime::now_utc();
     let _ = app.emit("game-started", rom_id);
     gamepad::game_started();
+    let ended_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    crate::dialogs::watch(state.catalog().dialogs_for_install(&st), ended_flag.clone());
 
     tauri::async_runtime::spawn(async move {
         let shown = app.clone();
@@ -178,6 +180,7 @@ pub async fn play_game(
         .ok()
         .flatten();
         let ended = OffsetDateTime::now_utc();
+        ended_flag.store(true, std::sync::atomic::Ordering::Relaxed);
         let state = app.state::<AppState>();
         state.running.lock().unwrap().remove(&rom_id);
         gamepad::game_stopped();

@@ -2,6 +2,7 @@ mod assets;
 mod cache;
 mod commands;
 mod controllers;
+mod dialogs;
 mod error;
 mod external;
 mod gamepad;
