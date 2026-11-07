@@ -5,7 +5,7 @@
 //! chaque jeu sont chargés en arrière-plan et poussés à l'interface par
 //! l'événement `library-game` (`library-done` à la fin).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -90,7 +90,13 @@ async fn start_refresh(app: &AppHandle, state: &AppState) -> AppResult<LibrarySn
         tracing::info!("{aligned} installation(s) déjà à la version du catalogue");
     }
     let recomps = catalog.recomp_rom_ids();
-    let (platforms, mut games) = runtimes::list_library(&client, &manifest, &recomps, target, |ids| install_state::rekey_moved(&state.config_dir, ids)).await?;
+    let moves = catalog.moved_games();
+    let moved = install_state::rekey_ids(&state.config_dir, &moves);
+    if moved > 0 {
+        tracing::info!("{moved} installation(s) passée(s) de portage-* à leur vraie console");
+    }
+    let hidden: HashSet<i64> = moves.iter().map(|(old, _)| *old).collect();
+    let (platforms, mut games) = runtimes::list_library(&client, &manifest, &recomps, &hidden, target, |ids| install_state::rekey_moved(&state.config_dir, ids)).await?;
 
     for g in games.iter_mut() {
         runtimes::annotate(g, &catalog, &recomps, target);

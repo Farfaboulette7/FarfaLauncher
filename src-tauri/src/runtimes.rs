@@ -262,6 +262,7 @@ pub async fn list_library(
     client: &RommClient,
     manifest: &Manifest,
     recomps: &HashSet<i64>,
+    hidden: &HashSet<i64>,
     me: Target,
     on_listed: impl FnOnce(&[(i64, String)]) -> usize,
 ) -> AppResult<(Vec<library::Platform>, Vec<Game>)> {
@@ -276,7 +277,8 @@ pub async fn list_library(
     }
     let ids: Vec<(i64, String)> = games.iter().map(|g| (g.id, g.folder_name.clone())).collect();
     on_listed(&ids);
-    games.retain(|g| !manifest.is_runtime(g.id));
+    // Ancienne fiche `portage-*` d'un jeu passé sur sa vraie console : plus affichée.
+    games.retain(|g| !manifest.is_runtime(g.id) && !hidden.contains(&g.id));
     for game in games.iter_mut() {
         if let Some((runtime, def)) = manifest.page(game.id) {
             game.runtime = Some(link(runtime, def));
@@ -356,7 +358,7 @@ mod tests {
         let catalog: Catalog = serde_json::from_str(&manager.send(manager.get("api/catalog")).await.unwrap().text().await.unwrap()).unwrap();
         let ids = catalog.recomp_rom_ids();
         let manifest = Manifest::default().with_catalog(&catalog);
-        let (_, mut games) = list_library(&client, &manifest, &ids, Target::Windows, |_| 0).await.unwrap();
+        let (_, mut games) = list_library(&client, &manifest, &ids, &HashSet::new(), Target::Windows, |_| 0).await.unwrap();
         for g in games.iter_mut() {
             annotate(g, &catalog, &ids, Target::Windows);
         }
@@ -375,7 +377,7 @@ mod tests {
         let assets = client.with_base(&var("FARFA_E2E_ASSETS"));
         let text = assets.send(assets.get(REMOTE_FILE)).await.unwrap().text().await.unwrap();
         let manifest = Manifest::parse(&text).unwrap();
-        let (platforms, games) = list_library(&client, &manifest, &HashSet::new(), Target::Windows, |_| 0).await.unwrap();
+        let (platforms, games) = list_library(&client, &manifest, &HashSet::new(), &HashSet::new(), Target::Windows, |_| 0).await.unwrap();
         for p in &platforms {
             let own: Vec<&str> = games.iter().filter(|g| g.platform_id == p.id).map(|g| g.name.as_str()).collect();
             println!("{} {} ({}): {own:?}", p.id, p.fs_slug, p.name);

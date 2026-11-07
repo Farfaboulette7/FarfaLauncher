@@ -62,7 +62,7 @@ fn key_for_rom(catalog: &Catalog, rom_id: i64) -> Option<(String, String)> {
 impl SaveStore {
     pub fn of(catalog: &Catalog, settings: &Settings, client: RommClient, st: &InstalledGame) -> Self {
         match (recomp_key(catalog, st), manager::base_url(settings)) {
-            (Some((recomp, game)), Some(base)) => SaveStore::Recomp(RecompSave::new(client, &base, st.rom_id, &recomp, &game)),
+            (Some((recomp, game)), Some(base)) => SaveStore::Recomp(RecompSave::new(client, &base, catalog.romm_save_id(st.rom_id), &recomp, &game)),
             _ => SaveStore::Romm { client, rom_id: st.rom_id },
         }
     }
@@ -151,7 +151,7 @@ pub async fn import_all(config_dir: &Path, catalog: &Catalog, settings: &Setting
         if done.contains(&key) {
             continue;
         }
-        let save = RecompSave::new(client.clone(), &base, rom_id, &recomp, &game);
+        let save = RecompSave::new(client.clone(), &base, catalog.romm_save_id(rom_id), &recomp, &game);
         let checked = match save.find().await {
             Ok(Some(_)) => Ok(()),
             Ok(None) => save.import_from_romm().await.map(|_| ()),

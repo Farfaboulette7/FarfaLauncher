@@ -332,6 +332,28 @@ pub fn rekey_moved(config_dir: &Path, games: &[(i64, String)]) -> usize {
     moved
 }
 
+/// Jeux passés de leur fiche `portage-*` à leur vraie console : l'installation suit
+/// son nouvel ID (rien n'est retéléchargé). `moves` : (ancien ID, nouvel ID).
+pub fn rekey_ids(config_dir: &Path, moves: &[(i64, i64)]) -> usize {
+    let installed = list_installed(config_dir);
+    let mut moved = 0;
+    for (old_id, new_id) in moves {
+        let Some(mut st) = installed.iter().find(|i| i.rom_id == *old_id).cloned() else { continue };
+        if installed.iter().any(|i| i.rom_id == *new_id) {
+            continue;
+        }
+        st.rom_id = *new_id;
+        match write_state(config_dir, &st).and_then(|_| forget(config_dir, *old_id)) {
+            Ok(()) => {
+                tracing::info!("« {} » passe sur sa vraie console : jeu {old_id} → {new_id}", st.name);
+                moved += 1;
+            }
+            Err(e) => tracing::error!("rattachement de « {} » impossible: {}", st.name, e.code()),
+        }
+    }
+    moved
+}
+
 /// Nom de dossier sûr sur tous les systèmes.
 pub fn safe_folder_name(name: &str, rom_id: i64) -> String {
     let cleaned: String = name
@@ -400,6 +422,11 @@ mod tests {
         assert_eq!(find(&config, 40).unwrap().executable.as_deref(), Some("game.exe"));
         // Déjà rattaché : plus rien à faire.
         assert_eq!(rekey_moved(&config, &games), 0);
+        // Passé de sa fiche portage-* à sa vraie console, même si l'ancienne fiche existe encore.
+        assert_eq!(rekey_ids(&config, &[(40, 19)]), 1);
+        assert!(find(&config, 40).is_none());
+        assert_eq!(find(&config, 19).unwrap().executable.as_deref(), Some("game.exe"));
+        assert_eq!(rekey_ids(&config, &[(40, 19)]), 0);
         std::fs::remove_dir_all(root).unwrap();
     }
 }

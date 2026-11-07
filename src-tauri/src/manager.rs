@@ -44,6 +44,10 @@ pub struct CatalogRecomp {
     /// Format d'attribution des manettes aux joueurs (controllers.rs).
     #[serde(default)]
     pub controllers: Option<String>,
+    /// Données du jeu tirées de sa ROM (romfs…), servies par le gestionnaire à la place
+    /// des fichiers de son entrée RomM.
+    #[serde(default)]
+    pub game_files: Vec<ManagerFile>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -70,6 +74,8 @@ pub struct CatalogRecompGame {
     pub rom_id: Option<i64>,
     /// Identifiant du jeu pour un launcher à plusieurs jeux.
     pub game: Option<String>,
+    /// Ancienne fiche `portage-*` du jeu : clé de son installation et de sa sauvegarde RomM d'avant.
+    pub previous_rom_id: Option<i64>,
 }
 
 impl CatalogRecomp {
@@ -360,6 +366,16 @@ impl Catalog {
         self.recomps.iter().find(|r| r.games.iter().any(|g| g.rom_id == Some(rom_id)))
     }
 
+    /// Jeux passés de leur fiche `portage-*` à leur vraie console : (ancien ID, nouvel ID).
+    pub fn moved_games(&self) -> Vec<(i64, i64)> {
+        self.recomps.iter().flat_map(|r| r.games.iter().filter_map(|g| Some((g.previous_rom_id?, g.rom_id?)))).filter(|(a, b)| a != b).collect()
+    }
+
+    /// Fiche RomM qui garde l'ancienne sauvegarde d'un jeu de recomp.
+    pub fn romm_save_id(&self, rom_id: i64) -> i64 {
+        self.moved_games().into_iter().find(|(_, new)| *new == rom_id).map(|(old, _)| old).unwrap_or(rom_id)
+    }
+
     /// Jeux qui ont une recomp au catalogue.
     pub fn recomp_rom_ids(&self) -> HashSet<i64> {
         self.recomps.iter().flat_map(|r| r.games.iter().filter_map(|g| g.rom_id)).collect()
@@ -470,6 +486,22 @@ mod tests {
             controllers: None,
             dialogs: vec![],
         }
+    }
+
+    #[test]
+    fn games_moved_from_portage_keep_their_old_id() {
+        let text = r#"{"recomps":[{"id":"mh","repo":"r","games":[{"name":"MH","romId":10532,"previousRomId":10557},{"name":"P","romId":3406}],
+          "gameFiles":[{"name":"MHGU-data.extract.zip","path":"jeux/mh/MHGU-data.extract.zip","size":5,"sha1":"abcdef0123456789abcdef0123456789abcdef01"}]}],"emulators":[]}"#;
+        let c: Catalog = serde_json::from_str(text).unwrap();
+        assert_eq!(c.moved_games(), [(10557, 10532)]);
+        assert_eq!(c.romm_save_id(10532), 10557);
+        assert_eq!(c.romm_save_id(3406), 3406);
+        let mut g = crate::romm::library::Game::from_catalog(&c.recomps[0], Target::Windows);
+        g.rom_files = vec![RemoteFile { id: 1, file_name: "x.nsp".into(), rel_path: "x.nsp".into(), size: 1, sha1: None, md5: None, from_manager: false }];
+        g.use_catalog(&c.recomps[0], Target::Windows);
+        assert_eq!(g.rom_files.len(), 1);
+        assert_eq!(g.rom_files[0].rel_path, "ROM/MHGU-data.extract.zip");
+        assert!(g.rom_files[0].from_manager);
     }
 
     #[test]

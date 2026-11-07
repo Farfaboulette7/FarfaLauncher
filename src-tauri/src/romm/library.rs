@@ -449,6 +449,10 @@ impl Game {
         self.archives = archives;
         self.my_archive = mine;
         self.mods = recomp.mod_files();
+        // Données tirées de la ROM (romfs d'un NSP…) : prises sur le gestionnaire, pas sur RomM.
+        if !recomp.game_files.is_empty() {
+            self.rom_files = recomp.game_files.iter().map(|f| RemoteFile { rel_path: format!("ROM/{}", f.name), ..f.remote() }).collect();
+        }
         self.version_file = None;
         self.server_version = Some(recomp.version.nom.clone());
         self.server_version_raw = Some(recomp.version.cle.clone());
