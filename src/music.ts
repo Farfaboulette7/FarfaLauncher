@@ -154,7 +154,15 @@ export function setMusicMuted(value: boolean) {
   applyVolume(MUTE_FADE);
 }
 
-/** Pause / reprise : fondu, puis l'horloge audio est figée pour reprendre au même endroit. */
+/** Position (version, secondes) où la pause a arrêté le morceau. */
+let pausedAt: { version: MusicVersion; position: number } | null = null;
+
+/**
+ * Pause / reprise : fondu, puis le morceau s'arrête en retenant sa position et
+ * repart au même endroit. Le moteur audio n'est jamais suspendu : sous Linux
+ * (WebKitGTK, GStreamer), suspend() puis resume() figeait le launcher plusieurs
+ * minutes, sans que la musique reprenne.
+ */
 export function setMusicPaused(value: boolean) {
   if (paused === value) return;
   paused = value;
@@ -164,12 +172,21 @@ export function setMusicPaused(value: boolean) {
   if (value) {
     applyVolume(PAUSE_FADE);
     window.setTimeout(() => {
-      if (paused && ctx === c) c.suspend().catch(() => undefined);
+      if (!paused || ctx !== c || !playing || !track) return;
+      const v = variant(track, playing.version);
+      pausedAt = { version: playing.version, position: position(playing, v, c.currentTime) };
+      playing.source.stop();
+      playing = null;
     }, PAUSE_FADE * 1000 + 50);
   } else {
-    c.resume()
-      .catch(() => undefined)
-      .finally(() => applyVolume(PAUSE_FADE));
+    if (!playing && pausedAt && track && buffers) {
+      const offset = pausedAt.version === wanted
+        ? pausedAt.position
+        : mapPosition(pausedAt.position, variant(track, pausedAt.version), variant(track, wanted));
+      playing = startVersion(wanted, offset, 0);
+    }
+    pausedAt = null;
+    applyVolume(PAUSE_FADE);
   }
 }
 
@@ -311,11 +328,12 @@ export async function nextTrack(): Promise<void> {
     const pair = await loadPair(c, chosen);
     if (gen !== generation || ctx !== c) return;
     if (playing) fadeOutAndStop(playing, TRACK_FADE);
-    // Changer de morceau relance la musique si elle était en pause.
-    setMusicPaused(false);
     track = chosen;
     buffers = pair;
     playing = startVersion(wanted, 0, TRACK_FADE);
+    // Changer de morceau relance la musique si elle était en pause (le nouveau, au début).
+    pausedAt = null;
+    setMusicPaused(false);
     setState({ title: chosen.title });
     logToFile("info", `musique : « ${chosen.title} »`);
   } catch (e) {
@@ -330,6 +348,7 @@ export function stopMusic() {
   generation++;
   loading = null;
   playing = null;
+  pausedAt = null;
   buffers = null;
   track = null;
   master = null;
