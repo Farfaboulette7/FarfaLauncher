@@ -34,16 +34,20 @@ export function UpdateDialog({ update, onClose }: Props) {
   }
 
   const busy = state === "downloading" || state === "installing";
+  // Mise à jour obligatoire : « Plus tard » seulement si elle a échoué (hors ligne…).
+  const failed = state === "error";
   return (
     <Dialog
       title="Mise à jour du launcher"
-      onClose={busy ? undefined : onClose}
+      onClose={failed ? onClose : undefined}
       actions={
         busy ? null : (
           <>
-            <button className="n-btn" onClick={onClose}>
-              Plus tard
-            </button>
+            {failed && (
+              <button className="n-btn" onClick={onClose}>
+                Plus tard
+              </button>
+            )}
             <button className="n-btn" onClick={install}>
               {state === "error" ? "Réessayer" : "Mettre à jour"}
             </button>
@@ -53,6 +57,7 @@ export function UpdateDialog({ update, onClose }: Props) {
     >
       <p>
         La version <strong>{update.version}</strong> de FaRFa project est disponible (vous avez la {update.currentVersion}).
+        Cette mise à jour est obligatoire.
       </p>
       {update.body && <pre className="update-notes">{update.body}</pre>}
       {state === "downloading" && (

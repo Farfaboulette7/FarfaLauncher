@@ -331,7 +331,11 @@ impl InstallJob {
                 tracing::warn!("exécutable {} absent des candidats", r.exe);
                 candidates.first().cloned()
             }),
-            None => kept,
+            // `exe:` du gestionnaire : programme imposé (Paper Cut : ttyd-eu, pas son menu).
+            None => match self.catalog.recomp_exe(rom_id) {
+                Some(hint) => runtimes::pick_exe(&candidates, hint, None).or(kept),
+                None => kept,
+            },
         };
         let chosen = match (kept, candidates.len()) {
             (Some(e), _) => e,
@@ -1302,6 +1306,53 @@ mod tests {
         assert_eq!(get("LanguageCode").as_deref(), Some("fr"));
         assert_eq!(get("SelectedLanguage").as_deref(), Some("2"));
         println!("carte mémoire : {:?}", std::fs::read_dir(shared.saves_dir.as_ref().unwrap()).map(|r| r.filter_map(Result::ok).map(|e| e.file_name()).collect::<Vec<_>>()));
+        println!("dossier de test : {}", base.display());
+    }
+
+    /// Vrai serveur, recomp à un jeu lancée sur sa ROM (Paper Cut) : `FARFA_E2E_ROM`, plus URL, TOKEN, MANAGER.
+    #[cfg(windows)]
+    #[tokio::test]
+    #[ignore]
+    async fn recomp_direct_rom_e2e() {
+        let var = |k: &str| std::env::var(k).unwrap();
+        let rom: i64 = var("FARFA_E2E_ROM").parse().unwrap();
+        let client = RommClient::new(&var("FARFA_E2E_URL"), Some(var("FARFA_E2E_TOKEN"))).unwrap();
+        let base = std::env::temp_dir().join(format!("farfa-recomp-rom-e2e-{}", uuid::Uuid::new_v4()));
+        let config = base.join("config");
+        std::fs::create_dir_all(&config).unwrap();
+        let manager = client.with_base(&var("FARFA_E2E_MANAGER"));
+        let catalog: Catalog = serde_json::from_str(&manager.send(manager.get("api/catalog")).await.unwrap().text().await.unwrap()).unwrap();
+        let job = InstallJob {
+            client,
+            config_dir: config.clone(),
+            install_root: base.join("Jeux"),
+            target: Target::Windows,
+            cancel: CancellationToken::new(),
+            proton: None,
+            manifest: Manifest::default().with_catalog(&catalog),
+            catalog: catalog.clone(),
+            manager_base: Some(var("FARFA_E2E_MANAGER")),
+            with_emulator: false,
+            runtime_lock: Arc::new(tokio::sync::Mutex::new(())),
+            on_progress: Arc::new(|_| {}),
+        };
+        let st = match job.run(rom).await.unwrap() {
+            InstallOutcome::Installed { game } => game,
+            InstallOutcome::NeedsChoice { game } => panic!("choix demandé parmi {:?}", game.pending_candidates),
+        };
+        let d = catalog.recomp_launch(&st).expect("lancement direct");
+        println!("exe {:?} ; ROM {:?} ; lancement {:?}", st.executable, st.roms, d);
+        let launch = crate::launch::Launch { exe: rel_to_path(&d.exe), args: &d.args, env: &d.env, cwd: None, learn: false, runner: None };
+        let running = crate::launch::spawn(&st.game_dir, launch).unwrap();
+        let pid = running.pid();
+        let waiter = tokio::task::spawn_blocking(move || running.wait(|| {}));
+        tokio::time::sleep(Duration::from_secs(20)).await;
+        let out = std::process::Command::new("tasklist").args(["/FI", &format!("PID eq {pid}"), "/V", "/FO", "LIST"]).output().unwrap();
+        let text = String::from_utf8_lossy(&out.stdout).to_string();
+        println!("{text}");
+        let _ = std::process::Command::new("taskkill").args(["/F", "/PID", &pid.to_string()]).status();
+        waiter.await.unwrap();
+        assert!(text.contains("Paper Cut") || text.contains("ttyd"), "jeu fermé avant 20 s");
         println!("dossier de test : {}", base.display());
     }
 

@@ -132,7 +132,12 @@ pub async fn play_game(
     // Jeu déjà relevé derrière le launcher : lancé directement.
     let open_menu = menu == Some(true) && st.shared.is_some();
     // Émulateur : arguments relus sur le catalogue.
-    let refreshed = state.catalog().emulator_for_install(&st).and_then(|e| crate::install::emulator::refreshed_launch(e, &st));
+    // Recomp à un seul jeu avec `argument:` : lancée sur sa ROM, sans son menu.
+    let refreshed = state
+        .catalog()
+        .emulator_for_install(&st)
+        .and_then(|e| crate::install::emulator::refreshed_launch(e, &st))
+        .or_else(|| state.catalog().recomp_launch(&st));
     let direct = refreshed.as_ref().or(st.direct_launch.as_ref()).filter(|d| !open_menu && !st.prefer_launcher && st.game_dir.join(rel_to_path(&d.exe)).exists());
     // Recomp ou émulateur : français par défaut, posé avant le lancement.
     let mut env: Vec<(String, String)> = direct.map(|d| d.env.clone()).unwrap_or_default();

@@ -325,6 +325,37 @@ impl Catalog {
         }
     }
 
+    /// Recomp à un seul jeu avec `argument:` : lancée directement sur sa ROM
+    /// (`{rom}`), sans son écran de choix. Relu sur le catalogue à chaque lancement.
+    pub fn recomp_launch(&self, st: &crate::install::state::InstalledGame) -> Option<crate::install::state::DirectLaunch> {
+        if st.shared.is_some() {
+            return None;
+        }
+        let recomp = self.recomp_for_rom(st.rom_id).filter(|r| !r.is_shared())?;
+        if recomp.launch.args.is_empty() && recomp.launch.env.is_empty() {
+            return None;
+        }
+        let exe = st.executable.clone()?;
+        let sep = std::path::MAIN_SEPARATOR.to_string();
+        let rom = st
+            .roms
+            .first()
+            .map(|r| format!("{}{sep}{}", crate::launch::direct::GAME_DIR_VAR, r.replace('/', &sep)))
+            .unwrap_or_default();
+        let expand = |t: &str| t.replace("{rom}", &rom);
+        Some(crate::install::state::DirectLaunch {
+            exe,
+            args: recomp.launch.args.iter().map(|a| expand(a)).collect(),
+            cwd: None,
+            env: recomp.launch.env.iter().map(|(k, v)| (k.clone(), expand(v))).collect(),
+        })
+    }
+
+    /// Exécutable imposé par `exe:` pour une recomp à un seul jeu.
+    pub fn recomp_exe(&self, rom_id: i64) -> Option<&str> {
+        self.recomp_for_rom(rom_id).filter(|r| !r.is_shared())?.launch.exe.as_deref()
+    }
+
     pub fn recomp_for_rom(&self, rom_id: i64) -> Option<&CatalogRecomp> {
         self.recomps.iter().find(|r| r.games.iter().any(|g| g.rom_id == Some(rom_id)))
     }
@@ -439,6 +470,44 @@ mod tests {
             controllers: None,
             dialogs: vec![],
         }
+    }
+
+    #[test]
+    fn single_recomp_launches_its_rom_directly() {
+        let text = r#"{"recomps":[{"id":"paper-cut","repo":"https://github.com/LLCOOLT/paper-cut","games":[{"name":"TTYD","romId":3406}],
+          "launch":{"exe":"ttyd-eu","args":["{rom}"]}}],"emulators":[]}"#;
+        let c: Catalog = serde_json::from_str(text).unwrap();
+        assert_eq!(c.recomp_exe(3406), Some("ttyd-eu"));
+        assert_eq!(c.recomp_exe(1), None);
+        let st = crate::install::state::InstalledGame {
+            rom_id: 3406,
+            name: "TTYD".into(),
+            version: None,
+            version_raw: None,
+            target: Target::Windows,
+            archive_name: "a.zip".into(),
+            executable: Some("ttyd-eu.exe".into()),
+            pending_candidates: vec![],
+            roms: vec!["Paper Mario.rvz".into()],
+            rom_sources: vec![],
+            mods_downloaded: vec![],
+            saves: Default::default(),
+            direct_launch: None,
+            prefer_launcher: false,
+            players: Vec::new(),
+            installed_at: 1,
+            updated_at: 1,
+            game_dir: std::path::PathBuf::from("x"),
+            pc: None,
+            shared: None,
+        };
+        let d = c.recomp_launch(&st).unwrap();
+        assert_eq!(d.exe, "ttyd-eu.exe");
+        let sep = std::path::MAIN_SEPARATOR;
+        assert_eq!(d.args, [format!("{}{sep}Paper Mario.rvz", crate::launch::direct::GAME_DIR_VAR)]);
+        // Sans argument : le programme s'ouvre comme avant.
+        let plain: Catalog = serde_json::from_str(r#"{"recomps":[{"id":"m","repo":"r","games":[{"name":"M","romId":3406}]}],"emulators":[]}"#).unwrap();
+        assert!(plain.recomp_launch(&st).is_none());
     }
 
     #[test]
