@@ -1,7 +1,7 @@
 // Navigation à la manette : croix ou stick gauche pour déplacer le focus vers
 // l'élément le plus proche dans la direction, A pour valider, B pour revenir
 // (comme Échap), LB/RB pour changer d'onglet, stick droit pour défiler.
-// Manettes lues par le Rust (gamepad.rs), sauf sous Windows (voir plus bas).
+// Manettes lues par le Rust (gamepad.rs, SDL).
 import { listen } from "@tauri-apps/api/event";
 import { backend, GAMEPAD_EVENT, PadEvent, PadInfo, PadLayout } from "./api/backend";
 import { confirmButtons } from "./padLayouts";
@@ -220,76 +220,9 @@ function navigate(e: PadEvent) {
   }
 }
 
-// Windows : les manettes Xbox (XInput) sont lues par le Rust, les autres
-// (PlayStation, Nintendo) par le moteur web.
-const WEB_PADS = /Windows/.test(navigator.userAgent);
-const pads = new Map<number, PadInfo>();
-/** Numéros des manettes du moteur web, distincts de ceux du Rust. */
-const WEB_PAD_BASE = 100;
-
-/** Manettes connues (pour la page « Contrôles »). */
+/** Manettes connues (pour la page « Contrôles »), dans l'ordre de branchement. */
 export async function listPads(): Promise<PadInfo[]> {
-  const native = await backend.gamepads().catch(() => []);
-  return [...native, ...pads.values()];
-}
-
-function webLayout(id: string): PadLayout {
-  const s = id.toLowerCase();
-  if (/xbox|xinput|045e|28de/.test(s)) return "xbox";
-  if (/054c|dualsense|dualshock|playstation|wireless controller/.test(s)) return "playstation";
-  if (/057e|nintendo|pro controller|joy-con/.test(s)) return "nintendo";
-  return "generic";
-}
-
-/** Nom lisible : l'identifiant du moteur ajoute « (STANDARD GAMEPAD Vendor: …) ». */
-function webName(id: string): string {
-  return id.replace(/\s*\(.*\)\s*$/, "").trim() || "Manette";
-}
-
-// Disposition « standard » de l'API Gamepad.
-const STANDARD = ["south", "east", "west", "north", "lb", "rb", "lt", "rt", "select", "start", "ls", "rs", "up", "down", "left", "right", "mode"];
-const AXES = ["lx", "ly", "rx", "ry"] as const;
-
-/** Lecture des manettes par le moteur web, à chaque image ; mêmes évènements que le Rust. */
-function pollWebPads(dispatch: (e: PadEvent) => void) {
-  const last = new Map<number, { buttons: boolean[]; axes: number[] }>();
-  const tick = () => {
-    const seen = new Set<number>();
-    for (const gp of navigator.getGamepads()) {
-      // Manettes XInput : déjà lues par le Rust.
-      if (!gp || !gp.connected || /xinput/i.test(gp.id)) continue;
-      const id = WEB_PAD_BASE + gp.index;
-      seen.add(id);
-      if (!pads.has(id)) {
-        const info: PadInfo = { pad: id, name: webName(gp.id), layout: webLayout(gp.id) };
-        pads.set(gp.index, info);
-        dispatch({ kind: "connected", ...info });
-      }
-      const prev = last.get(id) ?? { buttons: [], axes: [] };
-      const buttons = gp.buttons.map((b) => b.pressed);
-      const axes = gp.axes.map((v) => Math.round(v * 20) / 20);
-      // Jeu au premier plan : on suit l'état sans rien envoyer.
-      if (document.hasFocus()) {
-        buttons.forEach((pressed, i) => {
-          const name = STANDARD[i];
-          if (name && pressed !== (prev.buttons[i] ?? false)) dispatch({ kind: "button", pad: id, button: name, pressed });
-        });
-        AXES.forEach((axis, i) => {
-          if (i < axes.length && axes[i] !== (prev.axes[i] ?? 0)) dispatch({ kind: "axis", pad: id, axis, value: axes[i] });
-        });
-      }
-      last.set(id, { buttons, axes });
-    }
-    for (const id of [...pads.keys()]) {
-      if (!seen.has(id)) {
-        pads.delete(id);
-        last.delete(id);
-        dispatch({ kind: "disconnected", pad: id });
-      }
-    }
-    requestAnimationFrame(tick);
-  };
-  requestAnimationFrame(tick);
+  return backend.gamepads().catch(() => []);
 }
 
 /** À appeler au démarrage. */
@@ -307,7 +240,6 @@ export function startGamepad() {
     root.classList.add("pad-nav");
     navigate(payload);
   };
-  if (WEB_PADS) pollWebPads(dispatch);
   backend
     .gamepads()
     .then((list) => list.forEach((p) => layouts.set(p.pad, p.layout)))

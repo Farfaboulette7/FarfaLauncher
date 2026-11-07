@@ -339,6 +339,7 @@ pub async fn run(job: &InstallJob, game: Game, pc: PcGame) -> AppResult<InstallO
         saves: previous.as_ref().map(|p| p.saves.clone()).unwrap_or_default(),
         direct_launch: None,
         prefer_launcher: false,
+        players: Vec::new(),
         installed_at: previous.as_ref().map(|p| p.installed_at).unwrap_or(now),
         updated_at: now,
         game_dir: game_dir.clone(),

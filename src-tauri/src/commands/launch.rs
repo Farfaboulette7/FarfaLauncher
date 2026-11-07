@@ -131,15 +131,23 @@ pub async fn play_game(
     };
     // Jeu déjà relevé derrière le launcher : lancé directement.
     let open_menu = menu == Some(true) && st.shared.is_some();
-    let direct = st.direct_launch.as_ref().filter(|d| !open_menu && !st.prefer_launcher && st.game_dir.join(rel_to_path(&d.exe)).exists());
+    // Émulateur : arguments relus sur le catalogue.
+    let refreshed = state.catalog().emulator_for_install(&st).and_then(|e| crate::install::emulator::refreshed_launch(e, &st));
+    let direct = refreshed.as_ref().or(st.direct_launch.as_ref()).filter(|d| !open_menu && !st.prefer_launcher && st.game_dir.join(rel_to_path(&d.exe)).exists());
     // Recomp ou émulateur : français par défaut, posé avant le lancement.
     let mut env: Vec<(String, String)> = direct.map(|d| d.env.clone()).unwrap_or_default();
     if prepared.is_none() {
+        let program = st.game_dir.join(rel_to_path(direct.map(|d| d.exe.as_str()).unwrap_or(&exe)));
+        let exe_dir = program.parent().unwrap_or(&st.game_dir).to_path_buf();
         let rules = state.catalog().language_for_install(&st);
         if !rules.is_empty() {
-            let program = st.game_dir.join(rel_to_path(direct.map(|d| d.exe.as_str()).unwrap_or(&exe)));
-            let exe_dir = program.parent().unwrap_or(&st.game_dir).to_path_buf();
             env.extend(crate::language::prepare(&st.game_dir, &exe_dir, &rules));
+        }
+        // Manette de chaque joueur, posée avant que le jeu ne prenne les manettes.
+        if let Some(format) = state.catalog().controllers_for_install(&st) {
+            if let Err(e) = crate::controllers::apply(&format, &st.players, &gamepad::connected(), &exe_dir) {
+                tracing::warn!("manettes non attribuées: {e}");
+            }
         }
     }
     let spec = match (&prepared, direct) {

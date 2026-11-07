@@ -36,10 +36,11 @@ import { FullscreenButton } from "../components/FullscreenButton";
 
 type Tab = "recent" | "library" | "favorites";
 /** Filtre de la bibliothèque, des favoris et de la recherche. */
-type Kind = "all" | "recomp" | "emulation";
+type Kind = "all" | "installed" | "recomp" | "emulation";
 
 const KINDS: { id: Kind; label: string }[] = [
   { id: "all", label: "Tous" },
+  { id: "installed", label: "Installés" },
   { id: "recomp", label: "Recomp" },
   { id: "emulation", label: "Émulation" },
 ];
@@ -71,7 +72,8 @@ function playMode(game: Game): "recomp" | "emulation" | null {
   return emulatorReady(game) ? "emulation" : null;
 }
 
-function matchesKind(game: Game, kind: Kind): boolean {
+function matchesKind(game: Game, kind: Kind, installed: Map<number, unknown>): boolean {
+  if (kind === "installed") return installed.has(game.id);
   return kind === "all" || playMode(game) === kind;
 }
 
@@ -304,13 +306,13 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
         .map((group) => {
           // Le compteur suit le filtre. Toutes les recomps sont dans la liste de départ ; un
           // jeu chargé à la demande a l'émulateur de sa console, s'il y en a un.
-          const own = allGames.filter((g) => gameKey(g) === group.key && matchesKind(g, kind));
-          const lazy = kind === "recomp" || (kind === "emulation" && !group.hasEmulator) ? 0 : group.lazyCount;
+          const own = allGames.filter((g) => gameKey(g) === group.key && matchesKind(g, kind, installs.installed));
+          const lazy = kind === "recomp" || kind === "installed" || (kind === "emulation" && !group.hasEmulator) ? 0 : group.lazyCount;
           return { group, count: own.length + lazy, fresh: own.filter((g) => isNew(g, seen)).length };
         })
         .filter((p) => p.count > 0)
         .sort((a, b) => collator.compare(a.group.name, b.group.name)),
-    [groups, allGames, gameKey, seen, kind],
+    [groups, allGames, gameKey, seen, kind, installs.installed],
   );
   const group = consoleKey ? (groups.get(consoleKey) ?? null) : null;
 
@@ -333,7 +335,7 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
     [addExtra, handleError],
   );
   /** Avec ce filtre, cette console a-t-elle des jeux à charger ? Sinon, rien n'est demandé. */
-  const lazyUseful = !!group && kind !== "recomp" && (kind !== "emulation" || group.hasEmulator);
+  const lazyUseful = !!group && kind !== "recomp" && kind !== "installed" && (kind !== "emulation" || group.hasEmulator);
   // À l'ouverture d'une console : sa première page, une seule fois.
   useEffect(() => {
     if (group && lazyUseful && !consolePages.has(group.key) && !session.offline) loadConsole(group, 0);
@@ -358,6 +360,15 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
     const missing = [...favoriteIds].filter((id) => !allGames.some((g) => g.id === id) && !extra.has(id));
     if (missing.length > 0) backend.gamesByIds(missing).then(addExtra).catch((e) => console.warn("favoris non chargés", e));
   }, [tab, favoriteIds, allGames, extra, addExtra, session.offline]);
+
+  // « Installés » : les jeux installés hors de la liste de départ (émulation…), lus sur le serveur.
+  // Identifiants négatifs : programmes partagés (émulateurs), sans fiche RomM.
+  const installedIds = useMemo(() => [...installs.installed.keys()].filter((id) => id > 0), [installs.installed]);
+  useEffect(() => {
+    if (tab !== "library" || kind !== "installed" || session.offline) return;
+    const missing = installedIds.filter((id) => !allGames.some((g) => g.id === id) && !extra.has(id));
+    if (missing.length > 0) backend.gamesByIds(missing).then(addExtra).catch((e) => console.warn("jeux installés non chargés", e));
+  }, [tab, kind, installedIds, allGames, extra, addExtra, session.offline]);
 
   // Fiche d'un jeu chargé à la demande : ses fichiers, à l'ouverture de sa page.
   useEffect(() => {
@@ -406,12 +417,15 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
       return [...allGames, ...recents].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id - a.id).slice(0, RECENT_COUNT);
     }
     if (tab === "favorites") return [...favorites.ids].map((id) => known(id)).filter((g): g is Game => !!g);
+    // « Installés » : tous les jeux installés, toutes consoles confondues.
+    if (kind === "installed" && consoleKey === null)
+      return installedIds.map((id) => known(id)).filter((g): g is Game => !!g).sort((a, b) => collator.compare(a.name, b.name));
     const own = consoleKey === null ? allGames : allGames.filter((g) => gameKey(g) === consoleKey);
     const ownIds = new Set(own.map((g) => g.id));
     const page = consoleKey ? (consolePages.get(consoleKey)?.ids ?? []) : [];
     const loaded = page.map((id) => extra.get(id)).filter((g): g is Game => !!g && !ownIds.has(g.id));
     return [...own, ...loaded].sort((a, b) => collator.compare(a.name, b.name));
-  }, [tab, allGames, favorites.ids, consoleKey, consolePages, extra, recentIds, known, gameKey]);
+  }, [tab, allGames, favorites.ids, consoleKey, consolePages, extra, recentIds, known, gameKey, kind, installedIds]);
 
   const q = term.toLocaleLowerCase("fr");
   // « Récent » montre tous les derniers ajouts, sans filtre.
@@ -423,9 +437,9 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
     const found = q && tab === "library"
       ? searchIds.map((id) => extra.get(id)).filter((g): g is Game => !!g && !localIds.has(g.id) && (consoleKey === null || gameKey(g) === consoleKey))
       : [];
-    return [...local, ...found].filter((g) => matchesKind(g, shownKind));
-  }, [q, viewGames, tab, searchIds, extra, consoleKey, gameKey, shownKind]);
-  const showPlatforms = tab === "library" && consoleKey === null && !q;
+    return [...local, ...found].filter((g) => matchesKind(g, shownKind, installs.installed));
+  }, [q, viewGames, tab, searchIds, extra, consoleKey, gameKey, shownKind, installs.installed]);
+  const showPlatforms = tab === "library" && consoleKey === null && !q && kind !== "installed";
   const page = consoleKey ? consolePages.get(consoleKey) : undefined;
 
   function openTab(t: Tab) {
@@ -702,6 +716,7 @@ function viewTitle(tab: Tab, group: ConsoleGroup | null): string {
 
 function emptyMessage(tab: Tab, q: string, favoritesLoading: boolean, kind: Kind): string {
   if (q) return "Aucun jeu ne correspond.";
+  if (kind === "installed") return "Aucun jeu installé.";
   if (kind === "recomp") return "Aucune recomp ici.";
   if (kind === "emulation") return "Aucun jeu avec un émulateur ici.";
   if (tab === "favorites") return favoritesLoading ? "Chargement des favoris…" : "Aucun favori pour l'instant : ouvrez un jeu et cliquez « ☆ Favori ».";

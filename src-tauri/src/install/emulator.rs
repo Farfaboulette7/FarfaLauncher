@@ -55,6 +55,19 @@ fn expand(text: &str, rom: &Path, rom_dir: &Path, rom_stem: &str) -> String {
     text.replace("{rom}", &rom.to_string_lossy()).replace("{romdir}", &rom_dir.to_string_lossy()).replace("{romstem}", rom_stem)
 }
 
+/// Lancement d'un jeu d'émulateur avec les arguments actuels du catalogue :
+/// un `argument:` ajouté sur le gestionnaire (plein écran…) vaut sans réinstaller.
+pub fn refreshed_launch(emulator: &Emulator, st: &InstalledGame) -> Option<DirectLaunch> {
+    let old = st.direct_launch.as_ref()?;
+    let rom_dir = st.shared.as_ref()?.rom_dir.clone()?;
+    // La ROM est l'argument qui désigne un fichier du dossier du jeu.
+    let rom = old.args.iter().map(PathBuf::from).find(|p| p.starts_with(&rom_dir) && p.is_file())?;
+    let rom_stem = rom.file_stem()?.to_str()?.to_string();
+    let args = emulator.launch.args.iter().map(|a| expand(a, &rom, &rom_dir, &rom_stem)).collect();
+    let env = emulator.launch.env.iter().map(|(k, v)| (k.clone(), expand(v, &rom, &rom_dir, &rom_stem))).collect();
+    Some(DirectLaunch { exe: old.exe.clone(), args, cwd: old.cwd.clone(), env })
+}
+
 /// Identifiant d'un disque : GameCube ou Wii (`GZ2P01`, dans son en-tête) ou PSP
 /// (`ULES00151`, dans `UMD_DATA.BIN`, aussi au format CHD).
 pub fn disc_id(path: &Path) -> Option<String> {
@@ -252,6 +265,7 @@ impl InstallJob {
             saves: previous.as_ref().map(|p| p.saves.clone()).unwrap_or_else(SaveSync::default),
             direct_launch: Some(DirectLaunch { exe: exe.clone(), args, cwd: None, env }),
             prefer_launcher: false,
+            players: previous.as_ref().map(|p| p.players.clone()).unwrap_or_default(),
             installed_at: previous.as_ref().map(|p| p.installed_at).unwrap_or(now),
             updated_at: now,
             game_dir: installed.game_dir.clone(),
@@ -360,6 +374,7 @@ impl InstallJob {
             saves: SaveSync::default(),
             direct_launch: None,
             prefer_launcher: false,
+            players: Vec::new(),
             installed_at: previous.as_ref().map(|p| p.installed_at).unwrap_or(now),
             updated_at: now,
             game_dir,
@@ -466,7 +481,7 @@ mod tests {
         let st = InstalledGame {
             rom_id: 1, name: "J".into(), version: None, version_raw: None, target: crate::platform::Target::Windows, archive_name: String::new(),
             executable: None, pending_candidates: vec![], roms: vec!["Jeu.gba".into()], rom_sources: vec![], mods_downloaded: vec![], saves: SaveSync::default(),
-            direct_launch: None, prefer_launcher: false, installed_at: 0, updated_at: 0, pc: None, shared: Some(shared.clone()), game_dir: root.clone(),
+            direct_launch: None, prefer_launcher: false, players: Vec::new(), installed_at: 0, updated_at: 0, pc: None, shared: Some(shared.clone()), game_dir: root.clone(),
         };
         remove_rom_files(&st, &shared, true).unwrap();
         assert!(!rom_dir.join("Jeu.gba").exists() && rom_dir.join("Jeu.sav").exists());

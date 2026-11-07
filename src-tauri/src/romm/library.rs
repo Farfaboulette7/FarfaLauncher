@@ -92,6 +92,9 @@ struct RawMetadatum {
     publishers: Vec<String>,
     #[serde(default)]
     first_release_date: Option<i64>,
+    /// « 1-4 », « 2 »… (IGDB ou ScreenScraper).
+    #[serde(default)]
+    player_count: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -217,6 +220,9 @@ pub struct Game {
     /// Ce qui distingue cette ROM de ses homonymes (`USA, Europe · Rev 1`).
     #[serde(default)]
     pub variant: Option<String>,
+    /// Nombre maximal de joueurs sur une même machine, d'après RomM.
+    #[serde(default)]
+    pub players: Option<u8>,
     /// Console d'origine (slug RomM), commune à `gba` et `portage-gba`.
     #[serde(default)]
     pub console: String,
@@ -402,6 +408,7 @@ impl Game {
             pc: None,
             runtime: None,
             variant: None,
+            players: None,
             console: String::new(),
             recomp: true,
             emulator: None,
@@ -699,6 +706,7 @@ fn to_game(r: RawRom, base: &str, me: Target, details_loaded: bool) -> Game {
         pc,
         runtime: None,
         variant,
+        players: meta.player_count.as_deref().and_then(max_players),
         console,
         recomp: portage,
         emulator: None,
@@ -709,6 +717,11 @@ fn to_game(r: RawRom, base: &str, me: Target, details_loaded: bool) -> Game {
         created_at: r.created_at,
         updated_at: r.updated_at,
     }
+}
+
+/// Plus grand nombre de « 1-4 », « 2 », « 1 - 8 » ; borné à 8.
+fn max_players(text: &str) -> Option<u8> {
+    text.split(|c: char| !c.is_ascii_digit()).filter_map(|n| n.parse::<u8>().ok()).max().map(|n| n.clamp(1, 8))
 }
 
 /// `first_release_date` est un timestamp Unix (secondes ou millisecondes selon la source).

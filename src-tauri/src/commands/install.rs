@@ -234,6 +234,31 @@ pub fn set_key_binds(state: State<'_, AppState>, rom_id: i64, keys: Vec<dosbox::
     Ok(st)
 }
 
+/// Nombre de joueurs dont le launcher sait poser la manette pour ce jeu installé
+/// (0 : l'émulateur ou la recomp ne le permet pas).
+#[tauri::command]
+pub fn controller_ports(state: State<'_, AppState>, rom_id: i64) -> AppResult<usize> {
+    let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
+    Ok(state.catalog().controllers_for_install(&st).map(|f| crate::controllers::ports(&f)).unwrap_or(0))
+}
+
+/// Manette de chaque joueur (appliquée au prochain lancement).
+#[tauri::command]
+pub fn set_players(
+    state: State<'_, AppState>,
+    rom_id: i64,
+    players: Vec<Option<crate::controllers::PlayerPad>>,
+) -> AppResult<state::InstalledGame> {
+    let mut st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
+    let mut players = players;
+    while players.last().is_some_and(Option::is_none) {
+        players.pop();
+    }
+    st.players = players;
+    state::write_state(&state.config_dir, &st)?;
+    Ok(st)
+}
+
 /// Modes de jeu d'un Call of Duty installé.
 #[tauri::command]
 pub fn cod_modes(state: State<'_, AppState>, rom_id: i64) -> AppResult<Vec<cod::ModeInfo>> {

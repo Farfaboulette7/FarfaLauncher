@@ -181,7 +181,7 @@ fn documents() -> Option<PathBuf> {
 }
 
 /// INI ou TOML : `section.clé` (ou `clé` avant toute section), remplacée ou ajoutée.
-fn set_ini(text: &str, key: &str, value: &str) -> String {
+pub(crate) fn set_ini(text: &str, key: &str, value: &str) -> String {
     let (section, name) = match key.rsplit_once('.') {
         Some((s, n)) => (Some(s), n),
         None => (None, key),

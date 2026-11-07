@@ -50,6 +50,9 @@ pub struct InstalledGame {
     /// Passer quand même par le launcher (réglages, mise à jour du port…).
     #[serde(default)]
     pub prefer_launcher: bool,
+    /// Manette de chaque joueur (case vide : aucune). Vide = ordre de branchement.
+    #[serde(default)]
+    pub players: Vec<Option<crate::controllers::PlayerPad>>,
     /// Horodatages Unix (secondes).
     pub installed_at: u64,
     pub updated_at: u64,
@@ -382,6 +385,7 @@ mod tests {
             saves: SaveSync::default(),
             direct_launch: None,
             prefer_launcher: false,
+            players: Vec::new(),
             installed_at: 1,
             updated_at: 1,
             game_dir: game_dir.clone(),

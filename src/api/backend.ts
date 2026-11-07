@@ -123,9 +123,23 @@ export type PadEvent =
 export type PadLayout = "xbox" | "playstation" | "nintendo" | "generic";
 
 export interface PadInfo {
+  /** Numéro pour cette session (change à chaque rebranchement). */
   pad: number;
   name: string;
   layout: PadLayout;
+  /** Identifiant durable (GUID SDL et numéro de série). */
+  key: string;
+  guid: string;
+  vendor: number;
+  product: number;
+  /** Emplacement XInput (Windows, manettes Xbox). */
+  xinput: number | null;
+}
+
+/** Manette choisie pour un joueur. */
+export interface PlayerPad {
+  key: string;
+  name: string;
 }
 
 export const GAMEPAD_EVENT = "gamepad";
@@ -226,6 +240,8 @@ export interface Game {
   runtime: GameRuntime | null;
   /** Ce qui distingue cette ROM de ses homonymes (`USA, Europe · Rev 1`). */
   variant?: string | null;
+  /** Nombre maximal de joueurs sur une même machine (RomM). */
+  players?: number | null;
   /** Console d'origine, commune à `gba` et `portage-gba`. */
   console: string;
   /** Ce jeu a une recomp. */
@@ -279,6 +295,8 @@ export interface InstalledGame {
   directLaunch: DirectLaunch | null;
   /** Passer quand même par le launcher. */
   preferLauncher: boolean;
+  /** Manette de chaque joueur ; vide = ordre de branchement. */
+  players?: (PlayerPad | null)[];
   installedAt: number;
   updatedAt: number;
   gameDir: string;
@@ -486,6 +504,8 @@ export const backend = {
   setProtonVersion: (romId: number, version: string | null) => invoke<InstalledGame>("set_proton_version", { romId, version }),
   codModes: (romId: number) => invoke<CodModeInfo[]>("cod_modes", { romId }),
   setKeyBinds: (romId: number, keys: KeyBind[]) => invoke<InstalledGame>("set_key_binds", { romId, keys }),
+  controllerPorts: (romId: number) => invoke<number>("controller_ports", { romId }),
+  setPlayers: (romId: number, players: (PlayerPad | null)[]) => invoke<InstalledGame>("set_players", { romId, players }),
   isFullscreen: () => invoke<boolean>("is_fullscreen"),
   setFullscreen: (on: boolean) => invoke<void>("set_fullscreen", { on }),
   gamepads: () => invoke<PadInfo[]>("gamepads"),

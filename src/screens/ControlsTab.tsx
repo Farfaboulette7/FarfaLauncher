@@ -1,5 +1,5 @@
 import { CSSProperties, useEffect, useState } from "react";
-import { backend, Game, KeyBind, PadEvent, PadLayout } from "../api/backend";
+import { backend, Game, InstalledGame, KeyBind, PadEvent, PadInfo, PadLayout, PlayerPad } from "../api/backend";
 import { InstallsState } from "../hooks/useInstalls";
 import { capturePad, listPads, onPad, padLayoutOf } from "../gamepad";
 import { faceColor, LAYOUT_NAMES, padLabel } from "../padLayouts";
@@ -69,8 +69,32 @@ interface Props {
 export function ControlsTab({ game, installs, onError }: Props) {
   const installed = installs.installed.get(game.id);
   const dos = !!installed?.pc && isDosbox(installed.executable);
+  // Joueurs que l'émulateur ou la recomp sait recevoir (0 : pas d'attribution possible).
+  const [ports, setPorts] = useState(0);
+  const installedHere = !!installed && !installed.pc;
+  useEffect(() => {
+    if (!installedHere) {
+      setPorts(0);
+      return;
+    }
+    let live = true;
+    backend
+      .controllerPorts(game.id)
+      .then((n) => live && setPorts(n))
+      .catch(() => live && setPorts(0));
+    return () => {
+      live = false;
+    };
+  }, [game.id, installedHere]);
+  const count = Math.min(ports, Math.max(1, game.players ?? 1));
   return (
     <div className="gd-controls">
+      {installed && count > 0 && (
+        <section>
+          <h3 className="n-section-title">{count > 1 ? "Manette de chaque joueur" : "Manette du joueur"}</h3>
+          <Players romId={game.id} count={count} installed={installed} installs={installs} onError={onError} />
+        </section>
+      )}
       <section>
         <h3 className="n-section-title">Tester le clavier et la manette</h3>
         <Tester />
@@ -81,6 +105,158 @@ export function ControlsTab({ game, installs, onError }: Props) {
           <KeyMap romId={game.id} binds={installed.pc?.keys ?? []} installs={installs} onError={onError} />
         </section>
       )}
+    </div>
+  );
+}
+
+/** Manettes branchées, dans l'ordre de branchement, tenues à jour. */
+function useConnectedPads(): PadInfo[] {
+  const [pads, setPads] = useState<PadInfo[]>([]);
+  useEffect(() => {
+    let live = true;
+    listPads()
+      .then((list) => live && setPads(list))
+      .catch(() => undefined);
+    const off = onPad((e) => {
+      if (e.kind === "connected") {
+        const { kind: _kind, ...info } = e;
+        setPads((ps) => [...ps.filter((p) => p.pad !== info.pad), info]);
+      } else if (e.kind === "disconnected") {
+        setPads((ps) => ps.filter((p) => p.pad !== e.pad));
+      }
+    });
+    return () => {
+      live = false;
+      off();
+    };
+  }, []);
+  return pads;
+}
+
+const guidOf = (key: string) => key.split("/")[0];
+
+/** Manette branchée qui correspond à ce choix : la même, sinon une du même modèle (comme au lancement). */
+function findPad(want: PlayerPad | null, pads: PadInfo[]): PadInfo | undefined {
+  if (!want) return undefined;
+  return pads.find((p) => p.key === want.key) ?? pads.find((p) => p.guid === guidOf(want.key));
+}
+
+interface PlayersProps {
+  romId: number;
+  count: number;
+  installed: InstalledGame;
+  installs: InstallsState;
+  onError: (e: unknown) => Promise<string>;
+}
+
+function Players({ romId, count, installed, installs, onError }: PlayersProps) {
+  const pads = useConnectedPads();
+  const [capture, setCapture] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const saved = installed.players ?? [];
+  const chosen = saved.some(Boolean);
+  // Sans choix enregistré : ordre de branchement, comme au lancement.
+  const slots: (PlayerPad | null)[] = Array.from({ length: count }, (_, i) =>
+    chosen ? (saved[i] ?? null) : pads[i] ? { key: pads[i].key, name: pads[i].name } : null,
+  );
+
+  async function save(next: (PlayerPad | null)[]) {
+    setError(null);
+    try {
+      installs.setInstalled(await backend.setPlayers(romId, next));
+    } catch (e) {
+      setError(await onError(e));
+    }
+  }
+
+  function assign(slot: number, pad: PadInfo | null) {
+    // Une manette ne sert qu'à un joueur : elle quitte sa case précédente.
+    const next = slots.map((s) => (pad && s && s.key === pad.key ? null : s));
+    next[slot] = pad ? { key: pad.key, name: pad.name } : null;
+    save(next);
+  }
+
+  // « Choisir avec la manette » : celle qui appuie sur un bouton devient celle du joueur.
+  useEffect(() => {
+    if (capture === null) return;
+    const release = capturePad();
+    const off = onPad((e) => {
+      if (e.kind !== "button" || !e.pressed) return;
+      const pad = pads.find((p) => p.pad === e.pad);
+      if (!pad) return;
+      setCapture(null);
+      assign(capture, pad);
+    });
+    const esc = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      setCapture(null);
+    };
+    window.addEventListener("keydown", esc, true);
+    return () => {
+      off();
+      window.removeEventListener("keydown", esc, true);
+      // Laisse passer le relâchement du bouton avant de reprendre la navigation.
+      window.setTimeout(release, 300);
+    };
+  }, [capture, pads]);
+
+  return (
+    <div className="ctl-players">
+      {pads.length === 0 && <p className="n-hint">Aucune manette branchée. Branchez-en une : elle apparaît ici en quelques secondes.</p>}
+      <ol className="ctl-player-list">
+        {slots.map((slot, i) => {
+          const here = findPad(slot, pads);
+          return (
+            <li key={i} className="ctl-player">
+              <span className="ctl-player-num">Joueur {i + 1}</span>
+              <span className={`ctl-player-pad${here ? "" : " ctl-player-pad--off"}`}>
+                {slot ? (here ? here.name : `${slot.name} (non branchée)`) : i === 0 ? "Clavier" : "Aucune manette"}
+              </span>
+              {capture === i ? (
+                <span className="n-notice ctl-capture">
+                  <span>Appuyez sur un bouton de la manette du joueur {i + 1}.</span>
+                  <button className="n-btn" onClick={() => setCapture(null)}>
+                    Annuler
+                  </button>
+                </span>
+              ) : (
+                <span className="ctl-actions">
+                  {pads.length > 0 && (
+                    <button className="n-btn" onClick={() => setCapture(i)}>
+                      Choisir avec la manette
+                    </button>
+                  )}
+                  {pads
+                    .filter((p) => p.key !== here?.key)
+                    .map((p) => (
+                      <button key={p.pad} className="n-btn" onClick={() => assign(i, p)}>
+                        {p.name}
+                      </button>
+                    ))}
+                  {slot && (
+                    <button className="n-link" onClick={() => assign(i, null)}>
+                      Retirer
+                    </button>
+                  )}
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+      {error && <p className="n-alert">{error}</p>}
+      <p className="n-hint">
+        Appliqué au prochain lancement.{" "}
+        {chosen ? (
+          <button className="n-link" onClick={() => save([])}>
+            Revenir à l'ordre de branchement
+          </button>
+        ) : (
+          "Sans choix de votre part, les manettes sont prises dans l'ordre où elles ont été branchées."
+        )}
+      </p>
     </div>
   );
 }

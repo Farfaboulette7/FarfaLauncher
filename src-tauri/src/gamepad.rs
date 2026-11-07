@@ -1,28 +1,30 @@
-//! Manettes, lues ici plutôt que par le moteur web, dont la prise en charge
-//! varie : gilrs sous Linux et macOS, XInput sous Windows. Les évènements
-//! partent vers l'interface (navigation, page « Contrôles ») sauf pendant
-//! qu'un jeu tourne.
+//! Manettes, lues par SDL3 (compilé dans le launcher) sur tous les systèmes.
+//! SDL est aussi ce qu'utilisent Dolphin et la plupart des recomps : le
+//! launcher voit chaque manette comme eux (nom, GUID, emplacement XInput), ce
+//! qui permet d'attribuer les joueurs (voir controllers.rs).
+//!
+//! Les évènements partent vers l'interface (navigation, page « Contrôles »).
+//! Pendant qu'un jeu tourne, SDL est fermé : la manette est toute au jeu.
 
 use std::collections::BTreeMap;
+use std::ffi::{c_char, CStr};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-#[cfg(not(windows))]
-use gilrs::{Axis, Button, EventType, Gamepad, Gilrs};
+use sdl3_sys::events::{SDL_Event, SDL_EventType, SDL_WaitEventTimeout};
+use sdl3_sys::gamepad::*;
+use sdl3_sys::guid::{SDL_GUIDToString, SDL_GUID};
+use sdl3_sys::hints::*;
+use sdl3_sys::init::{SDL_InitSubSystem, SDL_QuitSubSystem, SDL_INIT_GAMEPAD};
+use sdl3_sys::joystick::SDL_JoystickID;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 pub const EVENT: &str = "gamepad";
 
-/// Nouvelle recherche des manettes tant qu'aucune n'est vue : sous Linux, une
-/// manette branchée après coup n'est pas toujours annoncée (droits d'accès
-/// posés un instant après son apparition).
-#[cfg(not(windows))]
-const RESCAN_EVERY: Duration = Duration::from_secs(3);
-
 static GAMES: AtomicUsize = AtomicUsize::new(0);
-/// Recherche demandée (fin d'un jeu : il a pu garder la manette pour lui).
+/// Relecture demandée (fin d'un jeu).
 static RESCAN: AtomicBool = AtomicBool::new(false);
 static PADS: Mutex<BTreeMap<usize, PadInfo>> = Mutex::new(BTreeMap::new());
 
@@ -47,20 +49,36 @@ pub enum PadEvent {
     Disconnected { pad: usize },
 }
 
-#[derive(Clone, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PadInfo {
+    /// Numéro de la manette pour cette session de SDL (change à chaque rebranchement).
     pub pad: usize,
     pub name: String,
     /// Disposition des boutons : `xbox`, `playstation`, `nintendo` ou `generic`.
     pub layout: &'static str,
+    /// Identifiant durable : GUID SDL et numéro de série (sinon chemin du périphérique).
+    pub key: String,
+    /// GUID SDL (32 caractères hexadécimaux), comme dans gamecontrollerdb.txt.
+    pub guid: String,
+    pub vendor: u16,
+    pub product: u16,
+    /// Emplacement XInput (0 à 3) d'une manette Xbox sous Windows.
+    pub xinput: Option<u8>,
+    /// Numéro de série donné par SDL (manettes Bluetooth, PlayStation…).
+    pub serial: Option<String>,
+    /// Ordre d'arrivée, pour l'attribution par défaut des joueurs.
+    #[serde(skip)]
+    pub order: u64,
 }
 
 pub fn connected() -> Vec<PadInfo> {
-    PADS.lock().unwrap().values().cloned().collect()
+    let mut pads: Vec<PadInfo> = PADS.lock().unwrap().values().cloned().collect();
+    pads.sort_by_key(|p| p.order);
+    pads
 }
 
 /// Famille de la manette, d'après le fabricant puis le nom.
-#[cfg_attr(windows, allow(dead_code))]
 fn layout(vendor: Option<u16>, name: &str) -> &'static str {
     let name = name.to_ascii_lowercase();
     match vendor {
@@ -81,228 +99,230 @@ fn layout(vendor: Option<u16>, name: &str) -> &'static str {
     }
 }
 
-#[cfg(not(windows))]
-fn info(pad: usize, gamepad: Gamepad<'_>) -> PadInfo {
-    let name = gamepad.name().to_string();
-    PadInfo { pad, layout: layout(gamepad.vendor_id(), &name), name }
+/// Le GUID SDL porte, en octet 14, le pilote qui lit la manette : `x` pour XInput.
+fn is_xinput(guid: &SDL_GUID) -> bool {
+    guid.data[14] == b'x'
 }
 
-#[cfg(not(windows))]
-fn button_name(b: Button) -> Option<&'static str> {
-    Some(match b {
-        Button::South => "south",
-        Button::East => "east",
-        Button::West => "west",
-        Button::North => "north",
-        Button::LeftTrigger => "lb",
-        Button::RightTrigger => "rb",
-        Button::LeftTrigger2 => "lt",
-        Button::RightTrigger2 => "rt",
-        Button::Select => "select",
-        Button::Start => "start",
-        Button::Mode => "mode",
-        Button::LeftThumb => "ls",
-        Button::RightThumb => "rs",
-        Button::DPadUp => "up",
-        Button::DPadDown => "down",
-        Button::DPadLeft => "left",
-        Button::DPadRight => "right",
-        _ => return None,
-    })
+fn guid_string(guid: SDL_GUID) -> String {
+    let mut buf = [0 as c_char; 33];
+    // SAFETY : tampon de 33 octets, la taille demandée par SDL.
+    unsafe { SDL_GUIDToString(guid, buf.as_mut_ptr(), buf.len() as i32) };
+    text(buf.as_ptr()).unwrap_or_default()
 }
 
-#[cfg(not(windows))]
-fn axis(a: Axis, value: f32) -> Option<(&'static str, f32)> {
-    Some(match a {
-        Axis::LeftStickX => ("lx", value),
-        Axis::LeftStickY => ("ly", -value),
-        Axis::RightStickX => ("rx", value),
-        Axis::RightStickY => ("ry", -value),
-        _ => return None,
-    })
+fn text(p: *const c_char) -> Option<String> {
+    // SAFETY : chaîne terminée par un zéro, fournie par SDL, ou nulle.
+    (!p.is_null()).then(|| unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()).filter(|s| !s.is_empty())
 }
 
-/// Recrée la lecture des manettes et annonce les changements à l'interface.
-#[cfg(not(windows))]
-fn rescan(app: &AppHandle) -> Option<Gilrs> {
-    let gilrs = match Gilrs::new() {
-        Ok(g) => g,
-        Err(e) => {
-            tracing::warn!("manettes indisponibles: {e}");
+/// Ouvre la manette et relève son identité.
+fn open(id: SDL_JoystickID, order: u64) -> Option<(*mut SDL_Gamepad, PadInfo)> {
+    // SAFETY : appels SDL sur le fil qui l'a initialisé ; pointeur vérifié.
+    unsafe {
+        let pad = SDL_OpenGamepad(id);
+        if pad.is_null() {
             return None;
         }
-    };
-    let found: BTreeMap<usize, PadInfo> = gilrs.gamepads().map(|(id, pad)| (id.into(), info(id.into(), pad))).collect();
-    let mut pads = PADS.lock().unwrap();
-    for (id, _) in pads.iter().filter(|(id, p)| found.get(id) != Some(p)) {
-        let _ = app.emit(EVENT, PadEvent::Disconnected { pad: *id });
-    }
-    for pad in found.iter().filter(|(id, p)| pads.get(id) != Some(p)).map(|(_, p)| p) {
-        tracing::info!("manette « {} » ({})", pad.name, pad.layout);
-        let _ = app.emit(EVENT, PadEvent::Connected(pad.clone()));
-    }
-    *pads = found;
-    Some(gilrs)
-}
-
-/// Démarre la lecture des manettes sur un fil dédié.
-#[cfg(not(windows))]
-pub fn start(app: AppHandle) {
-    std::thread::Builder::new()
-        .name("manettes".into())
-        .spawn(move || {
-            let Some(mut gilrs) = rescan(&app) else { return };
-            let mut last_scan = Instant::now();
-            // Dernière valeur envoyée par axe, pour n'envoyer que les vrais changements.
-            let mut sent: BTreeMap<(usize, &'static str), f32> = BTreeMap::new();
-            loop {
-                let idle = PADS.lock().unwrap().is_empty() && last_scan.elapsed() >= RESCAN_EVERY;
-                if (idle || RESCAN.swap(false, Ordering::Relaxed)) && GAMES.load(Ordering::Relaxed) == 0 {
-                    if let Some(g) = rescan(&app) {
-                        gilrs = g;
-                        sent.clear();
-                    }
-                    last_scan = Instant::now();
-                }
-                let Some(ev) = gilrs.next_event_blocking(Some(Duration::from_millis(500))) else { continue };
-                let pad: usize = ev.id.into();
-                let out = match ev.event {
-                    EventType::Connected => {
-                        let pad_info = info(pad, gilrs.gamepad(ev.id));
-                        PADS.lock().unwrap().insert(pad, pad_info.clone());
-                        tracing::info!("manette « {} » ({})", pad_info.name, pad_info.layout);
-                        Some(PadEvent::Connected(pad_info))
-                    }
-                    EventType::Disconnected => {
-                        PADS.lock().unwrap().remove(&pad);
-                        Some(PadEvent::Disconnected { pad })
-                    }
-                    _ if GAMES.load(Ordering::Relaxed) > 0 => None,
-                    EventType::ButtonPressed(b, _) => button_name(b).map(|button| PadEvent::Button { pad, button, pressed: true }),
-                    EventType::ButtonReleased(b, _) => button_name(b).map(|button| PadEvent::Button { pad, button, pressed: false }),
-                    EventType::AxisChanged(a, v, _) => axis(a, v).and_then(|(axis, value)| {
-                        let value = (value * 20.0).round() / 20.0;
-                        let last = sent.insert((pad, axis), value).unwrap_or(0.0);
-                        (value != last).then_some(PadEvent::Axis { pad, axis, value })
-                    }),
-                    _ => None,
-                };
-                if let Some(out) = out {
-                    let _ = app.emit(EVENT, out);
-                }
-            }
-        })
-        .expect("fil des manettes");
-}
-
-/// Windows : manettes Xbox (et compatibles) lues par XInput, sans condition de
-/// focus. Windows.Gaming.Input (gilrs) ne transmet rien quand le focus est
-/// dans le moteur web, qui tourne dans un autre processus. Les autres
-/// manettes (PlayStation, Nintendo) sont lues par l'interface.
-#[cfg(windows)]
-pub fn start(app: AppHandle) {
-    use windows_sys::Win32::UI::Input::XboxController::*;
-
-    const BUTTONS: [(u16, &str); 14] = [
-        (XINPUT_GAMEPAD_A, "south"),
-        (XINPUT_GAMEPAD_B, "east"),
-        (XINPUT_GAMEPAD_X, "west"),
-        (XINPUT_GAMEPAD_Y, "north"),
-        (XINPUT_GAMEPAD_LEFT_SHOULDER, "lb"),
-        (XINPUT_GAMEPAD_RIGHT_SHOULDER, "rb"),
-        (XINPUT_GAMEPAD_BACK, "select"),
-        (XINPUT_GAMEPAD_START, "start"),
-        (XINPUT_GAMEPAD_LEFT_THUMB, "ls"),
-        (XINPUT_GAMEPAD_RIGHT_THUMB, "rs"),
-        (XINPUT_GAMEPAD_DPAD_UP, "up"),
-        (XINPUT_GAMEPAD_DPAD_DOWN, "down"),
-        (XINPUT_GAMEPAD_DPAD_LEFT, "left"),
-        (XINPUT_GAMEPAD_DPAD_RIGHT, "right"),
-    ];
-    // Emplacements vides : interrogés moins souvent (appel lent sans manette).
-    const PROBE_EVERY: Duration = Duration::from_secs(2);
-    const POLL: Duration = Duration::from_millis(16);
-
-    /// État réduit d'une manette : boutons (gâchettes comprises) et axes arrondis.
-    #[derive(Default, Clone, Copy, PartialEq)]
-    struct Snapshot {
-        buttons: u32,
-        axes: [f32; 4],
-    }
-
-    fn read(slot: u32) -> Option<Snapshot> {
-        let mut state = XINPUT_STATE::default();
-        // SAFETY : `state` est une structure valide, écrite par XInput.
-        if unsafe { XInputGetState(slot, &mut state) } != 0 {
-            return None;
-        }
-        let g = state.Gamepad;
-        let mut buttons = g.wButtons as u32;
-        // Gâchettes : bits au-delà des boutons XInput.
-        if g.bLeftTrigger > 100 {
-            buttons |= 1 << 16;
-        }
-        if g.bRightTrigger > 100 {
-            buttons |= 1 << 17;
-        }
-        let norm = |v: i16, dead: u16| {
-            if v.unsigned_abs() < dead {
-                0.0
-            } else {
-                ((v as f32 / 32767.0).clamp(-1.0, 1.0) * 20.0).round() / 20.0
-            }
+        let guid = SDL_GetGamepadGUIDForID(id);
+        let name = text(SDL_GetGamepadName(pad)).unwrap_or_else(|| "Manette".into());
+        let vendor = SDL_GetGamepadVendor(pad);
+        let product = SDL_GetGamepadProduct(pad);
+        let layout = match SDL_GetGamepadType(pad) {
+            SDL_GamepadType::XBOX360 | SDL_GamepadType::XBOXONE => "xbox",
+            SDL_GamepadType::PS3 | SDL_GamepadType::PS4 | SDL_GamepadType::PS5 => "playstation",
+            SDL_GamepadType::NINTENDO_SWITCH_PRO
+            | SDL_GamepadType::NINTENDO_SWITCH_JOYCON_LEFT
+            | SDL_GamepadType::NINTENDO_SWITCH_JOYCON_RIGHT
+            | SDL_GamepadType::NINTENDO_SWITCH_JOYCON_PAIR
+            | SDL_GamepadType::GAMECUBE => "nintendo",
+            _ => layout((vendor != 0).then_some(vendor), &name),
         };
-        let (dl, dr) = (XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE, XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE);
-        Some(Snapshot {
-            buttons,
-            axes: [norm(g.sThumbLX, dl), -norm(g.sThumbLY, dl), norm(g.sThumbRX, dr), -norm(g.sThumbRY, dr)],
-        })
+        let xinput = if is_xinput(&guid) {
+            u8::try_from(SDL_GetGamepadPlayerIndex(pad)).ok().filter(|i| *i < 4)
+        } else {
+            None
+        };
+        let guid_text = guid_string(guid);
+        let serial = text(SDL_GetGamepadSerial(pad));
+        let place = serial
+            .clone()
+            .or_else(|| text(SDL_GetGamepadPath(pad)))
+            .or_else(|| xinput.map(|i| format!("xinput{i}")))
+            .unwrap_or_default();
+        let info = PadInfo {
+            pad: id.0 as usize,
+            name,
+            layout,
+            key: format!("{guid_text}/{place}"),
+            guid: guid_text,
+            vendor,
+            product,
+            xinput,
+            serial,
+            order,
+        };
+        Some((pad, info))
+    }
+}
+
+fn button_name(b: i32) -> Option<&'static str> {
+    Some(match SDL_GamepadButton(b) {
+        SDL_GamepadButton::SOUTH => "south",
+        SDL_GamepadButton::EAST => "east",
+        SDL_GamepadButton::WEST => "west",
+        SDL_GamepadButton::NORTH => "north",
+        SDL_GamepadButton::LEFT_SHOULDER => "lb",
+        SDL_GamepadButton::RIGHT_SHOULDER => "rb",
+        SDL_GamepadButton::BACK => "select",
+        SDL_GamepadButton::START => "start",
+        SDL_GamepadButton::GUIDE => "mode",
+        SDL_GamepadButton::LEFT_STICK => "ls",
+        SDL_GamepadButton::RIGHT_STICK => "rs",
+        SDL_GamepadButton::DPAD_UP => "up",
+        SDL_GamepadButton::DPAD_DOWN => "down",
+        SDL_GamepadButton::DPAD_LEFT => "left",
+        SDL_GamepadButton::DPAD_RIGHT => "right",
+        _ => return None,
+    })
+}
+
+/// Lecture des manettes ouverte : manettes SDL en cours et dernières valeurs envoyées.
+struct Session {
+    open: BTreeMap<u32, *mut SDL_Gamepad>,
+    sent: BTreeMap<(usize, &'static str), f32>,
+    triggers: BTreeMap<(usize, &'static str), bool>,
+}
+
+impl Session {
+    fn start() -> Option<Session> {
+        // SAFETY : réglages et initialisation sur le fil des manettes.
+        unsafe {
+            // Lire la manette même quand la fenêtre n'a pas le focus (moteur web
+            // dans un autre processus sous Windows).
+            SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, c"1".as_ptr());
+            // Ne pas changer les voyants des manettes PlayStation et Xbox.
+            SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS5_PLAYER_LED, c"0".as_ptr());
+            SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_XBOX_ONE_HOME_LED, c"0".as_ptr());
+            if !SDL_InitSubSystem(SDL_INIT_GAMEPAD) {
+                tracing::warn!("manettes indisponibles: {:?}", text(sdl3_sys::error::SDL_GetError()));
+                return None;
+            }
+        }
+        Some(Session { open: BTreeMap::new(), sent: BTreeMap::new(), triggers: BTreeMap::new() })
     }
 
+    fn stop(self, app: &AppHandle) {
+        // SAFETY : manettes ouvertes par cette session, fermées une seule fois.
+        unsafe {
+            for (_, pad) in self.open {
+                SDL_CloseGamepad(pad);
+            }
+            SDL_QuitSubSystem(SDL_INIT_GAMEPAD);
+        }
+        let old = std::mem::take(&mut *PADS.lock().unwrap());
+        for pad in old.keys() {
+            let _ = app.emit(EVENT, PadEvent::Disconnected { pad: *pad });
+        }
+    }
+
+    fn handle(&mut self, app: &AppHandle, ev: &SDL_Event, order: &mut u64) {
+        // SAFETY : le champ lu correspond au type de l'évènement.
+        let kind = SDL_EventType(unsafe { ev.r#type });
+        let out = match kind {
+            SDL_EventType::GAMEPAD_ADDED => {
+                let id = unsafe { ev.gdevice.which };
+                if self.open.contains_key(&id.0) {
+                    return;
+                }
+                *order += 1;
+                let Some((handle, info)) = open(id, *order) else { return };
+                tracing::info!("manette « {} » ({}, {}{})", info.name, info.layout, info.guid,
+                    info.xinput.map(|i| format!(", XInput {i}")).unwrap_or_default());
+                self.open.insert(id.0, handle);
+                PADS.lock().unwrap().insert(info.pad, info.clone());
+                Some(PadEvent::Connected(info))
+            }
+            SDL_EventType::GAMEPAD_REMOVED => {
+                let id = unsafe { ev.gdevice.which };
+                if let Some(handle) = self.open.remove(&id.0) {
+                    // SAFETY : manette ouverte par cette session.
+                    unsafe { SDL_CloseGamepad(handle) };
+                }
+                let pad = id.0 as usize;
+                PADS.lock().unwrap().remove(&pad);
+                self.sent.retain(|(p, _), _| *p != pad);
+                Some(PadEvent::Disconnected { pad })
+            }
+            SDL_EventType::GAMEPAD_BUTTON_DOWN | SDL_EventType::GAMEPAD_BUTTON_UP => {
+                let b = unsafe { ev.gbutton };
+                button_name(b.button as i32).map(|button| PadEvent::Button { pad: b.which.0 as usize, button, pressed: b.down })
+            }
+            SDL_EventType::GAMEPAD_AXIS_MOTION => {
+                let a = unsafe { ev.gaxis };
+                let pad = a.which.0 as usize;
+                let raw = a.value as f32 / 32767.0;
+                match SDL_GamepadAxis(a.axis as i32) {
+                    // Gâchettes : vues comme des boutons.
+                    SDL_GamepadAxis::LEFT_TRIGGER | SDL_GamepadAxis::RIGHT_TRIGGER => {
+                        let button = if SDL_GamepadAxis(a.axis as i32) == SDL_GamepadAxis::LEFT_TRIGGER { "lt" } else { "rt" };
+                        let pressed = raw > 0.4;
+                        let before = self.triggers.insert((pad, button), pressed).unwrap_or(false);
+                        (pressed != before).then_some(PadEvent::Button { pad, button, pressed })
+                    }
+                    axis => {
+                        let name = match axis {
+                            SDL_GamepadAxis::LEFTX => "lx",
+                            SDL_GamepadAxis::LEFTY => "ly",
+                            SDL_GamepadAxis::RIGHTX => "rx",
+                            SDL_GamepadAxis::RIGHTY => "ry",
+                            _ => return,
+                        };
+                        let value = if raw.abs() < 0.24 { 0.0 } else { (raw.clamp(-1.0, 1.0) * 20.0).round() / 20.0 };
+                        let last = self.sent.insert((pad, name), value).unwrap_or(0.0);
+                        (value != last).then_some(PadEvent::Axis { pad, axis: name, value })
+                    }
+                }
+            }
+            _ => None,
+        };
+        if let Some(out) = out {
+            let _ = app.emit(EVENT, out);
+        }
+    }
+}
+
+/// Démarre la lecture des manettes sur un fil dédié (SDL veut un seul fil).
+pub fn start(app: AppHandle) {
     std::thread::Builder::new()
         .name("manettes".into())
         .spawn(move || {
-            let mut last: [Option<Snapshot>; 4] = [None; 4];
-            let mut probed = [Instant::now() - PROBE_EVERY; 4];
+            let mut session: Option<Session> = None;
+            let mut order = 0u64;
             loop {
-                for slot in 0..4u32 {
-                    let i = slot as usize;
-                    if last[i].is_none() && probed[i].elapsed() < PROBE_EVERY {
+                let playing = GAMES.load(Ordering::Relaxed) > 0;
+                if playing || RESCAN.swap(false, Ordering::Relaxed) {
+                    if let Some(s) = session.take() {
+                        s.stop(&app);
+                    }
+                }
+                if playing {
+                    std::thread::sleep(Duration::from_millis(500));
+                    continue;
+                }
+                if session.is_none() {
+                    session = Session::start();
+                    if session.is_none() {
+                        std::thread::sleep(Duration::from_secs(5));
                         continue;
                     }
-                    probed[i] = Instant::now();
-                    let now = read(slot);
-                    let pad = i;
-                    match (last[i], now) {
-                        (None, Some(_)) => {
-                            let info = PadInfo { pad, name: format!("Manette Xbox {}", slot + 1), layout: "xbox" };
-                            tracing::info!("manette « {} » (xinput)", info.name);
-                            PADS.lock().unwrap().insert(pad, info.clone());
-                            let _ = app.emit(EVENT, PadEvent::Connected(info));
-                        }
-                        (Some(_), None) => {
-                            PADS.lock().unwrap().remove(&pad);
-                            let _ = app.emit(EVENT, PadEvent::Disconnected { pad });
-                        }
-                        _ => {}
-                    }
-                    if let (Some(before), Some(after)) = (last[i], now) {
-                        if before != after && GAMES.load(Ordering::Relaxed) == 0 {
-                            let changed = before.buttons ^ after.buttons;
-                            let named = BUTTONS.iter().map(|&(bit, name)| (bit as u32, name)).chain([(1 << 16, "lt"), (1 << 17, "rt")]);
-                            for (bit, button) in named.filter(|(bit, _)| changed & bit != 0) {
-                                let _ = app.emit(EVENT, PadEvent::Button { pad, button, pressed: after.buttons & bit != 0 });
-                            }
-                            for (k, axis) in ["lx", "ly", "rx", "ry"].into_iter().enumerate() {
-                                if before.axes[k] != after.axes[k] {
-                                    let _ = app.emit(EVENT, PadEvent::Axis { pad, axis, value: after.axes[k] });
-                                }
-                            }
-                        }
-                    }
-                    last[i] = now;
                 }
-                std::thread::sleep(POLL);
+                let s = session.as_mut().unwrap();
+                let mut ev = SDL_Event::default();
+                // SAFETY : évènement écrit par SDL sur ce fil.
+                if unsafe { SDL_WaitEventTimeout(&mut ev, 250) } {
+                    s.handle(&app, &ev, &mut order);
+                }
             }
         })
         .expect("fil des manettes");
@@ -319,5 +339,26 @@ mod tests {
         assert_eq!(layout(None, "Xbox Wireless Controller"), "xbox");
         assert_eq!(layout(None, "DualSense Wireless Controller"), "playstation");
         assert_eq!(layout(Some(0x1234), "HHL GCU 1"), "generic");
+    }
+
+    /// Liste les manettes vues par SDL pendant 3 s (cargo test -- --ignored sdl_pads --nocapture).
+    #[test]
+    #[ignore]
+    fn sdl_pads() {
+        use super::*;
+        let s = Session::start().expect("SDL");
+        let mut order = 0;
+        let mut ev = SDL_Event::default();
+        let until = std::time::Instant::now() + Duration::from_secs(3);
+        while std::time::Instant::now() < until {
+            if unsafe { SDL_WaitEventTimeout(&mut ev, 100) } && SDL_EventType(unsafe { ev.r#type }) == SDL_EventType::GAMEPAD_ADDED {
+                let id = unsafe { ev.gdevice.which };
+                order += 1;
+                if let Some((_, info)) = open(id, order) {
+                    println!("{info:?}");
+                }
+            }
+        }
+        drop(s);
     }
 }

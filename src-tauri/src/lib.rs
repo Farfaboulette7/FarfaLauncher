@@ -1,6 +1,7 @@
 mod assets;
 mod cache;
 mod commands;
+mod controllers;
 mod error;
 mod external;
 mod gamepad;
@@ -118,6 +119,8 @@ pub fn run() {
             commands::install::set_proton_version,
             commands::install::cod_modes,
             commands::install::set_key_binds,
+            commands::install::controller_ports,
+            commands::install::set_players,
             commands::launch::running_games,
             commands::launch::play_game,
             commands::launch::set_prefer_launcher,

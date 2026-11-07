@@ -138,6 +138,11 @@ Si un jeu a une recomp et un émulateur, la recomp est proposée en premier. Sa 
 session, comme pour une recomp. L'adresse est celle de RomM avec `manager` à la place du premier niveau, modifiable dans
 *Paramètres → Émulateurs*. Les jeux de `portage-*` et « Ordinateur » sont chargés au démarrage, les autres consoles à leur ouverture.
 
+**Manettes** : lues par SDL 3, compilé dans le launcher (il faut `cmake` pour compiler). L'onglet *Contrôles* d'un jeu
+installé attribue une manette à chaque joueur (nombre de joueurs tiré de RomM). Au lancement, le launcher l'écrit dans la
+configuration de l'émulateur ou de la recomp, selon la ligne `manettes:` de son fichier sur FarfaRomManager
+(`dolphin`, `punes`, `mgba`, `ppsspp`, `aurora` pour Melee et NSMBW, `recharged`). Voir `src-tauri/src/controllers.rs`.
+
 **Recomps à plusieurs jeux** (Gen1recomp : Rouge, Bleu, Or…) : une page par jeu, un seul programme installé. La clé
 `recomps` d'`assets.json` (serveur des assets) relie les entrées RomM :
 

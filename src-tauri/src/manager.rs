@@ -41,6 +41,9 @@ pub struct CatalogRecomp {
     pub games: Vec<CatalogRecompGame>,
     /// Comment la mettre en français.
     pub language: Vec<crate::language::LanguageRule>,
+    /// Format d'attribution des manettes aux joueurs (controllers.rs).
+    #[serde(default)]
+    pub controllers: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -125,6 +128,9 @@ pub struct Emulator {
     /// Comment le mettre en français.
     #[serde(default)]
     pub language: Vec<crate::language::LanguageRule>,
+    /// Format d'attribution des manettes aux joueurs (controllers.rs).
+    #[serde(default)]
+    pub controllers: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -288,6 +294,20 @@ impl Catalog {
         }
     }
 
+    /// Émulateur qui lance ce jeu installé.
+    pub fn emulator_for_install(&self, st: &crate::install::state::InstalledGame) -> Option<&Emulator> {
+        let s = st.shared.as_ref().filter(|s| s.is_emulator())?;
+        self.emulators.iter().find(|e| runtime_id(&e.id) == s.runtime_rom_id)
+    }
+
+    /// Format d'attribution des manettes du programme qui lance ce jeu.
+    pub fn controllers_for_install(&self, st: &crate::install::state::InstalledGame) -> Option<String> {
+        match &st.shared {
+            Some(s) if s.is_emulator() => self.emulators.iter().find(|e| runtime_id(&e.id) == s.runtime_rom_id).and_then(|e| e.controllers.clone()),
+            _ => self.recomp_for_install(st).and_then(|r| r.controllers.clone()),
+        }
+    }
+
     /// Recomp qui fait tourner ce jeu installé (pas lancé par un émulateur).
     pub fn recomp_for_install(&self, st: &crate::install::state::InstalledGame) -> Option<&CatalogRecomp> {
         match &st.shared {
@@ -408,6 +428,7 @@ mod tests {
             config: vec![],
             config_missing: vec![],
             language: vec![],
+            controllers: None,
         }
     }
 
