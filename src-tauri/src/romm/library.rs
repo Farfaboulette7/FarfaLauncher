@@ -335,6 +335,26 @@ async fn list_platform_games(client: &RommClient, platform_id: i64, raws: &mut V
     }
 }
 
+/// Jeux précis, hors `portage-*` (recomps du catalogue reliées à leur vraie console) :
+/// sans eux, le filtre « Recomp » ne les verrait pas avant d'avoir parcouru la console.
+pub async fn list_games_by_ids(client: &RommClient, ids: &[i64], me: Target) -> Vec<Game> {
+    let mut games = Vec::new();
+    for id in ids {
+        let resp = match client.send(client.get(&format!("api/roms/{id}")).timeout(DETAIL_TIMEOUT)).await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("jeu {id} du catalogue introuvable sur RomM: {}", e.code());
+                continue;
+            }
+        };
+        match parse_json::<RawRom>(resp).await {
+            Ok(raw) => games.push(to_game(raw, client.base(), me, false)),
+            Err(e) => tracing::warn!("jeu {id} du catalogue illisible: {}", e.code()),
+        }
+    }
+    games
+}
+
 /// Une page de jeux d'une ou plusieurs plateformes, triée par nom (sans leurs fichiers).
 pub async fn list_games_page(client: &RommClient, platform_ids: &[i64], me: Target, offset: usize, limit: usize) -> AppResult<(Vec<Game>, bool)> {
     let ids: String = platform_ids.iter().map(|id| format!("&platform_ids={id}")).collect();

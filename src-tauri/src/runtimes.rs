@@ -261,11 +261,19 @@ pub async fn fetch_page(client: &RommClient, manifest: &Manifest, rom_id: i64, m
 pub async fn list_library(
     client: &RommClient,
     manifest: &Manifest,
+    recomps: &HashSet<i64>,
     me: Target,
     on_listed: impl FnOnce(&[(i64, String)]) -> usize,
 ) -> AppResult<(Vec<library::Platform>, Vec<Game>)> {
     let platforms = library::list_platforms(client).await?;
     let mut games = library::list_games(client, &platforms, me).await?;
+    // Recomps reliées à un jeu de sa vraie console : chargées d'avance comme les `portage-*`.
+    let mut missing: Vec<i64> = recomps.iter().copied().filter(|id| !games.iter().any(|g| g.id == *id)).collect();
+    missing.sort_unstable();
+    if !missing.is_empty() {
+        games.extend(library::list_games_by_ids(client, &missing, me).await);
+        games.sort_by_key(|g| g.name.to_lowercase());
+    }
     let ids: Vec<(i64, String)> = games.iter().map(|g| (g.id, g.folder_name.clone())).collect();
     on_listed(&ids);
     games.retain(|g| !manifest.is_runtime(g.id));
@@ -338,7 +346,27 @@ pub fn pick_exe(candidates: &[String], exe: &str, version: Option<&str>) -> Opti
 mod tests {
     use super::*;
 
-    /// Vrai serveur, vrai manifeste : `FARFA_E2E_URL=… FARFA_E2E_TOKEN=… FARFA_E2E_ASSETS=… cargo test -- --ignored library_e2e --nocapture`.
+    /// Vrai serveur : les jeux des recomps du catalogue sont dans la liste de départ.
+    #[tokio::test]
+    #[ignore]
+    async fn catalog_recomps_listed_e2e() {
+        let var = |k: &str| std::env::var(k).unwrap();
+        let client = RommClient::new(&var("FARFA_E2E_URL"), Some(var("FARFA_E2E_TOKEN"))).unwrap();
+        let manager = client.with_base(&var("FARFA_E2E_MANAGER"));
+        let catalog: Catalog = serde_json::from_str(&manager.send(manager.get("api/catalog")).await.unwrap().text().await.unwrap()).unwrap();
+        let ids = catalog.recomp_rom_ids();
+        let manifest = Manifest::default().with_catalog(&catalog);
+        let (_, mut games) = list_library(&client, &manifest, &ids, Target::Windows, |_| 0).await.unwrap();
+        for g in games.iter_mut() {
+            annotate(g, &catalog, &ids, Target::Windows);
+        }
+        let recomps: Vec<(i64, &str, &str)> = games.iter().filter(|g| g.recomp).map(|g| (g.id, g.console.as_str(), g.name.as_str())).collect();
+        println!("{recomps:?}");
+        let id: i64 = var("FARFA_E2E_ROM").parse().unwrap();
+        assert!(recomps.iter().any(|r| r.0 == id));
+    }
+
+    /// Vrai serveur, vrai manifeste : `FARFA_E2E_URL=…FARFA_E2E_TOKEN=… FARFA_E2E_ASSETS=… cargo test -- --ignored library_e2e --nocapture`.
     #[tokio::test]
     #[ignore]
     async fn library_e2e() {
@@ -347,7 +375,7 @@ mod tests {
         let assets = client.with_base(&var("FARFA_E2E_ASSETS"));
         let text = assets.send(assets.get(REMOTE_FILE)).await.unwrap().text().await.unwrap();
         let manifest = Manifest::parse(&text).unwrap();
-        let (platforms, games) = list_library(&client, &manifest, Target::Windows, |_| 0).await.unwrap();
+        let (platforms, games) = list_library(&client, &manifest, &HashSet::new(), Target::Windows, |_| 0).await.unwrap();
         for p in &platforms {
             let own: Vec<&str> = games.iter().filter(|g| g.platform_id == p.id).map(|g| g.name.as_str()).collect();
             println!("{} {} ({}): {own:?}", p.id, p.fs_slug, p.name);

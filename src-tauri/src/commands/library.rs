@@ -90,7 +90,7 @@ async fn start_refresh(app: &AppHandle, state: &AppState) -> AppResult<LibrarySn
         tracing::info!("{aligned} installation(s) déjà à la version du catalogue");
     }
     let recomps = catalog.recomp_rom_ids();
-    let (platforms, mut games) = runtimes::list_library(&client, &manifest, target, |ids| install_state::rekey_moved(&state.config_dir, ids)).await?;
+    let (platforms, mut games) = runtimes::list_library(&client, &manifest, &recomps, target, |ids| install_state::rekey_moved(&state.config_dir, ids)).await?;
 
     for g in games.iter_mut() {
         runtimes::annotate(g, &catalog, &recomps, target);
