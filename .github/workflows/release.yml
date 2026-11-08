@@ -118,9 +118,26 @@ jobs:
           release_id: ${{ needs.create-release.outputs.release_id }}
         with:
           script: |
+            // Les .sig ne servent qu'au module de mise à jour, qui les lit déjà
+            // dans latest.json : on ne garde que l'installateur, l'AppImage et latest.json.
+            const id = Number(process.env.release_id);
+            const assets = await github.paginate(github.rest.repos.listReleaseAssets, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: id,
+            });
+            for (const a of assets) {
+              if (a.name.endsWith('.sig')) {
+                await github.rest.repos.deleteReleaseAsset({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  asset_id: a.id,
+                });
+              }
+            }
             await github.rest.repos.updateRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              release_id: Number(process.env.release_id),
+              release_id: id,
               draft: false,
             });
