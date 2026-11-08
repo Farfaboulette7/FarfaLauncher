@@ -567,7 +567,9 @@ export function hasUpdate(game: Game, inst: InstalledGame | undefined): boolean 
 
 /** Émulateur installable pour ce jeu sur ce système. */
 export function emulatorReady(game: Game): boolean {
-  return !!game.emulator?.available && game.emulator.configMissing.length === 0;
+  // Jeu fourni en archive de données à décompresser pour sa recomp : rien qu'un émulateur puisse lancer.
+  const onlyData = game.detailsLoaded && game.romFiles.length > 0 && game.romFiles.every((f) => f.fileName.toLowerCase().endsWith(".extract.zip"));
+  return !onlyData && !!game.emulator?.available && game.emulator.configMissing.length === 0;
 }
 
 /** Taille à télécharger pour installer le jeu avec son émulateur. */

@@ -65,16 +65,16 @@ interface ConsolePage {
 
 const collator = new Intl.Collator("fr");
 
-/** Comment ce jeu se joue sur ce système : la recomp d'abord, comme sur sa fiche. */
-function playMode(game: Game): "recomp" | "emulation" | null {
-  if (game.pc) return null;
-  if (game.recomp && (isAvailable(game) || !game.detailsLoaded)) return "recomp";
-  return emulatorReady(game) ? "emulation" : null;
+/** Comment ce jeu se joue sur ce système : recomp, émulateur, ou les deux. */
+function playModes(game: Game): { recomp: boolean; emulation: boolean } {
+  if (game.pc) return { recomp: false, emulation: false };
+  return { recomp: game.recomp && (isAvailable(game) || !game.detailsLoaded), emulation: emulatorReady(game) };
 }
 
 function matchesKind(game: Game, kind: Kind, installed: Map<number, unknown>): boolean {
   if (kind === "installed") return installed.has(game.id);
-  return kind === "all" || playMode(game) === kind;
+  if (kind === "all") return true;
+  return playModes(game)[kind];
 }
 
 /** Durées du passage vers la fiche d'un jeu (doivent suivre Hack.css). */
@@ -307,7 +307,10 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
           // Le compteur suit le filtre. Toutes les recomps sont dans la liste de départ ; un
           // jeu chargé à la demande a l'émulateur de sa console, s'il y en a un.
           const own = allGames.filter((g) => gameKey(g) === group.key && matchesKind(g, kind, installs.installed));
-          const lazy = kind === "recomp" || kind === "installed" || (kind === "emulation" && !group.hasEmulator) ? 0 : group.lazyCount;
+          // Les jeux de la liste de départ rangés dans la console (recomps) sont aussi dans son total RomM.
+          const counted = allGames.filter((g) => group.lazyIds.includes(g.platformId)).length;
+          const rest = Math.max(0, group.lazyCount - counted);
+          const lazy = kind === "recomp" || kind === "installed" || (kind === "emulation" && !group.hasEmulator) ? 0 : rest;
           return { group, count: own.length + lazy, fresh: own.filter((g) => isNew(g, seen)).length };
         })
         .filter((p) => p.count > 0)
@@ -876,9 +879,10 @@ function PlatformCard({ group, count, fresh, onOpen }: { group: ConsoleGroup; co
 /** Comment jouer à ce jeu, s'il n'est pas installé. */
 function playBadge(game: Game): { label: string; cls: string } | null {
   if (game.pc) return !isAvailable(game) && game.detailsLoaded ? { label: "Non disponible", cls: "card-badge--muted" } : null;
-  const mode = playMode(game);
-  if (mode === "recomp") return { label: "Recomp", cls: "card-badge--recomp" };
-  if (mode === "emulation") return { label: "Émulation", cls: "card-badge--emu" };
+  const modes = playModes(game);
+  if (modes.recomp && modes.emulation) return { label: "Recomp · Émulation", cls: "card-badge--recomp" };
+  if (modes.recomp) return { label: "Recomp", cls: "card-badge--recomp" };
+  if (modes.emulation) return { label: "Émulation", cls: "card-badge--emu" };
   if (game.recomp) return { label: "Non disponible", cls: "card-badge--muted" };
   return { label: "Pas d'émulateur disponible", cls: "card-badge--muted" };
 }
