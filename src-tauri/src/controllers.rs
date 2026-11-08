@@ -632,8 +632,9 @@ mod melonds {
             return Some(0x100 | (h << 4) | dir);
         }
         let axis: i64 = input.strip_prefix("axis:")?.split(',').next()?.parse().ok()?;
-        // Gâchette : sens 2, « appuyée » dès qu'elle quitte le repos.
-        Some(0x10000 | (axis << 24) | (2 << 20))
+        // Gâchette : sens 2, « appuyée » dès qu'elle quitte le repos. 0xFFFF dans les 16 bits du
+        // bas : aucun bouton (sinon melonDS lit aussi le bouton 0, A d'une manette Xbox).
+        Some(0xFFFF | 0x10000 | (axis << 24) | (2 << 20))
     }
 
     pub fn apply(ports: &[Option<PadInfo>], all: &[PadInfo], exe_dir: &Path) -> Result<(), String> {
@@ -1002,7 +1003,7 @@ mod tests {
         assert_eq!(melonds::code("button:1"), Some(1));
         assert_eq!(melonds::code("hat:0,direction:up"), Some(0x101));
         assert_eq!(melonds::code("hat:0,direction:left"), Some(0x108));
-        assert_eq!(melonds::code("axis:2"), Some(0x10000 | (2 << 24) | (2 << 20)));
+        assert_eq!(melonds::code("axis:2"), Some(0xFFFF | 0x10000 | (2 << 24) | (2 << 20)));
         let dir = std::env::temp_dir().join(format!("farfa-melonds-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("portable")).unwrap();
         std::fs::write(dir.join("portable").join("melonDS.toml"), "[Instance0.Firmware]\nLanguage = 2\n").unwrap();
@@ -1016,7 +1017,7 @@ mod tests {
         assert_eq!(ini_value(&toml, "Instance0.Joystick", "B"), Some("0"));
         assert_eq!(ini_value(&toml, "Instance0.Joystick", "Up"), Some("257"));
         assert_eq!(ini_value(&toml, "Instance0.Firmware", "Language"), Some("2"));
-        let rt = (0x10000 | (5 << 24) | (2 << 20)).to_string();
+        let rt = (0xFFFF | 0x10000 | (5 << 24) | (2 << 20)).to_string();
         assert_eq!(ini_value(&toml, "Instance0.Joystick", "HK_SwapScreens"), Some(rt.as_str()));
         assert_eq!(ini_value(&toml, "Instance0.Joystick", "HK_SwapScreenEmphasis"), Some(rt.as_str()));
         let _ = std::fs::remove_dir_all(&dir);

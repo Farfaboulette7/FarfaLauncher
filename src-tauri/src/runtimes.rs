@@ -268,7 +268,7 @@ pub async fn list_library(
 ) -> AppResult<(Vec<library::Platform>, Vec<Game>)> {
     let platforms = library::list_platforms(client).await?;
     let mut games = library::list_games(client, &platforms, me).await?;
-    // Recomps reliées à un jeu de sa vraie console : chargées d'avance comme les `portage-*`.
+    // Jeux de recomp et jeux installés hors `portage-*` : chargés d'avance eux aussi.
     let mut missing: Vec<i64> = recomps.iter().copied().filter(|id| !games.iter().any(|g| g.id == *id)).collect();
     missing.sort_unstable();
     if !missing.is_empty() {

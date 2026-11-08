@@ -96,7 +96,11 @@ async fn start_refresh(app: &AppHandle, state: &AppState) -> AppResult<LibrarySn
         tracing::info!("{moved} installation(s) passée(s) de portage-* à leur vraie console");
     }
     let hidden: HashSet<i64> = moves.iter().map(|(old, _)| *old).collect();
-    let (platforms, mut games) = runtimes::list_library(&client, &manifest, &recomps, &hidden, target, |ids| install_state::rekey_moved(&state.config_dir, ids)).await?;
+    // Chargés d'avance : les recomps et les jeux installés (filtre « Installés »), même
+    // rangés dans une console qui ne se charge qu'à l'ouverture de sa liste.
+    let mut eager = recomps.clone();
+    eager.extend(install_state::list_installed(&state.config_dir).iter().map(|g| g.rom_id).filter(|id| *id > 0));
+    let (platforms, mut games) = runtimes::list_library(&client, &manifest, &eager, &hidden, target, |ids| install_state::rekey_moved(&state.config_dir, ids)).await?;
 
     for g in games.iter_mut() {
         runtimes::annotate(g, &catalog, &recomps, target);
