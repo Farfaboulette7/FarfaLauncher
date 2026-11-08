@@ -4,13 +4,16 @@
 //! qui permet d'attribuer les joueurs (voir controllers.rs).
 //!
 //! Les évènements partent vers l'interface (navigation, page « Contrôles »).
-//! Pendant qu'un jeu tourne, SDL est fermé : la manette est toute au jeu.
+//! Pendant qu'un jeu tourne, SDL est rouvert en simple lecture (sans HIDAPI, qui
+//! prendrait la main sur les manettes PlayStation et Nintendo) : rien ne part vers
+//! l'interface, sauf Select + Start maintenus, qui ouvrent le menu en jeu (ingame.rs) ;
+//! la manette pilote alors ce menu jusqu'à sa fermeture.
 
 use std::collections::BTreeMap;
 use std::ffi::{c_char, CStr};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use sdl3_sys::events::{SDL_Event, SDL_EventType, SDL_WaitEventTimeout};
 use sdl3_sys::gamepad::*;
@@ -26,6 +29,14 @@ pub const EVENT: &str = "gamepad";
 static GAMES: AtomicUsize = AtomicUsize::new(0);
 /// Relecture demandée (fin d'un jeu).
 static RESCAN: AtomicBool = AtomicBool::new(false);
+/// Menu en jeu ouvert : la manette le pilote.
+static MENU: AtomicBool = AtomicBool::new(false);
+/// Durée d'appui sur Select + Start pour ouvrir le menu en jeu.
+const MENU_HOLD: Duration = Duration::from_millis(1000);
+
+pub fn set_menu(open: bool) {
+    MENU.store(open, Ordering::Relaxed);
+}
 static PADS: Mutex<BTreeMap<usize, PadInfo>> = Mutex::new(BTreeMap::new());
 
 pub fn game_started() {
@@ -47,6 +58,8 @@ pub enum PadEvent {
     Axis { pad: usize, axis: &'static str, value: f32 },
     Connected(PadInfo),
     Disconnected { pad: usize },
+    /// Pendant une partie : famille d'une manette, pour les boutons du menu en jeu.
+    Layout { pad: usize, layout: &'static str },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -278,10 +291,20 @@ struct Session {
     open: BTreeMap<u32, *mut SDL_Gamepad>,
     sent: BTreeMap<(usize, &'static str), f32>,
     triggers: BTreeMap<(usize, &'static str), bool>,
+    /// Pendant une partie : rien vers l'interface hors du menu en jeu.
+    watch: bool,
+    /// Boutons Select et Start enfoncés, par manette.
+    held: BTreeMap<usize, (bool, bool)>,
+    layouts: BTreeMap<usize, &'static str>,
+    combo_since: Option<Instant>,
+    /// Menu déjà ouvert pour cet appui (il faut relâcher pour recommencer).
+    combo_fired: bool,
+    /// Familles des manettes envoyées à l'interface depuis l'ouverture du menu.
+    layouts_sent: bool,
 }
 
 impl Session {
-    fn start() -> Option<Session> {
+    fn start(watch: bool) -> Option<Session> {
         // SAFETY : réglages et initialisation sur le fil des manettes.
         unsafe {
             // Lire la manette même quand la fenêtre n'a pas le focus (moteur web
@@ -290,12 +313,24 @@ impl Session {
             // Ne pas changer les voyants des manettes PlayStation et Xbox.
             SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS5_PLAYER_LED, c"0".as_ptr());
             SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_XBOX_ONE_HOME_LED, c"0".as_ptr());
+            // Pendant une partie, pas d'accès exclusif aux manettes (HIDAPI).
+            SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI, if watch { c"0".as_ptr() } else { c"1".as_ptr() });
             if !SDL_InitSubSystem(SDL_INIT_GAMEPAD) {
                 tracing::warn!("manettes indisponibles: {:?}", text(sdl3_sys::error::SDL_GetError()));
                 return None;
             }
         }
-        Some(Session { open: BTreeMap::new(), sent: BTreeMap::new(), triggers: BTreeMap::new() })
+        Some(Session {
+            open: BTreeMap::new(),
+            sent: BTreeMap::new(),
+            triggers: BTreeMap::new(),
+            watch,
+            held: BTreeMap::new(),
+            layouts: BTreeMap::new(),
+            combo_since: None,
+            combo_fired: false,
+            layouts_sent: false,
+        })
     }
 
     fn stop(self, app: &AppHandle) {
@@ -305,6 +340,9 @@ impl Session {
                 SDL_CloseGamepad(pad);
             }
             SDL_QuitSubSystem(SDL_INIT_GAMEPAD);
+        }
+        if self.watch {
+            return;
         }
         let old = std::mem::take(&mut *PADS.lock().unwrap());
         for pad in old.keys() {
@@ -323,9 +361,14 @@ impl Session {
                 }
                 *order += 1;
                 let Some((handle, info)) = open(id, *order) else { return };
+                self.open.insert(id.0, handle);
+                if self.watch {
+                    self.layouts.insert(info.pad, info.layout);
+                    self.layouts_sent = false;
+                    return;
+                }
                 tracing::info!("manette « {} » ({}, {}{})", info.name, info.layout, info.guid,
                     info.xinput.map(|i| format!(", XInput {i}")).unwrap_or_default());
-                self.open.insert(id.0, handle);
                 PADS.lock().unwrap().insert(info.pad, info.clone());
                 Some(PadEvent::Connected(info))
             }
@@ -336,8 +379,13 @@ impl Session {
                     unsafe { SDL_CloseGamepad(handle) };
                 }
                 let pad = id.0 as usize;
-                PADS.lock().unwrap().remove(&pad);
                 self.sent.retain(|(p, _), _| *p != pad);
+                if self.watch {
+                    self.held.remove(&pad);
+                    self.layouts.remove(&pad);
+                    return;
+                }
+                PADS.lock().unwrap().remove(&pad);
                 Some(PadEvent::Disconnected { pad })
             }
             SDL_EventType::GAMEPAD_BUTTON_DOWN | SDL_EventType::GAMEPAD_BUTTON_UP => {
@@ -372,8 +420,43 @@ impl Session {
             }
             _ => None,
         };
-        if let Some(out) = out {
-            let _ = app.emit(EVENT, out);
+        let Some(out) = out else { return };
+        if self.watch {
+            if let PadEvent::Button { pad, button: b @ ("select" | "start"), pressed } = out {
+                let h = self.held.entry(pad).or_default();
+                if b == "select" {
+                    h.0 = pressed
+                } else {
+                    h.1 = pressed
+                }
+            }
+            if !MENU.load(Ordering::Relaxed) {
+                self.layouts_sent = false;
+                return;
+            }
+            if !self.layouts_sent {
+                self.layouts_sent = true;
+                for (&pad, &layout) in &self.layouts {
+                    let _ = app.emit(EVENT, PadEvent::Layout { pad, layout });
+                }
+            }
+        }
+        let _ = app.emit(EVENT, out);
+    }
+
+    /// Pendant une partie : Select + Start maintenus ouvrent le menu en jeu.
+    fn check_combo(&mut self, app: &AppHandle) {
+        if !self.held.values().any(|&(select, start)| select && start) {
+            self.combo_since = None;
+            self.combo_fired = false;
+            return;
+        }
+        let since = *self.combo_since.get_or_insert_with(Instant::now);
+        if !self.combo_fired && since.elapsed() >= MENU_HOLD {
+            self.combo_fired = true;
+            if !MENU.load(Ordering::Relaxed) {
+                crate::ingame::open(app);
+            }
         }
     }
 }
@@ -387,17 +470,15 @@ pub fn start(app: AppHandle) {
             let mut order = 0u64;
             loop {
                 let playing = GAMES.load(Ordering::Relaxed) > 0;
-                if playing || RESCAN.swap(false, Ordering::Relaxed) {
+                // Début ou fin de partie : SDL rouvert dans l'autre mode.
+                let rescan = RESCAN.swap(false, Ordering::Relaxed);
+                if rescan || session.as_ref().is_some_and(|s| s.watch != playing) {
                     if let Some(s) = session.take() {
                         s.stop(&app);
                     }
                 }
-                if playing {
-                    std::thread::sleep(Duration::from_millis(500));
-                    continue;
-                }
                 if session.is_none() {
-                    session = Session::start();
+                    session = Session::start(playing);
                     if session.is_none() {
                         std::thread::sleep(Duration::from_secs(5));
                         continue;
@@ -406,8 +487,11 @@ pub fn start(app: AppHandle) {
                 let s = session.as_mut().unwrap();
                 let mut ev = SDL_Event::default();
                 // SAFETY : évènement écrit par SDL sur ce fil.
-                if unsafe { SDL_WaitEventTimeout(&mut ev, 250) } {
+                if unsafe { SDL_WaitEventTimeout(&mut ev, if s.watch { 100 } else { 250 }) } {
                     s.handle(&app, &ev, &mut order);
+                }
+                if s.watch {
+                    s.check_combo(&app);
                 }
             }
         })
@@ -432,7 +516,7 @@ mod tests {
     #[ignore]
     fn sdl_pads() {
         use super::*;
-        let s = Session::start().expect("SDL");
+        let s = Session::start(false).expect("SDL");
         let mut order = 0;
         let mut ev = SDL_Event::default();
         let until = std::time::Instant::now() + Duration::from_secs(3);

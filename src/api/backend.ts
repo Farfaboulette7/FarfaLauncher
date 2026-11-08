@@ -118,7 +118,9 @@ export type PadEvent =
   | { kind: "button"; pad: number; button: string; pressed: boolean }
   | { kind: "axis"; pad: number; axis: "lx" | "ly" | "rx" | "ry"; value: number }
   | ({ kind: "connected" } & PadInfo)
-  | { kind: "disconnected"; pad: number };
+  | { kind: "disconnected"; pad: number }
+  // Pendant une partie (menu en jeu) : famille d'une manette.
+  | { kind: "layout"; pad: number; layout: PadLayout };
 
 export type PadLayout = "xbox" | "playstation" | "nintendo" | "generic";
 
@@ -487,6 +489,10 @@ export const backend = {
   chooseExecutable: (romId: number, executable: string) => invoke<InstalledGame>("choose_executable", { romId, executable }),
   uninstallGame: (romId: number, keepSaves: boolean) => invoke<void>("uninstall_game", { romId, keepSaves }),
   openGameFolder: (romId: number, sub?: "mods_downloads") => invoke<void>("open_game_folder", { romId, sub: sub ?? null }),
+  ingameResume: () => invoke<void>("ingame_resume"),
+  quitGame: (romId: number) => invoke<void>("quit_game", { romId }),
+  hasModsFolder: (romId: number) => invoke<boolean>("has_mods_folder", { romId }),
+  openModsFolder: (romId: number) => invoke<void>("open_mods_folder", { romId }),
   setInstallDir: (path: string | null) => invoke<string>("set_install_dir", { path }),
   /** `dest` : dossier qui contiendra celui du jeu. */
   moveGame: (romId: number, dest: string) => invoke<InstalledGame>("move_game", { romId, dest }),

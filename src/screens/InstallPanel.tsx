@@ -84,6 +84,23 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
   const installedWithEmulator = isEmulatorInstall(inst);
   const pendingChoice = !!inst && !inst.executable && !progress;
   const runningSince = installs.running.get(game.id);
+  // Dossier des mods du jeu installé : bouton pour l'ouvrir s'il existe.
+  const [modsFolder, setModsFolder] = useState(false);
+  const installedExe = inst?.executable ?? null;
+  useEffect(() => {
+    if (!installedExe) {
+      setModsFolder(false);
+      return;
+    }
+    let live = true;
+    backend
+      .hasModsFolder(game.id)
+      .then((found) => live && setModsFolder(found))
+      .catch(() => live && setModsFolder(false));
+    return () => {
+      live = false;
+    };
+  }, [game.id, installedExe, runningSince]);
   const last = installs.lastSession.get(game.id);
 
   async function run<T>(f: () => Promise<T>): Promise<T | undefined> {
@@ -212,9 +229,12 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
                 <span className="n-spinner" /> {busy === "uninstall" ? "Désinstallation en cours…" : "Déplacement en cours…"}
               </div>
             ) : runningSince !== undefined ? (
-              <div className="gd-running">
-                <span className="n-spinner" /> En cours de jeu · <Elapsed since={runningSince} />
-              </div>
+              <>
+                <div className="gd-running">
+                  <span className="n-spinner" /> En cours de jeu · <Elapsed since={runningSince} />
+                </div>
+                <p className="n-hint">Pour quitter ou voir le temps de jeu : maintenez Select + Start sur la manette.</p>
+              </>
             ) : (
               <button
                 className="n-btn n-btn--primary n-btn--block n-cursor"
@@ -340,6 +360,11 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
             <button className="n-link" onClick={() => run(() => backend.openGameFolder(game.id))}>
               Ouvrir le dossier du jeu
             </button>
+            {modsFolder && (
+              <button className="n-link" onClick={() => run(() => backend.openModsFolder(game.id))}>
+                Ouvrir le dossier des mods
+              </button>
+            )}
             {inst.executable && !inst.pc?.cod && !inst.shared && (
               <button className="n-link" onClick={openExeChoice}>
                 Changer l'exécutable

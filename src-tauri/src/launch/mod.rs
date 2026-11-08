@@ -16,6 +16,8 @@ pub mod direct;
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::error::{log_err, AppError, AppResult};
@@ -29,6 +31,10 @@ const WINDOW_POLL: Duration = Duration::from_millis(300);
 const QUICK_EXIT: Duration = Duration::from_secs(15);
 /// Sortie du dernier lancement, dans le dossier interne du jeu.
 const RUN_LOG: &str = "dernier-lancement.log";
+/// Fermeture demandée (menu en jeu) : délai laissé au jeu pour se fermer seul avant d'être arrêté.
+const CLOSE_GRACE: Duration = Duration::from_secs(5);
+/// Pas de la surveillance : une demande de fermeture est prise en compte aussi vite.
+const STEP: Duration = Duration::from_millis(200);
 
 /// Jeu lancé, à surveiller jusqu'à sa fermeture.
 pub struct RunningGame {
@@ -37,6 +43,8 @@ pub struct RunningGame {
     run_log: Option<PathBuf>,
     /// Relevé des programmes lancés (`None` : lancement direct, rien à apprendre).
     watcher: Option<direct::Watcher>,
+    /// Fermeture demandée par le joueur (menu en jeu).
+    stop: Arc<AtomicBool>,
     #[cfg(windows)]
     job: windows_job::Job,
 }
@@ -107,10 +115,10 @@ pub fn spawn(game_dir: &Path, launch: Launch<'_>) -> AppResult<RunningGame> {
             // Sans job, on suit au moins le processus principal.
             tracing::warn!("processus non rattaché au job: {e}");
         }
-        Ok(RunningGame { child, started: Instant::now(), run_log, watcher, job })
+        Ok(RunningGame { child, started: Instant::now(), run_log, watcher, stop: Arc::default(), job })
     }
     #[cfg(not(windows))]
-    Ok(RunningGame { child, started: Instant::now(), run_log, watcher })
+    Ok(RunningGame { child, started: Instant::now(), run_log, watcher, stop: Arc::default() })
 }
 
 /// Programme à l'intérieur d'un bundle macOS.
@@ -144,6 +152,12 @@ impl RunningGame {
         self.child.id()
     }
 
+    /// Drapeau à lever pour fermer le jeu : il est d'abord prié de se fermer
+    /// (comme avec la croix de sa fenêtre), puis arrêté s'il ne l'a pas fait.
+    pub fn stop_flag(&self) -> Arc<AtomicBool> {
+        self.stop.clone()
+    }
+
     /// Attend la fin du jeu et de tous ses processus (bloquant : à appeler
     /// dans `spawn_blocking`). Renvoie le jeu démarré par un launcher, s'il y en a eu un.
     /// `on_window` : appelé une fois, quand une fenêtre du jeu apparaît (Windows ;
@@ -151,7 +165,24 @@ impl RunningGame {
     pub fn wait(mut self, mut on_window: impl FnMut()) -> Option<DirectLaunch> {
         // Surveillance rapprochée tant que la fenêtre du jeu n'est pas là.
         let mut window_seen = !cfg!(windows);
+        let mut close_asked: Option<Instant> = None;
+        let mut killed = false;
         loop {
+            if self.stop.load(Ordering::Relaxed) {
+                match close_asked {
+                    None => {
+                        tracing::info!("fermeture du jeu demandée");
+                        self.ask_close();
+                        close_asked = Some(Instant::now());
+                    }
+                    Some(at) if !killed && at.elapsed() >= CLOSE_GRACE => {
+                        tracing::info!("jeu toujours ouvert : arrêt forcé");
+                        self.kill();
+                        killed = true;
+                    }
+                    _ => {}
+                }
+            }
             if !window_seen && self.has_window() {
                 window_seen = true;
                 on_window();
@@ -167,7 +198,12 @@ impl RunningGame {
             if !main_alive && !self.descendants_alive() {
                 break;
             }
-            std::thread::sleep(if window_seen { POLL } else { WINDOW_POLL });
+            // Attente découpée : une demande de fermeture n'attend pas la fin de l'intervalle.
+            let wait = if close_asked.is_some() { STEP } else if window_seen { POLL } else { WINDOW_POLL };
+            let until = Instant::now() + wait;
+            while Instant::now() < until && (close_asked.is_some() || !self.stop.load(Ordering::Relaxed)) {
+                std::thread::sleep(STEP.min(until.saturating_duration_since(Instant::now())));
+            }
         }
         let status = self.child.try_wait().ok().flatten();
         tracing::info!("jeu fermé (pid {}, {})", self.child.id(), status.map(|s| s.to_string()).unwrap_or_else(|| "état inconnu".into()));
@@ -179,6 +215,24 @@ impl RunningGame {
             tracing::info!("jeu démarré par le launcher: {} {:?}", d.exe, d.args);
         }
         learned
+    }
+
+    /// Demande au jeu de se fermer : ses fenêtres reçoivent WM_CLOSE (Windows),
+    /// son groupe de processus SIGTERM (Linux).
+    fn ask_close(&mut self) {
+        #[cfg(windows)]
+        windows_job::close_windows(&self.job.process_ids());
+        #[cfg(unix)]
+        signal_group(self.child.id(), "TERM");
+    }
+
+    /// Arrête le jeu et tous ses processus.
+    fn kill(&mut self) {
+        #[cfg(windows)]
+        self.job.terminate();
+        #[cfg(unix)]
+        signal_group(self.child.id(), "KILL");
+        let _ = self.child.kill();
     }
 
     /// Processus de la partie (le programme lancé et ses descendants).
@@ -237,6 +291,15 @@ impl RunningGame {
     }
 }
 
+/// Envoie un signal à tout le groupe de processus du jeu.
+#[cfg(unix)]
+fn signal_group(pgid: u32, signal: &str) {
+    let r = Command::new("kill").arg(format!("-{signal}")).arg("--").arg(format!("-{pgid}")).stdout(Stdio::null()).stderr(Stdio::null()).status();
+    if let Err(e) = r {
+        tracing::warn!("signal {signal} non envoyé au jeu: {e}");
+    }
+}
+
 /// Un processus non zombie appartient-il encore au groupe `pgid` ?
 #[cfg(target_os = "linux")]
 fn group_alive(pgid: u32) -> bool {
@@ -279,7 +342,7 @@ mod windows_job {
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
     use windows_sys::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, JobObjectBasicAccountingInformation, JobObjectBasicProcessIdList,
-        QueryInformationJobObject, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+        QueryInformationJobObject, TerminateJobObject, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
     };
 
     /// Nombre maximal de processus relevés à la fois.
@@ -358,6 +421,33 @@ mod windows_job {
         }
     }
 
+    impl Job {
+        /// Arrête tous les processus du job.
+        pub fn terminate(&self) {
+            if unsafe { TerminateJobObject(self.0, 1) } == 0 {
+                tracing::warn!("TerminateJobObject: {}", std::io::Error::last_os_error());
+            }
+        }
+    }
+
+    /// Envoie WM_CLOSE aux fenêtres visibles de ces processus (comme la croix de la fenêtre).
+    pub fn close_windows(pids: &[u32]) {
+        use windows_sys::Win32::Foundation::{HWND, LPARAM};
+        use windows_sys::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowThreadProcessId, IsWindowVisible, PostMessageW, WM_CLOSE};
+
+        unsafe extern "system" fn visit(hwnd: HWND, data: LPARAM) -> i32 {
+            let pids = unsafe { &*(data as *const Vec<u32>) };
+            let mut pid = 0u32;
+            unsafe { GetWindowThreadProcessId(hwnd, &mut pid) };
+            if unsafe { IsWindowVisible(hwnd) } != 0 && pids.contains(&pid) {
+                unsafe { PostMessageW(hwnd, WM_CLOSE, 0, 0) };
+            }
+            1
+        }
+        let pids = pids.to_vec();
+        unsafe { EnumWindows(Some(visit), &pids as *const Vec<u32> as LPARAM) };
+    }
+
     /// Une fenêtre visible appartient-elle à l'un de ces processus ?
     pub fn visible_window(pids: &[u32]) -> bool {
         use windows_sys::Win32::Foundation::{HWND, LPARAM};
@@ -416,10 +506,32 @@ mod tests {
         let job = windows_job::Job::create().unwrap();
         job.assign(&child).unwrap();
         let watcher = Some(direct::Watcher::new(&dir, Path::new("cmd.exe")));
-        let learned = RunningGame { child, started: Instant::now(), run_log: None, watcher, job }.wait(|| {});
+        let learned = RunningGame { child, started: Instant::now(), run_log: None, watcher, stop: Arc::default(), job }.wait(|| {});
         // ping hors du dossier et trop bref : ce n'est pas un jeu.
         assert_eq!(learned, None);
         assert!(started.elapsed() >= Duration::from_secs(3), "{:?}", started.elapsed());
+    }
+
+    /// Quitter depuis le menu en jeu : un jeu sans fenêtre (ping de 60 s) ne
+    /// se ferme pas seul ; il est arrêté, avec ses sous-processus, après le délai de grâce.
+    #[cfg(windows)]
+    #[test]
+    fn stop_flag_ends_the_game() {
+        let dir = std::env::temp_dir();
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/C", "ping", "-n", "60", "127.0.0.1", ">", "NUL"]).current_dir(&dir);
+        let child = cmd.spawn().unwrap();
+        let job = windows_job::Job::create().unwrap();
+        job.assign(&child).unwrap();
+        let game = RunningGame { child, started: Instant::now(), run_log: None, watcher: None, stop: Arc::default(), job };
+        let stop = game.stop_flag();
+        let started = Instant::now();
+        let waiter = std::thread::spawn(move || game.wait(|| {}));
+        std::thread::sleep(Duration::from_secs(1));
+        stop.store(true, Ordering::Relaxed);
+        waiter.join().unwrap();
+        let took = started.elapsed();
+        assert!(took >= CLOSE_GRACE && took < CLOSE_GRACE + Duration::from_secs(5), "{took:?}");
     }
 
     /// Un « launcher » (cmd) qui démarre le « jeu » (une copie de ping dans le

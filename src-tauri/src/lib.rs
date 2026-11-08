@@ -6,6 +6,7 @@ mod dialogs;
 mod error;
 mod external;
 mod gamepad;
+mod ingame;
 mod install;
 mod language;
 mod launch;
@@ -114,6 +115,8 @@ pub fn run() {
             commands::install::choose_executable,
             commands::install::uninstall_game,
             commands::install::open_game_folder,
+            commands::install::has_mods_folder,
+            commands::install::open_mods_folder,
             commands::install::set_install_dir,
             commands::install::move_game,
             commands::install::proton_versions,
@@ -124,6 +127,8 @@ pub fn run() {
             commands::install::set_players,
             commands::launch::running_games,
             commands::launch::play_game,
+            ingame::ingame_resume,
+            ingame::quit_game,
             commands::launch::set_prefer_launcher,
             commands::launch::flush_play_sessions,
             commands::mods::downloaded_mods,

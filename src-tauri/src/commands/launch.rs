@@ -169,6 +169,7 @@ pub async fn play_game(
         }
     };
     let started = OffsetDateTime::now_utc();
+    state.playing.lock().unwrap().insert(rom_id, crate::ingame::Playing { started: std::time::Instant::now(), stop: running.stop_flag() });
     let _ = app.emit("game-started", rom_id);
     gamepad::game_started();
     let ended_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -188,6 +189,10 @@ pub async fn play_game(
         ended_flag.store(true, std::sync::atomic::Ordering::Relaxed);
         let state = app.state::<AppState>();
         state.running.lock().unwrap().remove(&rom_id);
+        state.playing.lock().unwrap().remove(&rom_id);
+        if state.playing.lock().unwrap().is_empty() {
+            crate::ingame::close(&app);
+        }
         gamepad::game_stopped();
         // Retour au launcher, pilotable à la manette sans clic pour reprendre le focus.
         if let Some(window) = app.get_webview_window("main") {

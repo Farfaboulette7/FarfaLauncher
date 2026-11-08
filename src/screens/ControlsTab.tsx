@@ -87,18 +87,21 @@ export function ControlsTab({ game, installs, onError }: Props) {
     };
   }, [game.id, installedHere]);
   const count = Math.min(ports, Math.max(1, game.players ?? 1));
+  // Testeur ouvert : un seul à la fois (un joueur, ou une manette quand le jeu n'attribue pas les joueurs).
+  const [testing, setTesting] = useState<string | null>(null);
   return (
     <div className="gd-controls">
-      {installed && count > 0 && (
+      {installed && count > 0 ? (
         <section>
           <h3 className="n-section-title">{count > 1 ? "Manette de chaque joueur" : "Manette du joueur"}</h3>
-          <Players romId={game.id} count={count} installed={installed} installs={installs} onError={onError} />
+          <Players romId={game.id} count={count} installed={installed} installs={installs} onError={onError} testing={testing} onTest={setTesting} />
+        </section>
+      ) : (
+        <section>
+          <h3 className="n-section-title">Tester le clavier et la manette</h3>
+          <Devices testing={testing} onTest={setTesting} />
         </section>
       )}
-      <section>
-        <h3 className="n-section-title">Tester le clavier et la manette</h3>
-        <Tester />
-      </section>
       {dos && installed && (
         <section>
           <h3 className="n-section-title">Touches du jeu</h3>
@@ -141,15 +144,56 @@ function findPad(want: PlayerPad | null, pads: PadInfo[]): PadInfo | undefined {
   return pads.find((p) => p.key === want.key) ?? pads.find((p) => p.guid === guidOf(want.key));
 }
 
+/** Bouton « Tester » : ouvre (ou referme) le testeur de cette ligne. */
+function TestButton({ id, testing, onTest }: { id: string; testing: string | null; onTest: (id: string | null) => void }) {
+  return (
+    <button className="n-btn" aria-pressed={testing === id} onClick={() => onTest(testing === id ? null : id)}>
+      {testing === id ? "Fermer le test" : "Tester"}
+    </button>
+  );
+}
+
+/** Jeu sans attribution des joueurs : le clavier et chaque manette branchée, testables un par un. */
+function Devices({ testing, onTest }: { testing: string | null; onTest: (id: string | null) => void }) {
+  const pads = useConnectedPads();
+  const rows: { id: string; name: string; pad: number | null }[] = [
+    { id: "kb", name: "Clavier", pad: null },
+    ...pads.map((p) => ({ id: `pad-${p.key}`, name: p.name, pad: p.pad })),
+  ];
+  return (
+    <div className="ctl-players">
+      <ol className="ctl-player-list">
+        {rows.map((r) => (
+          <li key={r.id} className="ctl-player">
+            <span className="ctl-player-num">{r.pad === null ? "Clavier" : "Manette"}</span>
+            <span className="ctl-player-pad">{r.name}</span>
+            <span className="ctl-actions">
+              <TestButton id={r.id} testing={testing} onTest={onTest} />
+            </span>
+            {testing === r.id && (
+              <div className="ctl-player-test">
+                <Tester pad={r.pad} keyboard={r.pad === null} />
+              </div>
+            )}
+          </li>
+        ))}
+      </ol>
+      {pads.length === 0 && <p className="n-hint">Aucune manette branchée. Branchez-en une : elle apparaît ici en quelques secondes.</p>}
+    </div>
+  );
+}
+
 interface PlayersProps {
   romId: number;
   count: number;
   installed: InstalledGame;
   installs: InstallsState;
   onError: (e: unknown) => Promise<string>;
+  testing: string | null;
+  onTest: (id: string | null) => void;
 }
 
-function Players({ romId, count, installed, installs, onError }: PlayersProps) {
+function Players({ romId, count, installed, installs, onError, testing, onTest }: PlayersProps) {
   const pads = useConnectedPads();
   const [capture, setCapture] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -223,6 +267,7 @@ function Players({ romId, count, installed, installs, onError }: PlayersProps) {
                 </span>
               ) : (
                 <span className="ctl-actions">
+                  <TestButton id={`player-${i}`} testing={testing} onTest={onTest} />
                   {pads.length > 0 && (
                     <button className="n-btn" onClick={() => setCapture(i)}>
                       Choisir avec la manette
@@ -241,6 +286,12 @@ function Players({ romId, count, installed, installs, onError }: PlayersProps) {
                     </button>
                   )}
                 </span>
+              )}
+              {testing === `player-${i}` && (
+                <div className="ctl-player-test">
+                  {/* Joueur 1 : aussi le clavier ; sans manette branchée, le clavier seul. */}
+                  <Tester pad={here?.pad ?? null} keyboard={i === 0 || !here} />
+                </div>
               )}
             </li>
           );
@@ -271,7 +322,8 @@ interface PadState {
 /** Durée d'appui sur Start + Select pour débloquer le menu. */
 const UNLOCK_HOLD_MS = 1000;
 
-function Tester() {
+/** Testeur d'un seul appareil : la manette `pad` (numéro SDL) et/ou le clavier. */
+function Tester({ pad: only, keyboard }: { pad: number | null; keyboard: boolean }) {
   const [keys, setKeys] = useState<{ code: string; label: string }[]>([]);
   const [last, setLast] = useState<{ code: string; label: string } | null>(null);
   const [pads, setPads] = useState(new Map<number, PadState>());
@@ -289,6 +341,7 @@ function Tester() {
         }
         return;
       }
+      if (!keyboard) return;
       const k = { code: e.code, label: keyLabel(e) };
       setLast(k);
       setKeys((ks) => (ks.some((x) => x.code === k.code) ? ks : [...ks, k]));
@@ -303,7 +356,7 @@ function Tester() {
       window.removeEventListener("keyup", up);
       window.removeEventListener("blur", clear);
     };
-  }, [locked]);
+  }, [locked, keyboard]);
 
   // Menu bloqué : la manette ne fait plus bouger le launcher.
   useEffect(() => {
@@ -326,9 +379,12 @@ function Tester() {
   useEffect(() => {
     const blank = (name: string, layout: PadLayout): PadState => ({ name, layout, buttons: new Set(), axes: {} });
     listPads()
-      .then((list) => setPads((m) => new Map([...list.map((p) => [p.pad, m.get(p.pad) ?? blank(p.name, p.layout)] as const), ...m])))
+      .then((list) =>
+        setPads((m) => new Map([...list.filter((p) => p.pad === only).map((p) => [p.pad, m.get(p.pad) ?? blank(p.name, p.layout)] as const), ...m])),
+      )
       .catch(() => undefined);
-    return onPad((e: PadEvent) =>
+    return onPad((e: PadEvent) => {
+      if (e.pad !== only) return;
       setPads((m) => {
         const next = new Map(m);
         if (e.kind === "disconnected") {
@@ -344,21 +400,22 @@ function Tester() {
         if (e.kind === "button") {
           if (e.pressed) copy.buttons.add(e.button);
           else copy.buttons.delete(e.button);
-        } else {
+        } else if (e.kind === "axis") {
           copy.axes[e.axis] = e.value;
         }
         next.set(e.pad, copy);
         return next;
-      }),
-    );
-  }, []);
+      });
+    });
+  }, [only]);
 
   const first = [...pads.values()][0];
   const comboNames = first ? `${padLabel(first.layout, "start")} + ${padLabel(first.layout, "select")}` : "Start + Select";
 
   return (
     <div className="ctl-tester">
-      <div className={`ctl-lock${locked ? " n-notice" : ""}`}>
+      {only !== null && (
+        <div className={`ctl-lock${locked ? " n-notice" : ""}`}>
         {locked ? (
           <>
             <p>Menu bloqué : testez tous les boutons. Pour débloquer, maintenez {comboNames} ou appuyez sur Échap.</p>
@@ -374,8 +431,11 @@ function Tester() {
             </button>
           </>
         )}
-      </div>
-      <div className="ctl-keyboard">
+        </div>
+      )}
+      {only === null && <p className="n-hint">Appuyez sur une touche pour vérifier qu'elle est bien reconnue.</p>}
+      {keyboard && (
+        <div className="ctl-keyboard">
         <span className="ctl-label">Clavier</span>
         <div className="ctl-keys">
           {keys.length === 0 && <span className="n-hint">Aucune touche enfoncée</span>}
@@ -390,8 +450,9 @@ function Tester() {
             Dernière touche : {last.label} <span className="ctl-code">({last.code})</span>
           </p>
         )}
-      </div>
-      {pads.size === 0 && <p className="n-hint">Aucune manette détectée. Branchez-en une : elle apparaît ici en quelques secondes.</p>}
+        </div>
+      )}
+      {only !== null && pads.size === 0 && <p className="n-hint">Manette débranchée.</p>}
       {[...pads.entries()].map(([id, pad]) => (
         <div key={id} className="ctl-pad">
           <span className="ctl-label">

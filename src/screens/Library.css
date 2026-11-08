@@ -246,6 +246,7 @@
 }
 .card:focus-visible,
 .pad-nav .card:focus { outline: 2px solid var(--nier-low); outline-offset: 4px; }
+.pad-nav .card:focus { outline-width: 4px; outline-offset: 5px; }
 .card-cover {
   position: relative;
   aspect-ratio: 3 / 4;

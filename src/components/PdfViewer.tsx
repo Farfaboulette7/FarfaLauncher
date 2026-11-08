@@ -6,6 +6,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import * as pdfjs from "pdfjs-dist";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import { onPad } from "../gamepad";
 import "./PdfViewer.css";
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -39,6 +40,16 @@ export function PdfViewer({ path }: { path: string }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [full]);
+
+  // Défilement : les gâchettes avancent ou reculent d'un écran.
+  useEffect(() => {
+    if (mode !== "scroll") return;
+    return onPad((e) => {
+      if (e.kind !== "button" || !e.pressed || (e.button !== "rt" && e.button !== "lt")) return;
+      const el = area.current;
+      if (el) el.scrollBy({ top: (e.button === "rt" ? 1 : -1) * el.clientHeight * 0.9, behavior: "smooth" });
+    });
+  }, [mode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -310,7 +321,16 @@ function Book({ doc, shapes, pageW, pageH }: { doc: PDFDocumentProxy; shapes: Sh
       if (e.key === "ArrowLeft" || e.key === "PageUp") go("prev");
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    // Gâchettes de la manette : page précédente (gauche) ou suivante (droite).
+    const offPad = onPad((e) => {
+      if (e.kind !== "button" || !e.pressed || document.querySelector(".lightbox, .dialog-backdrop")) return;
+      if (e.button === "rt") go("next");
+      if (e.button === "lt") go("prev");
+    });
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      offPad();
+    };
   }, [go]);
 
   // Pages voisines préparées à l'avance.

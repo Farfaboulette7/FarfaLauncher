@@ -2,7 +2,6 @@ import { CSSProperties, lazy, Suspense, useEffect, useRef, useState } from "reac
 import { backend, formatPlaytime, Game, Manual, Platform, Target } from "../api/backend";
 import { InstallsState } from "../hooks/useInstalls";
 import { InstallFacts, InstallPanel } from "./InstallPanel";
-import { ModsTab } from "./ModsTab";
 import { ControlsTab } from "./ControlsTab";
 import { useCachedImage } from "../hooks/useCachedImage";
 import { BoxArt } from "../components/BoxArt";
@@ -14,7 +13,7 @@ import "./GameDetail.css";
 // pdf.js est lourd : chargé seulement à l'ouverture d'un livret.
 const PdfViewer = lazy(() => import("../components/PdfViewer").then((m) => ({ default: m.PdfViewer })));
 
-type Tab = "infos" | "medias" | "livret" | "mods" | "controles";
+type Tab = "infos" | "medias" | "livret" | "controles";
 
 interface Props {
   game: Game;
@@ -55,7 +54,6 @@ export function GameDetail({ game, platform, target, installs, favorite, onToggl
     { id: "infos", label: "Informations" },
     { id: "medias", label: "Médias", count: game.screenshotUrls.length },
     { id: "livret", label: "Livret", count: game.manuals.length },
-    { id: "mods", label: "Mods", count: game.mods.length },
     { id: "controles", label: "Contrôles" },
   ];
 
@@ -132,7 +130,6 @@ export function GameDetail({ game, platform, target, installs, favorite, onToggl
             {tab === "infos" && <InfoTab game={game} target={target} installs={installs} onError={onError} />}
             {tab === "medias" && <MediaTab game={game} />}
             {tab === "livret" && <ManualTab game={game} onError={onError} />}
-            {tab === "mods" && <ModsTab game={game} installs={installs} onError={onError} />}
             {tab === "controles" && <ControlsTab game={game} installs={installs} onError={onError} />}
           </div>
         </section>
@@ -179,7 +176,6 @@ function InfoTab({ game, target, installs, onError }: { game: Game; target: Targ
 
   return (
     <div className="gd-info">
-      {game.summary ? <p className="gd-summary">{game.summary}</p> : <p className="n-hint">Aucun résumé.</p>}
       <div className="gd-facts-cols">
         <section>
           <h3 className="n-section-title">Jeu</h3>
@@ -221,9 +217,10 @@ function InfoTab({ game, target, installs, onError }: { game: Game; target: Targ
 
 function MediaTab({ game }: { game: Game }) {
   const [open, setOpen] = useState<number | null>(null);
-  if (game.screenshotUrls.length === 0) return <p className="n-hint">Aucune capture d'écran.</p>;
   return (
     <>
+      {game.summary ? <p className="gd-summary">{game.summary}</p> : <p className="n-hint">Aucun résumé.</p>}
+      {game.screenshotUrls.length === 0 && <p className="n-hint">Aucune capture d'écran.</p>}
       <ul className="gd-shots">
         {game.screenshotUrls.map((url, i) => (
           <li key={url}>

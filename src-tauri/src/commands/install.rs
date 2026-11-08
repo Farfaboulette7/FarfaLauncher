@@ -209,6 +209,45 @@ pub fn open_game_folder(app: AppHandle, state: State<'_, AppState>, rom_id: i64,
     crate::external::open_path(&app, &dir.to_string_lossy(), "ouverture du dossier du jeu")
 }
 
+/// Dossier des mods du jeu installé (`mods` ou `mod`, au plus près de la racine), s'il existe.
+fn find_mods_dir(game_dir: &std::path::Path) -> Option<PathBuf> {
+    let mut level = vec![game_dir.to_path_buf()];
+    for _ in 0..4 {
+        let mut next = Vec::new();
+        for dir in &level {
+            let Ok(rd) = std::fs::read_dir(dir) else { continue };
+            let mut subs: Vec<PathBuf> = rd.filter_map(Result::ok).filter(|e| e.file_type().is_ok_and(|t| t.is_dir())).map(|e| e.path()).collect();
+            subs.sort();
+            for sub in subs {
+                let name = sub.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+                if name == "mods" || name == "mod" {
+                    return Some(sub);
+                }
+                // Dossier interne du launcher : jamais exploré.
+                if !name.starts_with('.') {
+                    next.push(sub);
+                }
+            }
+        }
+        level = next;
+    }
+    None
+}
+
+/// Le jeu installé a-t-il un dossier de mods ?
+#[tauri::command]
+pub fn has_mods_folder(state: State<'_, AppState>, rom_id: i64) -> bool {
+    state::find(&state.config_dir, rom_id).is_some_and(|st| find_mods_dir(&st.game_dir).is_some())
+}
+
+/// Ouvre le dossier des mods du jeu installé.
+#[tauri::command]
+pub fn open_mods_folder(app: AppHandle, state: State<'_, AppState>, rom_id: i64) -> AppResult<()> {
+    let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
+    let dir = find_mods_dir(&st.game_dir).ok_or(AppError::NotInstalled)?;
+    crate::external::open_path(&app, &dir.to_string_lossy(), "ouverture du dossier des mods")
+}
+
 /// Versions de Proton installées et téléchargeables (la recommandée en premier).
 #[tauri::command]
 pub async fn proton_versions(state: State<'_, AppState>) -> AppResult<Vec<proton::ProtonVersion>> {
@@ -271,4 +310,21 @@ pub fn set_install_dir(state: State<'_, AppState>, path: Option<String>) -> AppR
     let dir = path.map(PathBuf::from).filter(|p| p.is_absolute());
     state.update_settings(|s| s.install_dir = dir)?;
     Ok(state.install_root().to_string_lossy().into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn finds_the_mods_folder_nearest_the_root() {
+        let dir = std::env::temp_dir().join(format!("farfa-mods-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(super::find_mods_dir(&dir).is_none());
+        std::fs::create_dir_all(dir.join("a/b/Mods")).unwrap();
+        std::fs::create_dir_all(dir.join(".farfalauncher/mods")).unwrap();
+        assert_eq!(super::find_mods_dir(&dir).unwrap(), dir.join("a/b/Mods"));
+        std::fs::create_dir_all(dir.join("game/mods")).unwrap();
+        assert_eq!(super::find_mods_dir(&dir).unwrap(), dir.join("game/mods"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

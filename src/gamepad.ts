@@ -234,7 +234,8 @@ export function startGamepad() {
   window.addEventListener("mousemove", mouse, { passive: true });
   window.addEventListener("mousedown", mouse, { passive: true });
   const dispatch = (payload: PadEvent) => {
-    if (payload.kind === "connected") layouts.set(payload.pad, payload.layout);
+    if (payload.kind === "connected" || payload.kind === "layout") layouts.set(payload.pad, payload.layout);
+    if (payload.kind === "layout") return;
     listeners.forEach((fn) => fn(payload));
     if (captures > 0 || payload.kind === "connected" || payload.kind === "disconnected") return;
     root.classList.add("pad-nav");

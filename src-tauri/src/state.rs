@@ -33,6 +33,8 @@ pub struct AppState {
     pub installs: Mutex<HashMap<i64, CancellationToken>>,
     /// Jeux en cours d'exécution.
     pub running: Mutex<HashSet<i64>>,
+    /// Parties lancées, de leur démarrage à leur fermeture (menu en jeu).
+    pub playing: Mutex<HashMap<i64, crate::ingame::Playing>>,
     /// Jeux en cours de désinstallation ou de déplacement : ni lancés, ni installés.
     pub busy: Mutex<HashSet<i64>>,
     /// Téléchargements de mods en cours (jeu, fichier).
@@ -67,6 +69,7 @@ impl AppState {
             refreshing: AtomicBool::new(false),
             installs: Mutex::new(HashMap::new()),
             running: Mutex::new(HashSet::new()),
+            playing: Mutex::new(HashMap::new()),
             busy: Mutex::new(HashSet::new()),
             mod_downloads: Mutex::new(HashSet::new()),
             manifest: Mutex::new(manifest),

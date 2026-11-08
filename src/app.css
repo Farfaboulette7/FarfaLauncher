@@ -9,8 +9,9 @@
   text-align: center;
 }
 
-/* Navigation à la manette : focus toujours visible (voir gamepad.ts). */
-.pad-nav :focus {
-  outline: 2px solid var(--nier-low);
-  outline-offset: 3px;
+/* Navigation à la manette : focus toujours visible (voir gamepad.ts), cadre épais
+   pour ne pas perdre le curseur de vue (y compris sur les boutons, qui n'ont pas de contour sinon). */
+html.pad-nav :focus {
+  outline: 4px solid var(--nier-low);
+  outline-offset: 4px;
 }
