@@ -1309,6 +1309,47 @@ mod tests {
         println!("dossier de test : {}", base.display());
     }
 
+    /// Vrai serveur, recomp dont les données du jeu viennent du gestionnaire : `FARFA_E2E_ROM`, plus URL, TOKEN, MANAGER.
+    #[cfg(windows)]
+    #[tokio::test]
+    #[ignore]
+    async fn recomp_game_files_e2e() {
+        let var = |k: &str| std::env::var(k).unwrap();
+        let rom: i64 = var("FARFA_E2E_ROM").parse().unwrap();
+        let client = RommClient::new(&var("FARFA_E2E_URL"), Some(var("FARFA_E2E_TOKEN"))).unwrap();
+        let base = std::env::temp_dir().join(format!("farfa-game-files-e2e-{}", uuid::Uuid::new_v4()));
+        let config = base.join("config");
+        std::fs::create_dir_all(&config).unwrap();
+        let manager = client.with_base(&var("FARFA_E2E_MANAGER"));
+        let catalog: Catalog = serde_json::from_str(&manager.send(manager.get("api/catalog")).await.unwrap().text().await.unwrap()).unwrap();
+        let job = InstallJob {
+            client,
+            config_dir: config.clone(),
+            install_root: base.join("Jeux"),
+            target: Target::Windows,
+            cancel: CancellationToken::new(),
+            proton: None,
+            manifest: Manifest::default().with_catalog(&catalog),
+            catalog: catalog.clone(),
+            manager_base: Some(var("FARFA_E2E_MANAGER")),
+            with_emulator: false,
+            runtime_lock: Arc::new(tokio::sync::Mutex::new(())),
+            on_progress: Arc::new(|_| {}),
+        };
+        let st = match job.run(rom).await.unwrap() {
+            InstallOutcome::Installed { game } => game,
+            InstallOutcome::NeedsChoice { game } => {
+                let details = runtimes::fetch_details(&job.client, &job.manifest, &catalog, rom, Target::Windows).await.unwrap();
+                let exe = game.pending_candidates[0].clone();
+                finalize(&config, game, &exe, &details).await.unwrap()
+            }
+        };
+        let sources: Vec<&str> = st.rom_sources.iter().map(|s| s.rel_path.as_str()).collect();
+        println!("exe {:?} ; candidats {:?} ; données {:?} ; posées {:?}", st.executable, st.pending_candidates, sources, st.rom_sources.iter().map(|s| s.placed.len()).sum::<usize>());
+        assert!(!sources.is_empty() && sources.iter().all(|s| s.starts_with("ROM/")));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     /// Vrai serveur, recomp à un jeu lancée sur sa ROM (Paper Cut) : `FARFA_E2E_ROM`, plus URL, TOKEN, MANAGER.
     #[cfg(windows)]
     #[tokio::test]
