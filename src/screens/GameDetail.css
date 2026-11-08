@@ -366,3 +366,13 @@
 .ctl-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 .ctl-capture { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .ctl-capture p { margin: 0; }
+
+/* Informations : nouveautés de la recomp ou de l'émulateur. */
+.gd-changelog { margin-top: 28px; display: flex; flex-direction: column; gap: 10px; max-width: 1140px; }
+.gd-changelog > .n-hint { margin: 0 12px; }
+.gd-changelog-notes { margin: 0 12px; display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-sm); line-height: 1.5; overflow-wrap: anywhere; }
+.gd-changelog-notes p { margin: 0; }
+.gd-changelog-title { margin-top: 8px !important; font-weight: 600; color: var(--nier-ink); }
+.gd-changelog-item { position: relative; padding-left: 18px; }
+.gd-changelog-item::before { content: ""; position: absolute; left: 4px; top: 0.6em; width: 6px; height: 6px; background: var(--nier-low); }
+.gd-changelog > .n-link { align-self: flex-start; margin-left: 12px; }

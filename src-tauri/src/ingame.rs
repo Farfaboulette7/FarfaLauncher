@@ -5,12 +5,12 @@
 //! au jeu ; le launcher, lui, reste où il est. Elle ne dépend ni de l'émulateur
 //! ni de la recomp : le launcher ferme lui-même le jeu (voir launch::RunningGame).
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 use crate::error::{AppError, AppResult};
 use crate::gamepad;
@@ -56,6 +56,13 @@ fn describe(state: &AppState, rom_id: i64) -> (String, Option<String>) {
     (name, None)
 }
 
+/// Prépare la colonne (cachée) dès le lancement d'un jeu : à l'ouverture, elle glisse déjà remplie.
+pub fn prepare(app: &AppHandle) {
+    if let Err(e) = column(app) {
+        tracing::warn!("menu en jeu non préparé: {e}");
+    }
+}
+
 /// Ouvre le menu sur la partie la plus récente (appelé par le fil des manettes).
 pub fn open(app: &AppHandle) {
     let state = app.state::<AppState>();
@@ -66,24 +73,114 @@ pub fn open(app: &AppHandle) {
     let info = MenuInfo { rom_id, name, platform, session_ms: elapsed.as_millis() as u64, quitting: false };
     *SHOWN.lock().unwrap() = Some(info.clone());
     gamepad::set_menu(true);
-    match column(app) {
-        Ok(w) => {
-            place(app, &w);
-            show_without_focus(&w);
-        }
-        Err(e) => tracing::error!("menu en jeu indisponible: {e}"),
-    }
     let _ = app.emit_to(LABEL, EVENT, Some(info));
+    let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    let w = match column(app) {
+        Ok(w) => w,
+        Err(e) => return tracing::error!("menu en jeu indisponible: {e}"),
+    };
+    let Some(rect) = screen_rect(app) else { return };
+    // Hors de l'écran à gauche, puis glisse jusqu'au bord.
+    show_at(&w, rect, rect.x - rect.w);
+    std::thread::spawn(move || slide(&w, rect, generation, true));
 }
 
-/// Referme le menu : la manette retourne au jeu.
+/// Referme le menu : la colonne repart vers la gauche, la manette retourne au jeu.
 pub fn close(app: &AppHandle) {
     gamepad::set_menu(false);
     *SHOWN.lock().unwrap() = None;
-    let _ = app.emit_to(LABEL, EVENT, None::<MenuInfo>);
-    if let Some(w) = app.get_webview_window(LABEL) {
-        hide(&w);
+    let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    let Some(w) = app.get_webview_window(LABEL) else { return };
+    let Some(rect) = *RECT.lock().unwrap() else { return };
+    let app = app.clone();
+    std::thread::spawn(move || {
+        if slide(&w, rect, generation, false) {
+            hide(&w);
+            // Contenu vidé une fois la colonne partie (elle repart telle quelle).
+            let _ = app.emit_to(LABEL, EVENT, None::<MenuInfo>);
+        }
+    });
+}
+
+/// Ouverture ou fermeture en cours : une plus récente interrompt l'animation.
+static GENERATION: AtomicU64 = AtomicU64::new(0);
+/// Place de la colonne ouverte, en pixels physiques.
+static RECT: Mutex<Option<Rect>> = Mutex::new(None);
+/// Durée du glissement.
+const SLIDE: Duration = Duration::from_millis(220);
+
+#[derive(Clone, Copy)]
+struct Rect {
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+}
+
+/// Glisse la colonne vers l'écran (`entering`) ou hors de l'écran. Faux si une autre
+/// ouverture ou fermeture a pris la main entre-temps.
+fn slide(w: &WebviewWindow, rect: Rect, generation: u64, entering: bool) -> bool {
+    let started = Instant::now();
+    loop {
+        if GENERATION.load(Ordering::SeqCst) != generation {
+            return false;
+        }
+        let t = (started.elapsed().as_secs_f64() / SLIDE.as_secs_f64()).min(1.0);
+        // Arrivée qui ralentit, départ qui accélère.
+        let shown = if entering { 1.0 - (1.0 - t).powi(3) } else { 1.0 - t.powi(3) };
+        move_to(w, rect, rect.x - rect.w + (rect.w as f64 * shown).round() as i32);
+        if t >= 1.0 {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(8));
     }
+}
+
+/// Bord gauche de l'écran du launcher (celui où le jeu est lancé), sur toute la hauteur.
+fn screen_rect(app: &AppHandle) -> Option<Rect> {
+    let m = app
+        .get_webview_window("main")
+        .and_then(|m| m.current_monitor().ok().flatten())
+        .or_else(|| app.primary_monitor().ok().flatten())?;
+    let rect = Rect {
+        x: m.position().x,
+        y: m.position().y,
+        w: (WIDTH * m.scale_factor()).round() as i32,
+        h: m.size().height as i32,
+    };
+    *RECT.lock().unwrap() = Some(rect);
+    Some(rect)
+}
+
+/// Déplace la colonne (sans la taille, sans prendre le focus).
+fn move_to(w: &WebviewWindow, rect: Rect, x: i32) {
+    #[cfg(windows)]
+    if let Ok(hwnd) = w.hwnd() {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOSIZE};
+        // SAFETY : fenêtre de la colonne.
+        unsafe { SetWindowPos(hwnd.0 as _, HWND_TOPMOST, x, rect.y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE) };
+        return;
+    }
+    let _ = w.set_position(PhysicalPosition::new(x, rect.y));
+}
+
+/// Affiche la colonne en `x`, au-dessus de tout, sans prendre le focus au jeu.
+fn show_at(w: &WebviewWindow, rect: Rect, x: i32) {
+    #[cfg(windows)]
+    if let Ok(hwnd) = w.hwnd() {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowPos, ShowWindow, HWND_TOPMOST, SWP_NOACTIVATE, SW_SHOWNOACTIVATE};
+        // SAFETY : fenêtre de la colonne.
+        unsafe {
+            let h = hwnd.0 as _;
+            SetWindowPos(h, HWND_TOPMOST, x, rect.y, rect.w, rect.h, SWP_NOACTIVATE);
+            ShowWindow(h, SW_SHOWNOACTIVATE);
+        }
+        return;
+    }
+    let _ = w.set_size(PhysicalSize::new(rect.w as u32, rect.h as u32));
+    let _ = w.set_position(PhysicalPosition::new(x, rect.y));
+    let _ = w.show();
+    let _ = w.set_always_on_top(true);
 }
 
 /// Cache la colonne (montrée par Windows directement : Tauri la croit déjà cachée).
@@ -125,39 +222,6 @@ fn column(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         }
     }
     Ok(w)
-}
-
-/// Colonne sur toute la hauteur de l'écran du launcher (celui où le jeu est lancé), à gauche.
-fn place(app: &AppHandle, w: &WebviewWindow) {
-    let monitor = app
-        .get_webview_window("main")
-        .and_then(|m| m.current_monitor().ok().flatten())
-        .or_else(|| app.primary_monitor().ok().flatten());
-    let Some(m) = monitor else { return };
-    let scale = m.scale_factor();
-    let pos = m.position().to_logical::<f64>(scale);
-    let size = m.size().to_logical::<f64>(scale);
-    let _ = w.set_position(LogicalPosition::new(pos.x, pos.y));
-    let _ = w.set_size(LogicalSize::new(WIDTH, size.height));
-}
-
-/// Affiche la colonne au-dessus de tout sans prendre le focus au jeu.
-fn show_without_focus(w: &WebviewWindow) {
-    #[cfg(windows)]
-    if let Ok(hwnd) = w.hwnd() {
-        use windows_sys::Win32::UI::WindowsAndMessaging::{
-            SetWindowPos, ShowWindow, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_SHOWNOACTIVATE,
-        };
-        // SAFETY : fenêtre de la colonne.
-        unsafe {
-            let h = hwnd.0 as _;
-            ShowWindow(h, SW_SHOWNOACTIVATE);
-            SetWindowPos(h, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-        }
-        return;
-    }
-    let _ = w.show();
-    let _ = w.set_always_on_top(true);
 }
 
 /// Menu affiché, pour la colonne qui vient de se charger.

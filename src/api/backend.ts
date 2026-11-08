@@ -122,6 +122,16 @@ export type PadEvent =
   // Pendant une partie (menu en jeu) : famille d'une manette.
   | { kind: "layout"; pad: number; layout: PadLayout };
 
+/** Dernière version de la recomp ou de l'émulateur d'un jeu, avec ses notes. */
+export interface Changelog {
+  kind: string;
+  name: string;
+  version: string;
+  date: string | null;
+  url: string | null;
+  notes: string;
+}
+
 export type PadLayout = "xbox" | "playstation" | "nintendo" | "generic";
 
 export interface PadInfo {
@@ -472,6 +482,7 @@ export const backend = {
   imagePath: (url: string) => invoke<string>("image_path", { url }),
   manualPath: (romId: number, manual: Manual) => invoke<string>("manual_path", { romId, manual }),
   gamePlaytime: (romId: number) => invoke<number | null>("game_playtime", { romId }),
+  gameChangelog: (romId: number, console: string) => invoke<Changelog | null>("game_changelog", { romId, console }),
   clearCache: () => invoke<void>("clear_cache"),
   favoritesList: () => invoke<FavoritesInfo>("favorites_list"),
   soundPaths: () => invoke<Record<string, string>>("sound_paths"),

@@ -218,6 +218,12 @@ pub async fn manual_path(state: State<'_, AppState>, rom_id: i64, manual: Manual
     Ok(path.to_string_lossy().into_owned())
 }
 
+/// Dernières nouveautés de la recomp ou de l'émulateur du jeu (catalogue de FarfaRomManager).
+#[tauri::command]
+pub fn game_changelog(state: State<'_, AppState>, rom_id: i64, console: String) -> Option<crate::manager::Changelog> {
+    state.catalog().changelog(rom_id, &console, crate::platform::detect())
+}
+
 #[tauri::command]
 pub async fn game_playtime(state: State<'_, AppState>, rom_id: i64) -> AppResult<Option<u64>> {
     playtime::total_ms(&state.client()?, rom_id).await

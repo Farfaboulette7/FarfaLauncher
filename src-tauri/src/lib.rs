@@ -90,6 +90,7 @@ pub fn run() {
             commands::library::image_path,
             commands::library::manual_path,
             commands::library::game_playtime,
+            commands::library::game_changelog,
             commands::library::clear_cache,
             commands::library::console_games,
             commands::library::search_games,

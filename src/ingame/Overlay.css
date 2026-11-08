@@ -10,11 +10,6 @@
   gap: 36px;
   padding: 48px 36px 32px;
   border-right: 3px solid var(--nier-low);
-  animation: igo-in 0.18s var(--nier-ease);
-}
-@keyframes igo-in {
-  from { opacity: 0; transform: translateX(-24px); }
-  to { opacity: 1; transform: none; }
 }
 
 .igo-head p { margin: 0; }

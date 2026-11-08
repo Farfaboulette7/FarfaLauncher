@@ -1,5 +1,5 @@
 import { CSSProperties, lazy, Suspense, useEffect, useRef, useState } from "react";
-import { backend, formatPlaytime, Game, Manual, Platform, Target } from "../api/backend";
+import { backend, Changelog, formatPlaytime, Game, Manual, Platform, Target } from "../api/backend";
 import { InstallsState } from "../hooks/useInstalls";
 import { InstallFacts, InstallPanel } from "./InstallPanel";
 import { ControlsTab } from "./ControlsTab";
@@ -211,7 +211,89 @@ function InfoTab({ game, target, installs, onError }: { game: Game; target: Targ
           </dl>
         </section>
       </div>
+      <ChangelogSection game={game} />
     </div>
+  );
+}
+
+/** Notes de version GitHub (Markdown) en lignes simples : titres, puces, texte sans balises. */
+function noteLines(md: string): { kind: "title" | "item" | "text"; text: string }[] {
+  const clean = (s: string) =>
+    s
+      .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+      .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/<[^>]+>/g, "")
+      .replace(/(\*\*|__|`)/g, "")
+      .trim();
+  return md
+    .split(/\r?\n/)
+    .map((line) => {
+      const title = /^\s*#{1,6}\s+(.*)$/.exec(line);
+      if (title) return { kind: "title" as const, text: clean(title[1]) };
+      const item = /^\s*(?:[-*+]|\d+\.)\s+(.*)$/.exec(line);
+      if (item) return { kind: "item" as const, text: clean(item[1]) };
+      return { kind: "text" as const, text: clean(line) };
+    })
+    .filter((l) => l.text !== "" && !/^[-=*_]{3,}$/.test(l.text));
+}
+
+/** Nombre de lignes montrées avant « Tout afficher ». */
+const CHANGELOG_PREVIEW = 14;
+
+/** Dernières nouveautés de la recomp ou de l'émulateur qui fait tourner le jeu. */
+function ChangelogSection({ game }: { game: Game }) {
+  const [log, setLog] = useState<Changelog | null>(null);
+  const [all, setAll] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    setLog(null);
+    setAll(false);
+    backend
+      .gameChangelog(game.id, game.console)
+      .then((c) => alive && setLog(c))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [game.id, game.console]);
+  if (!log) return null;
+  const lines = noteLines(log.notes);
+  const shown = all ? lines : lines.slice(0, CHANGELOG_PREVIEW);
+  const date = log.date ? new Date(log.date).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" }) : null;
+  return (
+    <section className="gd-changelog">
+      <h3 className="n-section-title">
+        Nouveautés · {log.kind} {log.name}
+      </h3>
+      <p className="n-hint gd-changelog-version">
+        Version {log.version}
+        {date && ` · ${date}`}
+      </p>
+      {lines.length === 0 ? (
+        <p className="n-hint">Pas de notes pour cette version.</p>
+      ) : (
+        <div className="gd-changelog-notes">
+          {shown.map((l, i) =>
+            l.kind === "title" ? (
+              <p key={i} className="gd-changelog-title">
+                {l.text}
+              </p>
+            ) : l.kind === "item" ? (
+              <p key={i} className="gd-changelog-item">
+                {l.text}
+              </p>
+            ) : (
+              <p key={i}>{l.text}</p>
+            ),
+          )}
+        </div>
+      )}
+      {lines.length > CHANGELOG_PREVIEW && (
+        <button className="n-link" onClick={() => setAll((a) => !a)}>
+          {all ? "Réduire" : `Tout afficher (${lines.length - CHANGELOG_PREVIEW} lignes de plus)`}
+        </button>
+      )}
+    </section>
   );
 }
 

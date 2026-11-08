@@ -171,6 +171,7 @@ pub async fn play_game(
     let started = OffsetDateTime::now_utc();
     state.playing.lock().unwrap().insert(rom_id, crate::ingame::Playing { started: std::time::Instant::now(), stop: running.stop_flag() });
     let _ = app.emit("game-started", rom_id);
+    crate::ingame::prepare(&app);
     gamepad::game_started();
     let ended_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     crate::dialogs::watch(state.catalog().dialogs_for_install(&st), ended_flag.clone());
