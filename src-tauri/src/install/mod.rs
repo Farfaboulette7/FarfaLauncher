@@ -1309,7 +1309,7 @@ mod tests {
         println!("dossier de test : {}", base.display());
     }
 
-    /// Vrai serveur, recomp dont les données du jeu viennent du gestionnaire : `FARFA_E2E_ROM`, plus URL, TOKEN, MANAGER.
+    /// Vrai serveur, recomp dont le jeu est une archive à décompresser (NSMBW) : `FARFA_E2E_ROM`, plus URL, TOKEN, MANAGER.
     #[cfg(windows)]
     #[tokio::test]
     #[ignore]
@@ -1346,7 +1346,7 @@ mod tests {
         };
         let sources: Vec<&str> = st.rom_sources.iter().map(|s| s.rel_path.as_str()).collect();
         println!("exe {:?} ; candidats {:?} ; données {:?} ; posées {:?}", st.executable, st.pending_candidates, sources, st.rom_sources.iter().map(|s| s.placed.len()).sum::<usize>());
-        assert!(!sources.is_empty() && sources.iter().all(|s| s.starts_with("ROM/")));
+        assert!(!sources.is_empty() && sources.iter().all(|s| s.ends_with(".extract.zip")));
         let _ = std::fs::remove_dir_all(&base);
     }
 
