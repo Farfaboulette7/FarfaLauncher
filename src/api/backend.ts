@@ -233,6 +233,8 @@ export interface Game {
   archives: PlatformArchive[];
   myArchive: PlatformArchive | null;
   romFiles: RemoteFile[];
+  /** Ce que l'émulateur télécharge (une seule version de cartouche, ou tout le disque). */
+  emulatorRomBytes: number;
   mods: RemoteFile[];
   /** Jeu PC (plateforme « Ordinateur »). */
   pc: PcGame | null;
@@ -574,6 +576,6 @@ export function emulatorReady(game: Game): boolean {
 
 /** Taille à télécharger pour installer le jeu avec son émulateur. */
 export function emulatorDownloadSize(game: Game, emulatorInstalled: boolean): number {
-  const roms = game.romFiles.reduce((s, f) => s + f.size, 0);
+  const roms = game.emulatorRomBytes || game.romFiles.reduce((s, f) => s + f.size, 0);
   return roms + (emulatorInstalled ? 0 : (game.emulator?.size ?? 0));
 }

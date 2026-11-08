@@ -74,6 +74,9 @@ pub struct PadInfo {
     /// (`south` → `button:0`, `lefttrigger` → `axis:2`, `dpup` → `hat:0,direction:up`).
     #[serde(skip)]
     pub bindings: Vec<(&'static str, String)>,
+    /// Nombre d'axes du joystick brut : Snes9x (Linux) numérote ses croix après eux.
+    #[serde(skip)]
+    pub axes: i32,
 }
 
 fn button_key(b: SDL_GamepadButton) -> Option<&'static str> {
@@ -243,6 +246,7 @@ fn open(id: SDL_JoystickID, order: u64) -> Option<(*mut SDL_Gamepad, PadInfo)> {
             serial,
             order,
             bindings: bindings(pad),
+            axes: sdl3_sys::joystick::SDL_GetNumJoystickAxes(SDL_GetGamepadJoystick(pad)).max(0),
         };
         Some((pad, info))
     }

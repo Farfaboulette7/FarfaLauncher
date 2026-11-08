@@ -25,7 +25,8 @@ pub struct PlayerPad {
 pub fn ports(format: &str) -> usize {
     match format_name(format) {
         "dolphin" | "punes" | "aurora" | "recharged" | "eden" => 4,
-        "mgba" | "ppsspp" => 1,
+        "snes9x" => 2,
+        "mgba" | "ppsspp" | "melonds" => 1,
         _ => 0,
     }
 }
@@ -87,6 +88,8 @@ pub fn apply(format: &str, players: &[Option<PlayerPad>], pads: &[PadInfo], exe_
         "recharged" => recharged::apply(&ports, pads, exe_dir),
         "mgba" => mgba::apply(&ports, exe_dir),
         "ppsspp" => ppsspp::apply(&ports, exe_dir),
+        "melonds" => melonds::apply(&ports, pads, exe_dir),
+        "snes9x" => snes9x::apply(&ports, pads, exe_dir),
         other => Err(format!("format de manettes inconnu : {other}")),
     }
 }
@@ -570,14 +573,165 @@ mod mgba {
         };
         let before = read(&path);
         let mut text = before.clone();
-        let profile = format!("gba.input-profile.{}", pad.name);
-        for section in ["gba.input.SDLB", profile.as_str()] {
+        // GBA d'un côté, Game Boy et Game Boy Color de l'autre : chacun ses sections.
+        let gba_profile = format!("gba.input-profile.{}", pad.name);
+        let gb_profile = format!("gb.input-profile.{}", pad.name);
+        for section in ["gba.input.SDLB", gba_profile.as_str(), "gb.input.SDLB", gb_profile.as_str()] {
             // Boutons déjà choisis dans mGBA : on n'y touche pas.
             if ini_value(&text, section, "keyA").is_some_and(|v| v != "-1") {
                 continue;
             }
             for (key, value) in buttons(pad.layout) {
                 text = set_ini(&text, &format!("{section}.{key}"), value);
+            }
+        }
+        write(&path, &before, &text)
+    }
+}
+
+/// Bouton d'une console à la place du même bouton de la manette (A à droite, B en bas…).
+const NINTENDO_FACE: [(&str, &str); 8] = [
+    ("A", "east"),
+    ("B", "south"),
+    ("X", "north"),
+    ("Y", "west"),
+    ("L", "leftshoulder"),
+    ("R", "rightshoulder"),
+    ("Select", "back"),
+    ("Start", "start"),
+];
+const DPAD: [(&str, &str); 4] = [("Up", "dpup"), ("Down", "dpdown"), ("Left", "dpleft"), ("Right", "dpright")];
+
+fn binding<'a>(pad: &'a PadInfo, element: &str) -> Option<&'a str> {
+    pad.bindings.iter().find(|(k, _)| *k == element).map(|(_, v)| v.as_str())
+}
+
+/// Croix lue comme un « hat » SDL : (numéro, direction).
+fn hat(input: &str) -> Option<(i64, &str)> {
+    let (h, d) = input.strip_prefix("hat:")?.split_once(",direction:")?;
+    Some((h.parse().ok()?, d))
+}
+
+/// melonDS : `JoystickID` et `[Instance0.Joystick]` de melonDS.toml, en numéros SDL bruts
+/// (bouton N ; croix 0x100 | hat << 4 | sens ; axe 0x10000 | axe << 24 | sens << 20).
+mod melonds {
+    use super::*;
+
+    pub fn code(input: &str) -> Option<i64> {
+        if let Some(b) = input.strip_prefix("button:") {
+            return b.parse().ok();
+        }
+        if let Some((h, d)) = hat(input) {
+            let dir = match d {
+                "up" => 1,
+                "right" => 2,
+                "down" => 4,
+                "left" => 8,
+                _ => return None,
+            };
+            return Some(0x100 | (h << 4) | dir);
+        }
+        let axis: i64 = input.strip_prefix("axis:")?.split(',').next()?.parse().ok()?;
+        // Gâchette : sens 2, « appuyée » dès qu'elle quitte le repos.
+        Some(0x10000 | (axis << 24) | (2 << 20))
+    }
+
+    pub fn apply(ports: &[Option<PadInfo>], all: &[PadInfo], exe_dir: &Path) -> Result<(), String> {
+        let Some(Some(pad)) = ports.first() else { return Ok(()) };
+        // Dossier « portable » à côté de l'exécutable : la configuration y est.
+        let path = if exe_dir.join("portable").is_dir() {
+            exe_dir.join("portable").join("melonDS.toml")
+        } else {
+            path_for("{config}/melonDS/melonDS.toml", "{config}/melonDS/melonDS.toml", exe_dir)?
+        };
+        let before = read(&path);
+        let mut text = set_ini(&before, "Instance0.JoystickID", &rank(pad, all, |_| true).to_string());
+        for (key, element) in NINTENDO_FACE.iter().chain(DPAD.iter()) {
+            if let Some(c) = binding(pad, element).and_then(code) {
+                text = set_ini(&text, &format!("Instance0.Joystick.{key}"), &c.to_string());
+            }
+        }
+        write(&path, &before, &text)
+    }
+}
+
+/// Snes9x : manettes 1 et 2. Sous Windows, `[Controls\Win]` de snes9x.conf avec l'interface
+/// manettes de Windows (`(J0)Button 1`, `(J0)POV Up`) ; sous Linux, `[Joypad N]` du
+/// snes9x.conf de la version GTK avec les numéros SDL (`Joystick 1 Button 1`).
+mod snes9x {
+    use super::*;
+
+    const SECTION: &str = "Controls\\Win";
+
+    /// Numéro de bouton de l'interface manettes de Windows, selon la famille de la manette.
+    pub fn winmm_button(layout: &str, element: &str) -> Option<u8> {
+        let order: [&str; 10] = match layout {
+            "playstation" => ["west", "south", "east", "north", "leftshoulder", "rightshoulder", "lt", "rt", "back", "start"],
+            "nintendo" => ["south", "east", "west", "north", "leftshoulder", "rightshoulder", "lt", "rt", "back", "start"],
+            _ => ["south", "east", "west", "north", "leftshoulder", "rightshoulder", "back", "start", "leftstick", "rightstick"],
+        };
+        order.iter().position(|e| *e == element).map(|i| i as u8)
+    }
+
+    /// Entrée SDL écrite comme la lit Snes9x GTK. La croix (hat) y est un axe virtuel
+    /// placé après les vrais axes : haut/bas sur le premier, gauche/droite sur le second.
+    pub fn gtk_input(pad: &PadInfo, device: usize, input: &str) -> Option<String> {
+        if let Some(b) = input.strip_prefix("button:") {
+            return Some(format!("Joystick {device} Button {b}"));
+        }
+        if let Some((h, d)) = hat(input) {
+            let base = i64::from(pad.axes) + h * 2;
+            let (axis, sign) = match d {
+                "up" => (base, '+'),
+                "down" => (base, '-'),
+                "right" => (base + 1, '+'),
+                "left" => (base + 1, '-'),
+                _ => return None,
+            };
+            return Some(format!("Joystick {device} Axis {axis} {sign} 50%"));
+        }
+        let axis = input.strip_prefix("axis:")?.split(',').next()?;
+        Some(format!("Joystick {device} Axis {axis} + 50%"))
+    }
+
+    pub fn apply(ports: &[Option<PadInfo>], all: &[PadInfo], exe_dir: &Path) -> Result<(), String> {
+        if cfg!(windows) {
+            let path = exe_dir.join("snes9x.conf");
+            let before = read(&path);
+            let mut text = before.clone();
+            for i in 0..2 {
+                let n = i + 1;
+                let Some(Some(pad)) = ports.get(i) else {
+                    // Joueur 2 sans manette : son port reste fermé. Le joueur 1 garde le clavier.
+                    if n > 1 {
+                        text = set_ini(&text, &format!("{SECTION}.Joypad{n}:Enabled"), "FALSE");
+                    }
+                    continue;
+                };
+                let j = format!("(J{:x})", rank(pad, all, |_| true));
+                text = set_ini(&text, &format!("{SECTION}.Joypad{n}:Enabled"), "TRUE");
+                for (key, element) in NINTENDO_FACE {
+                    if let Some(b) = winmm_button(pad.layout, element) {
+                        text = set_ini(&text, &format!("{SECTION}.Joypad{n}:{key}"), &format!("{j}Button {b}"));
+                    }
+                }
+                for dir in ["Up", "Down", "Left", "Right"] {
+                    text = set_ini(&text, &format!("{SECTION}.Joypad{n}:{dir}"), &format!("{j}POV {dir}"));
+                }
+            }
+            return write(&path, &before, &text);
+        }
+        let path = path_for("{config}/snes9x/snes9x.conf", "{config}/snes9x/snes9x.conf", exe_dir)?;
+        let before = read(&path);
+        let mut text = before.clone();
+        for (i, port) in ports.iter().enumerate() {
+            let Some(pad) = port else { continue };
+            // Snes9x GTK numérote les manettes à partir de 1, dans l'ordre de SDL.
+            let device = rank(pad, all, |_| true) + 1;
+            for (key, element) in NINTENDO_FACE.iter().chain(DPAD.iter()) {
+                if let Some(v) = binding(pad, element).and_then(|input| gtk_input(pad, device, input)) {
+                    text = set_ini(&text, &format!("Joypad {i}.{key}"), &v);
+                }
             }
         }
         write(&path, &before, &text)
@@ -757,6 +911,7 @@ mod tests {
             serial: None,
             order: pad as u64,
             bindings: Vec::new(),
+            axes: 6,
         }
     }
 
@@ -766,6 +921,72 @@ mod tests {
         let got = ppsspp::retarget(t, 2);
         assert_eq!(got, "\u{feff}[ControlMapping]\r\nUp = 1-19,22-19,10-19\r\nCross = 1-54,22-96,10-189\r\nPause = 1-111,22-4034,22-3:22-4046\r\n");
         assert_eq!(ppsspp::retarget(&got, 0), t);
+    }
+
+    fn xbox_bindings() -> Vec<(&'static str, String)> {
+        vec![
+            ("south", "button:0".into()),
+            ("east", "button:1".into()),
+            ("west", "button:2".into()),
+            ("north", "button:3".into()),
+            ("leftshoulder", "button:4".into()),
+            ("rightshoulder", "button:5".into()),
+            ("back", "button:6".into()),
+            ("start", "button:7".into()),
+            ("dpup", "hat:0,direction:up".into()),
+            ("dpdown", "hat:0,direction:down".into()),
+            ("dpleft", "hat:0,direction:left".into()),
+            ("dpright", "hat:0,direction:right".into()),
+            ("lefttrigger", "axis:2".into()),
+        ]
+    }
+
+    #[test]
+    fn melonds_codes() {
+        assert_eq!(melonds::code("button:1"), Some(1));
+        assert_eq!(melonds::code("hat:0,direction:up"), Some(0x101));
+        assert_eq!(melonds::code("hat:0,direction:left"), Some(0x108));
+        assert_eq!(melonds::code("axis:2"), Some(0x10000 | (2 << 24) | (2 << 20)));
+        let dir = std::env::temp_dir().join(format!("farfa-melonds-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("portable")).unwrap();
+        std::fs::write(dir.join("portable").join("melonDS.toml"), "[Instance0.Firmware]\nLanguage = 2\n").unwrap();
+        let other = pad(1, "Autre", "o", "o0", Some(0));
+        let mut x = pad(2, "Xbox", "g", "x1", Some(1));
+        x.bindings = xbox_bindings();
+        apply("melonds", &[Some(PlayerPad { key: x.key.clone(), name: x.name.clone() })], &[other, x], &dir).unwrap();
+        let toml = read(&dir.join("portable").join("melonDS.toml"));
+        assert_eq!(ini_value(&toml, "Instance0", "JoystickID"), Some("1"));
+        assert_eq!(ini_value(&toml, "Instance0.Joystick", "A"), Some("1"));
+        assert_eq!(ini_value(&toml, "Instance0.Joystick", "B"), Some("0"));
+        assert_eq!(ini_value(&toml, "Instance0.Joystick", "Up"), Some("257"));
+        assert_eq!(ini_value(&toml, "Instance0.Firmware", "Language"), Some("2"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn snes9x_formats() {
+        // Windows : Xbox A en bas (Button 0) = B de la Super Nintendo.
+        assert_eq!(snes9x::winmm_button("xbox", "south"), Some(0));
+        assert_eq!(snes9x::winmm_button("xbox", "start"), Some(7));
+        assert_eq!(snes9x::winmm_button("playstation", "south"), Some(1));
+        assert_eq!(snes9x::winmm_button("playstation", "start"), Some(9));
+        // Linux : la croix suit les 6 axes d'une manette Xbox.
+        let mut x = pad(1, "Xbox", "g", "x0", Some(0));
+        x.bindings = xbox_bindings();
+        assert_eq!(snes9x::gtk_input(&x, 1, "hat:0,direction:up").as_deref(), Some("Joystick 1 Axis 6 + 50%"));
+        assert_eq!(snes9x::gtk_input(&x, 1, "hat:0,direction:left").as_deref(), Some("Joystick 1 Axis 7 - 50%"));
+        assert_eq!(snes9x::gtk_input(&x, 2, "button:1").as_deref(), Some("Joystick 2 Button 1"));
+        if cfg!(windows) {
+            let dir = std::env::temp_dir().join(format!("farfa-snes9x-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("snes9x.conf"), "[Controls\\Win]\n     Joypad1:Enabled              = TRUE\n     Joypad1:A                    = V\n").unwrap();
+            apply("snes9x", &[], &[x], &dir).unwrap();
+            let conf = read(&dir.join("snes9x.conf"));
+            assert_eq!(ini_value(&conf, "Controls\\Win", "Joypad1:A"), Some("(J0)Button 1"));
+            assert_eq!(ini_value(&conf, "Controls\\Win", "Joypad1:Up"), Some("(J0)POV Up"));
+            assert_eq!(ini_value(&conf, "Controls\\Win", "Joypad2:Enabled"), Some("FALSE"));
+            let _ = std::fs::remove_dir_all(&dir);
+        }
     }
 
     #[test]

@@ -210,6 +210,9 @@ pub struct Game {
     /// Archive retenue pour ce système (`None` = non disponible).
     pub my_archive: Option<PlatformArchive>,
     pub rom_files: Vec<RemoteFile>,
+    /// Ce que l'émulateur télécharge : tout un disque, ou la seule version de cartouche retenue.
+    #[serde(default)]
+    pub emulator_rom_bytes: u64,
     pub mods: Vec<RemoteFile>,
     /// Jeu de la plateforme « Ordinateur » (installateurs, jeu prêt à lancer…).
     #[serde(default)]
@@ -424,6 +427,7 @@ impl Game {
             archives: Vec::new(),
             my_archive: None,
             rom_files: Vec::new(),
+            emulator_rom_bytes: 0,
             mods: Vec::new(),
             pc: None,
             runtime: None,
@@ -725,6 +729,7 @@ fn to_game(r: RawRom, base: &str, me: Target, details_loaded: bool) -> Game {
         manuals,
         archives,
         my_archive,
+        emulator_rom_bytes: crate::install::emulator::emulator_files(&rom_files).iter().map(|f| f.size).sum(),
         rom_files,
         mods,
         pc,

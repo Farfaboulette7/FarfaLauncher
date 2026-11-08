@@ -24,12 +24,56 @@ use crate::runtimes;
 pub const KIND_EMULATOR: &str = "emulator";
 
 /// Fichier à donner à l'émulateur quand un jeu en compte plusieurs.
-fn main_rom(files: &[RemoteFile]) -> Option<&RemoteFile> {
+fn disc_index(files: &[RemoteFile]) -> Option<&RemoteFile> {
     let ext = |f: &RemoteFile| f.file_name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
-    ["m3u", "cue", "gdi", "ccd"]
-        .iter()
-        .find_map(|e| files.iter().find(|f| ext(f) == *e))
-        .or_else(|| files.iter().max_by_key(|f| f.size))
+    ["m3u", "cue", "gdi", "ccd"].iter().find_map(|e| files.iter().find(|f| ext(f) == *e))
+}
+
+/// Note d'une version de cartouche d'après son nom (GoodTools, No-Intro) : vérifiée,
+/// française, européenne puis américaine ; jamais un hack, une bêta ou un dump abîmé.
+pub fn cartridge_score(name: &str) -> i32 {
+    let n = name.to_lowercase();
+    let mut score = 0;
+    for bad in ["[b", "[h", "[t", "[f", "[o", "[p", "hack", "(beta", "(proto", "(sample", "(demo", "(pd)", "(unl)"] {
+        if n.contains(bad) {
+            score -= 100;
+        }
+    }
+    if n.contains("[a") {
+        score -= 10;
+    }
+    if n.contains("[!]") {
+        score += 20;
+    }
+    score += if n.contains("(f)") || n.contains("(france)") || n.contains("(fr") || n.contains(",fr") {
+        12
+    } else if n.contains("(e)") || n.contains("(europe") || n.contains(", europe") {
+        8
+    } else if n.contains("(u)") || n.contains("(usa") {
+        4
+    } else if n.contains("(m") {
+        // Multilingue sans région connue (GoodTools « (M3) »).
+        6
+    } else {
+        0
+    };
+    score
+}
+
+/// ROM à lancer : l'index d'un disque (cue, m3u…), sinon la meilleure version de la
+/// cartouche (une entrée RomM « GoodTools » range toutes les versions d'un jeu ensemble).
+fn main_rom(files: &[RemoteFile]) -> Option<&RemoteFile> {
+    disc_index(files).or_else(|| {
+        files.iter().max_by_key(|f| (cartridge_score(&f.file_name), std::cmp::Reverse(f.file_name.len()), f.size))
+    })
+}
+
+/// Fichiers à télécharger : tout le disque, ou la seule cartouche retenue.
+pub fn emulator_files(files: &[RemoteFile]) -> Vec<&RemoteFile> {
+    if disc_index(files).is_some() {
+        return files.iter().collect();
+    }
+    main_rom(files).into_iter().collect()
 }
 
 /// Chemin de la ROM dans son dossier : `ROM/x.gba` → `x.gba` (entrée portage-*).
@@ -219,11 +263,12 @@ impl InstallJob {
             .and_then(|s| s.rom_dir.clone())
             .unwrap_or_else(|| root.join("Roms").join(state::safe_folder_name(&game.console, rom_id)).join(state::safe_folder_name(rom_folder(&game.folder_name, &game.rom_files), rom_id)));
 
-        let total: u64 = game.rom_files.iter().map(|f| f.size).sum();
+        let files = emulator_files(&game.rom_files);
+        let total: u64 = files.iter().map(|f| f.size).sum();
         ensure_space(&rom_dir, total)?;
         let mut offset = 0;
         let mut last = Instant::now() - Duration::from_secs(1);
-        for file in &game.rom_files {
+        for file in files {
             let dest = rom_dir.join(rom_rel(file));
             download::download(&self.client, file, &dest, &self.cancel, |got| {
                 if last.elapsed() >= Duration::from_millis(200) || got == file.size {
@@ -432,6 +477,28 @@ mod tests {
 
     fn f(name: &str, size: u64) -> RemoteFile {
         RemoteFile { id: 1, file_name: name.into(), rel_path: name.into(), size, sha1: None, md5: None, from_manager: false }
+    }
+
+    #[test]
+    fn best_cartridge_of_a_goodtools_folder() {
+        let yoshi = [
+            f("Super Mario - Yoshi Island (J) (V1.0).smc", 2),
+            f("Super Mario - Yoshi Island (J) (V1.1) [!].smc", 2),
+            f("Super Mario World 2 - Yoshi's Island (E) (M3) (V1.0) [f1].smc", 2),
+            f("Super Mario World 2 - Yoshi's Island (E) (M3) (V1.0) [!].smc", 2),
+            f("Super Mario World 2 - Yoshi's Island (U) (M3) (V1.0) [!].smc", 2),
+            f("Super Mario World 2 - Yoshi's Island (E) (M3) (V1.0) [h1C].smc", 2),
+        ];
+        let got = emulator_files(&yoshi);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].file_name, "Super Mario World 2 - Yoshi's Island (E) (M3) (V1.0) [!].smc");
+        let smw = [f("Archie 2K's World (SMW1 Hack).smc", 9), f("Super Mario World (U) [!].smc", 1), f("Super Mario World (F) [!].smc", 1), f("Super Mario World (E) [!].smc", 1)];
+        assert_eq!(emulator_files(&smw)[0].file_name, "Super Mario World (F) [!].smc");
+        assert_eq!(cartridge_score("New Super Mario Bros. (Europe) (En,Fr,De,Es,It).nds"), 12);
+        // Un disque garde tous ses fichiers.
+        let disc = [f("Jeu (Track 1).bin", 5), f("Jeu (Track 2).bin", 5), f("Jeu.cue", 1)];
+        assert_eq!(emulator_files(&disc).len(), 3);
+        assert_eq!(main_rom(&disc).unwrap().file_name, "Jeu.cue");
     }
 
     #[test]
