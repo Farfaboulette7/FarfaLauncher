@@ -128,6 +128,7 @@ pub fn run() {
             commands::launch::running_games,
             commands::launch::play_game,
             ingame::ingame_resume,
+            ingame::ingame_state,
             ingame::quit_game,
             commands::launch::set_prefer_launcher,
             commands::launch::flush_play_sessions,

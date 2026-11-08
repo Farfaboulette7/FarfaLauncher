@@ -316,6 +316,10 @@
 .ctl-code { opacity: 0.7; }
 .ctl-lock { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .ctl-lock p { margin: 0; }
+/* Start maintenu : la barre se remplit en 2 s (UNLOCK_HOLD_MS), puis le test se termine. */
+.ctl-lock { position: relative; overflow: hidden; }
+.ctl-hold { position: absolute; left: 0; bottom: 0; height: 4px; width: 100%; background: var(--nier-low); transform-origin: left; animation: ctl-hold 2s linear forwards; }
+@keyframes ctl-hold { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 .ctl-pad-body { display: flex; flex-wrap: wrap; gap: 14px 28px; }
 .ctl-group { display: flex; flex-direction: column; gap: 6px; }
 .ctl-group-title { font-size: var(--fs-xs); color: var(--nier-mid); }

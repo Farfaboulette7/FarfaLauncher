@@ -26,7 +26,6 @@ import { loadSounds, play as playSound } from "../sounds";
 import { loadMusic, setMusicMuted, setMusicVersion, stopMusic } from "../music";
 import { useFavorites } from "../hooks/useFavorites";
 import { useInstalls } from "../hooks/useInstalls";
-import { InGameMenu } from "../components/InGameMenu";
 import { GameDetail } from "./GameDetail";
 import { Settings } from "./Settings";
 import { useReveal } from "../reveal";
@@ -514,20 +513,12 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
     return (
       <div className={hack ? `hack-stage hack-stage--${hack.phase}` : "hack-stage"} style={vars}>
         {node}
-        {inGameMenu}
       </div>
     );
   }
 
-  // Menu en jeu (Select + Start maintenus pendant une partie), par-dessus n'importe quel écran.
-  const inGameMenu = (
-    <InGameMenu known={known} platformName={(g) => snapshot?.platforms.find((p) => p.id === g.platformId)?.name ?? null} />
-  );
-
   if (showSettings) {
     return (
-      <>
-      {inGameMenu}
       <Settings
         session={session}
         installs={installs}
@@ -539,7 +530,6 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
           if (!session.offline) refresh();
         }}
       />
-      </>
     );
   }
 

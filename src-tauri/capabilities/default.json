@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Permissions de la fenêtre principale (le réseau et les fichiers passent par les commandes Rust)",
-  "windows": ["main"],
+  "windows": ["main", "ingame"],
   "permissions": [
     "core:default",
     "dialog:allow-open",

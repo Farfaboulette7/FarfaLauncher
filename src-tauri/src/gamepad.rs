@@ -434,12 +434,15 @@ impl Session {
                 self.layouts_sent = false;
                 return;
             }
+            // Menu en jeu : seule sa colonne reçoit la manette (le launcher ne bouge pas).
             if !self.layouts_sent {
                 self.layouts_sent = true;
                 for (&pad, &layout) in &self.layouts {
-                    let _ = app.emit(EVENT, PadEvent::Layout { pad, layout });
+                    let _ = app.emit_to(crate::ingame::LABEL, EVENT, PadEvent::Layout { pad, layout });
                 }
             }
+            let _ = app.emit_to(crate::ingame::LABEL, EVENT, out);
+            return;
         }
         let _ = app.emit(EVENT, out);
     }

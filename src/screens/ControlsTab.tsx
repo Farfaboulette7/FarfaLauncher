@@ -1,4 +1,4 @@
-import { CSSProperties, useEffect, useState } from "react";
+import { CSSProperties, useEffect, useRef, useState } from "react";
 import { backend, Game, InstalledGame, KeyBind, PadEvent, PadInfo, PadLayout, PlayerPad } from "../api/backend";
 import { InstallsState } from "../hooks/useInstalls";
 import { capturePad, listPads, onPad, padLayoutOf } from "../gamepad";
@@ -144,10 +144,16 @@ function findPad(want: PlayerPad | null, pads: PadInfo[]): PadInfo | undefined {
   return pads.find((p) => p.key === want.key) ?? pads.find((p) => p.guid === guidOf(want.key));
 }
 
-/** Bouton « Tester » : ouvre (ou referme) le testeur de cette ligne. */
+/** Bouton « Tester » : ouvre (ou referme) le testeur de cette ligne ; le focus y revient à la fin du test. */
 function TestButton({ id, testing, onTest }: { id: string; testing: string | null; onTest: (id: string | null) => void }) {
+  const button = useRef<HTMLButtonElement>(null);
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    if (wasOpen.current && testing !== id) button.current?.focus({ preventScroll: true });
+    wasOpen.current = testing === id;
+  }, [testing, id]);
   return (
-    <button className="n-btn" aria-pressed={testing === id} onClick={() => onTest(testing === id ? null : id)}>
+    <button ref={button} className="n-btn" aria-pressed={testing === id} onClick={() => onTest(testing === id ? null : id)}>
       {testing === id ? "Fermer le test" : "Tester"}
     </button>
   );
@@ -172,7 +178,7 @@ function Devices({ testing, onTest }: { testing: string | null; onTest: (id: str
             </span>
             {testing === r.id && (
               <div className="ctl-player-test">
-                <Tester pad={r.pad} keyboard={r.pad === null} />
+                <Tester pad={r.pad} keyboard={r.pad === null} onClose={() => onTest(null)} />
               </div>
             )}
           </li>
@@ -273,13 +279,6 @@ function Players({ romId, count, installed, installs, onError, testing, onTest }
                       Choisir avec la manette
                     </button>
                   )}
-                  {pads
-                    .filter((p) => p.key !== here?.key)
-                    .map((p) => (
-                      <button key={p.pad} className="n-btn" onClick={() => assign(i, p)}>
-                        {p.name}
-                      </button>
-                    ))}
                   {slot && (
                     <button className="n-link" onClick={() => assign(i, null)}>
                       Retirer
@@ -290,7 +289,7 @@ function Players({ romId, count, installed, installs, onError, testing, onTest }
               {testing === `player-${i}` && (
                 <div className="ctl-player-test">
                   {/* Joueur 1 : aussi le clavier ; sans manette branchée, le clavier seul. */}
-                  <Tester pad={here?.pad ?? null} keyboard={i === 0 || !here} />
+                  <Tester pad={here?.pad ?? null} keyboard={i === 0 || !here} onClose={() => onTest(null)} />
                 </div>
               )}
             </li>
@@ -319,26 +318,30 @@ interface PadState {
   axes: Record<string, number>;
 }
 
-/** Durée d'appui sur Start + Select pour débloquer le menu. */
-const UNLOCK_HOLD_MS = 1000;
+/** Durée d'appui sur Start pour terminer le test (aussi dans GameDetail.css, .ctl-hold). */
+const UNLOCK_HOLD_MS = 2000;
 
-/** Testeur d'un seul appareil : la manette `pad` (numéro SDL) et/ou le clavier. */
-function Tester({ pad: only, keyboard }: { pad: number | null; keyboard: boolean }) {
+/**
+ * Testeur d'un seul appareil : la manette `pad` (numéro SDL) et/ou le clavier.
+ * Avec une manette, le menu est bloqué pendant le test (le stick ne fait pas
+ * bouger le launcher) ; Start maintenu ou Échap le termine (`onClose`).
+ */
+function Tester({ pad: only, keyboard, onClose }: { pad: number | null; keyboard: boolean; onClose: () => void }) {
   const [keys, setKeys] = useState<{ code: string; label: string }[]>([]);
   const [last, setLast] = useState<{ code: string; label: string } | null>(null);
   const [pads, setPads] = useState(new Map<number, PadState>());
-  const [locked, setLocked] = useState(false);
+  const locked = only !== null;
+  const close = useRef(onClose);
+  close.current = onClose;
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
       if (e.repeat) return;
       if (e.key === "Escape") {
-        // Menu bloqué : Échap débloque au lieu de revenir en arrière.
-        if (locked) {
-          e.preventDefault();
-          e.stopPropagation();
-          setLocked(false);
-        }
+        // Échap termine le test au lieu de revenir en arrière.
+        e.preventDefault();
+        e.stopPropagation();
+        close.current();
         return;
       }
       if (!keyboard) return;
@@ -356,7 +359,7 @@ function Tester({ pad: only, keyboard }: { pad: number | null; keyboard: boolean
       window.removeEventListener("keyup", up);
       window.removeEventListener("blur", clear);
     };
-  }, [locked, keyboard]);
+  }, [keyboard]);
 
   // Menu bloqué : la manette ne fait plus bouger le launcher.
   useEffect(() => {
@@ -368,13 +371,13 @@ function Tester({ pad: only, keyboard }: { pad: number | null; keyboard: boolean
     };
   }, [locked]);
 
-  // Start + Select maintenus : déblocage.
-  const unlockCombo = [...pads.values()].some((p) => p.buttons.has("start") && p.buttons.has("select"));
+  // Start maintenu : fin du test.
+  const holdingStart = [...pads.values()].some((p) => p.buttons.has("start"));
   useEffect(() => {
-    if (!locked || !unlockCombo) return;
-    const t = window.setTimeout(() => setLocked(false), UNLOCK_HOLD_MS);
+    if (!locked || !holdingStart) return;
+    const t = window.setTimeout(() => close.current(), UNLOCK_HOLD_MS);
     return () => window.clearTimeout(t);
-  }, [locked, unlockCombo]);
+  }, [locked, holdingStart]);
 
   useEffect(() => {
     const blank = (name: string, layout: PadLayout): PadState => ({ name, layout, buttons: new Set(), axes: {} });
@@ -410,27 +413,17 @@ function Tester({ pad: only, keyboard }: { pad: number | null; keyboard: boolean
   }, [only]);
 
   const first = [...pads.values()][0];
-  const comboNames = first ? `${padLabel(first.layout, "start")} + ${padLabel(first.layout, "select")}` : "Start + Select";
+  const startName = first ? padLabel(first.layout, "start") : "Start";
 
   return (
     <div className="ctl-tester">
-      {only !== null && (
-        <div className={`ctl-lock${locked ? " n-notice" : ""}`}>
-        {locked ? (
-          <>
-            <p>Menu bloqué : testez tous les boutons. Pour débloquer, maintenez {comboNames} ou appuyez sur Échap.</p>
-            <button className="n-btn" onClick={() => setLocked(false)}>
-              Débloquer
-            </button>
-          </>
-        ) : (
-          <>
-            <p className="n-hint">Appuyez sur une touche ou un bouton pour vérifier qu'il est bien reconnu.</p>
-            <button className="n-btn" onClick={() => setLocked(true)}>
-              Bloquer le menu pour tester la manette
-            </button>
-          </>
-        )}
+      {locked && (
+        <div className="ctl-lock n-notice">
+          <p>
+            Menu bloqué pendant le test : essayez tous les boutons. Pour terminer, maintenez {startName} 2 secondes ou appuyez sur
+            Échap.
+          </p>
+          {holdingStart && <span className="ctl-hold" aria-hidden="true" />}
         </div>
       )}
       {only === null && <p className="n-hint">Appuyez sur une touche pour vérifier qu'elle est bien reconnue.</p>}

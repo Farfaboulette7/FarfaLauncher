@@ -1,7 +1,0 @@
-.igm { display: flex; gap: 24px; align-items: flex-start; min-width: min(520px, 80vw); }
-.igm-cover { width: 140px; flex: none; aspect-ratio: 3 / 4; display: flex; align-items: center; justify-content: center; }
-.igm-cover > * { width: 100%; height: 100%; }
-.igm-info { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-.igm-info p { margin: 0; }
-.igm-title { margin: 0; font-size: var(--fs-lg); }
-.igm-quitting { margin: 0; display: flex; align-items: center; gap: 10px; }
