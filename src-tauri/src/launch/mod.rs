@@ -45,8 +45,45 @@ pub struct RunningGame {
     watcher: Option<direct::Watcher>,
     /// Fermeture demandée par le joueur (menu en jeu).
     stop: Arc<AtomicBool>,
+    /// Jeu suspendu par le menu en jeu.
+    paused: Arc<AtomicBool>,
     #[cfg(windows)]
-    job: windows_job::Job,
+    job: Arc<windows_job::Job>,
+}
+
+/// Pause du jeu pendant le menu en jeu : tous ses processus sont suspendus
+/// (ni image, ni son, ni lecture des manettes), puis relancés tels quels.
+#[derive(Clone)]
+pub struct GameControl {
+    #[cfg(windows)]
+    job: Arc<windows_job::Job>,
+    #[cfg(unix)]
+    pgid: u32,
+    paused: Arc<AtomicBool>,
+}
+
+impl GameControl {
+    pub fn pause(&self) {
+        if self.paused.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        tracing::info!("jeu en pause (menu en jeu)");
+        #[cfg(windows)]
+        windows_job::suspend(&self.job.process_ids(), true);
+        #[cfg(unix)]
+        signal_group(self.pgid, "STOP");
+    }
+
+    pub fn resume(&self) {
+        if !self.paused.swap(false, Ordering::SeqCst) {
+            return;
+        }
+        tracing::info!("jeu repris");
+        #[cfg(windows)]
+        windows_job::suspend(&self.job.process_ids(), false);
+        #[cfg(unix)]
+        signal_group(self.pgid, "CONT");
+    }
 }
 
 /// Programme à lancer, relatif au dossier du jeu.
@@ -115,10 +152,10 @@ pub fn spawn(game_dir: &Path, launch: Launch<'_>) -> AppResult<RunningGame> {
             // Sans job, on suit au moins le processus principal.
             tracing::warn!("processus non rattaché au job: {e}");
         }
-        Ok(RunningGame { child, started: Instant::now(), run_log, watcher, stop: Arc::default(), job })
+        Ok(RunningGame { child, started: Instant::now(), run_log, watcher, stop: Arc::default(), paused: Arc::default(), job: Arc::new(job) })
     }
     #[cfg(not(windows))]
-    Ok(RunningGame { child, started: Instant::now(), run_log, watcher, stop: Arc::default() })
+    Ok(RunningGame { child, started: Instant::now(), run_log, watcher, stop: Arc::default(), paused: Arc::default() })
 }
 
 /// Programme à l'intérieur d'un bundle macOS.
@@ -156,6 +193,17 @@ impl RunningGame {
     /// (comme avec la croix de sa fenêtre), puis arrêté s'il ne l'a pas fait.
     pub fn stop_flag(&self) -> Arc<AtomicBool> {
         self.stop.clone()
+    }
+
+    /// Pause et reprise du jeu (menu en jeu).
+    pub fn control(&self) -> GameControl {
+        GameControl {
+            #[cfg(windows)]
+            job: self.job.clone(),
+            #[cfg(unix)]
+            pgid: self.child.id(),
+            paused: self.paused.clone(),
+        }
     }
 
     /// Attend la fin du jeu et de tous ses processus (bloquant : à appeler
@@ -220,6 +268,8 @@ impl RunningGame {
     /// Demande au jeu de se fermer : ses fenêtres reçoivent WM_CLOSE (Windows),
     /// son groupe de processus SIGTERM (Linux).
     fn ask_close(&mut self) {
+        // Un jeu suspendu ne lirait pas la demande.
+        self.control().resume();
         #[cfg(windows)]
         windows_job::close_windows(&self.job.process_ids());
         #[cfg(unix)]
@@ -358,12 +408,40 @@ mod windows_job {
 
     use crate::error::{AppError, AppResult};
 
+    /// Suspend (ou relance) chacun de ces processus.
+    pub fn suspend(pids: &[u32], pause: bool) {
+        use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SUSPEND_RESUME};
+        #[link(name = "ntdll")]
+        extern "system" {
+            fn NtSuspendProcess(process: HANDLE) -> i32;
+            fn NtResumeProcess(process: HANDLE) -> i32;
+        }
+        for &pid in pids {
+            // SAFETY : poignée ouverte puis refermée ici ; NtSuspendProcess/NtResumeProcess
+            // n'agissent que sur ce processus.
+            unsafe {
+                let h = OpenProcess(PROCESS_SUSPEND_RESUME, 0, pid);
+                if h.is_null() {
+                    tracing::warn!("processus {pid} non suspendu: {}", std::io::Error::last_os_error());
+                    continue;
+                }
+                let status = if pause { NtSuspendProcess(h) } else { NtResumeProcess(h) };
+                if status < 0 {
+                    tracing::warn!("processus {pid}: état {status:#x}");
+                }
+                CloseHandle(h);
+            }
+        }
+    }
+
     /// Job Object sans limite : il sert seulement à compter les processus du
     /// jeu. Le fermer ne tue pas le jeu (pas de KILL_ON_JOB_CLOSE).
     pub struct Job(HANDLE);
 
     // Le handle n'est utilisé que par le thread de surveillance.
     unsafe impl Send for Job {}
+    // SAFETY : les fonctions du job utilisées ici peuvent être appelées de plusieurs fils.
+    unsafe impl Sync for Job {}
 
     impl Job {
         pub fn create() -> AppResult<Self> {
@@ -506,7 +584,7 @@ mod tests {
         let job = windows_job::Job::create().unwrap();
         job.assign(&child).unwrap();
         let watcher = Some(direct::Watcher::new(&dir, Path::new("cmd.exe")));
-        let learned = RunningGame { child, started: Instant::now(), run_log: None, watcher, stop: Arc::default(), job }.wait(|| {});
+        let learned = RunningGame { child, started: Instant::now(), run_log: None, watcher, stop: Arc::default(), paused: Arc::default(), job: Arc::new(job) }.wait(|| {});
         // ping hors du dossier et trop bref : ce n'est pas un jeu.
         assert_eq!(learned, None);
         assert!(started.elapsed() >= Duration::from_secs(3), "{:?}", started.elapsed());
@@ -523,8 +601,12 @@ mod tests {
         let child = cmd.spawn().unwrap();
         let job = windows_job::Job::create().unwrap();
         job.assign(&child).unwrap();
-        let game = RunningGame { child, started: Instant::now(), run_log: None, watcher: None, stop: Arc::default(), job };
+        let game = RunningGame { child, started: Instant::now(), run_log: None, watcher: None, stop: Arc::default(), paused: Arc::default(), job: Arc::new(job) };
         let stop = game.stop_flag();
+        // En pause (menu en jeu) au moment de quitter : relancé pour être fermé.
+        let control = game.control();
+        control.pause();
+        control.pause();
         let started = Instant::now();
         let waiter = std::thread::spawn(move || game.wait(|| {}));
         std::thread::sleep(Duration::from_secs(1));

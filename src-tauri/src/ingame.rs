@@ -27,6 +27,8 @@ pub struct Playing {
     pub started: Instant,
     /// Levé pour fermer le jeu (voir `RunningGame::stop_flag`).
     pub stop: Arc<AtomicBool>,
+    /// Pause du jeu tant que le menu est ouvert.
+    pub control: crate::launch::GameControl,
 }
 
 #[derive(Clone, Serialize)]
@@ -66,8 +68,10 @@ pub fn prepare(app: &AppHandle) {
 /// Ouvre le menu sur la partie la plus récente (appelé par le fil des manettes).
 pub fn open(app: &AppHandle) {
     let state = app.state::<AppState>();
-    let latest = state.playing.lock().unwrap().iter().max_by_key(|(_, p)| p.started).map(|(id, p)| (*id, p.started.elapsed()));
-    let Some((rom_id, elapsed)) = latest else { return };
+    let latest = state.playing.lock().unwrap().iter().max_by_key(|(_, p)| p.started).map(|(id, p)| (*id, p.started.elapsed(), p.control.clone()));
+    let Some((rom_id, elapsed, control)) = latest else { return };
+    // Le jeu ne reçoit plus rien (manette, clavier) tant que le joueur choisit.
+    control.pause();
     let (name, platform) = describe(&state, rom_id);
     tracing::info!("menu en jeu ouvert ({name})");
     let info = MenuInfo { rom_id, name, platform, session_ms: elapsed.as_millis() as u64, quitting: false };
@@ -88,6 +92,9 @@ pub fn open(app: &AppHandle) {
 /// Referme le menu : la colonne repart vers la gauche, la manette retourne au jeu.
 pub fn close(app: &AppHandle) {
     gamepad::set_menu(false);
+    for p in app.state::<AppState>().playing.lock().unwrap().values() {
+        p.control.resume();
+    }
     *SHOWN.lock().unwrap() = None;
     let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
     let Some(w) = app.get_webview_window(LABEL) else { return };
@@ -240,7 +247,9 @@ pub fn ingame_resume(app: AppHandle) {
 /// La colonne reste affichée (« Fermeture du jeu… ») jusqu'à la fin du jeu.
 #[tauri::command]
 pub fn quit_game(app: AppHandle, state: State<'_, AppState>, rom_id: i64) -> AppResult<()> {
-    let stop = state.playing.lock().unwrap().get(&rom_id).map(|p| p.stop.clone()).ok_or(AppError::NotInstalled)?;
+    let (stop, control) = state.playing.lock().unwrap().get(&rom_id).map(|p| (p.stop.clone(), p.control.clone())).ok_or(AppError::NotInstalled)?;
+    // Relancé pour qu'il puisse se fermer proprement.
+    control.resume();
     tracing::info!("quitter le jeu {rom_id} depuis le menu en jeu");
     gamepad::set_menu(false);
     stop.store(true, Ordering::Relaxed);

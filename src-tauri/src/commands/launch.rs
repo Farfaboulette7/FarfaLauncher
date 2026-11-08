@@ -169,7 +169,7 @@ pub async fn play_game(
         }
     };
     let started = OffsetDateTime::now_utc();
-    state.playing.lock().unwrap().insert(rom_id, crate::ingame::Playing { started: std::time::Instant::now(), stop: running.stop_flag() });
+    state.playing.lock().unwrap().insert(rom_id, crate::ingame::Playing { started: std::time::Instant::now(), stop: running.stop_flag(), control: running.control() });
     let _ = app.emit("game-started", rom_id);
     crate::ingame::prepare(&app);
     gamepad::game_started();
