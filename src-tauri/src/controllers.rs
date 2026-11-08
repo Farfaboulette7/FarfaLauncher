@@ -651,7 +651,62 @@ mod melonds {
                 text = set_ini(&text, &format!("Instance0.Joystick.{key}"), &c.to_string());
             }
         }
+        // Gâchette droite : les deux écrans échangent leur place et leur taille (le grand
+        // reste à gauche). Deux raccourcis de melonDS sur la même gâchette.
+        if let Some(c) = binding(pad, "righttrigger").and_then(code) {
+            for hotkey in ["HK_SwapScreens", "HK_SwapScreenEmphasis"] {
+                text = set_ini(&text, &format!("Instance0.Joystick.{hotkey}"), &c.to_string());
+            }
+        }
         write(&path, &before, &text)
+    }
+}
+
+/// Numéros que donne l'interface manettes de Windows (winmm) : ils peuvent sauter des cases
+/// (une manette Xbox seule peut être la n° 1). La manette y est reconnue à son fabricant et
+/// son produit ; à défaut, son rang parmi les manettes branchées.
+fn winmm_index(pad: &PadInfo, all: &[PadInfo]) -> usize {
+    #[cfg(windows)]
+    {
+        let same: Vec<usize> = winmm::devices().into_iter().filter(|d| d.1 == pad.vendor && d.2 == pad.product).map(|d| d.0).collect();
+        let n = rank(pad, all, |p| p.vendor == pad.vendor && p.product == pad.product);
+        if let Some(id) = same.get(n) {
+            return *id;
+        }
+    }
+    rank(pad, all, |_| true)
+}
+
+#[cfg(windows)]
+mod winmm {
+    /// JOYCAPSW : seuls le fabricant et le produit servent ici.
+    #[repr(C)]
+    struct JoyCaps {
+        mid: u16,
+        pid: u16,
+        name: [u16; 32],
+        fields: [u32; 19],
+        reg_key: [u16; 32],
+        oem: [u16; 260],
+    }
+
+    #[link(name = "winmm")]
+    extern "system" {
+        fn joyGetDevCapsW(id: usize, caps: *mut JoyCaps, size: u32) -> u32;
+    }
+
+    /// (numéro, fabricant, produit) des manettes que voit Windows.
+    pub fn devices() -> Vec<(usize, u16, u16)> {
+        let mut out = Vec::new();
+        for id in 0..16 {
+            let mut caps = JoyCaps { mid: 0, pid: 0, name: [0; 32], fields: [0; 19], reg_key: [0; 32], oem: [0; 260] };
+            // SAFETY : structure de la taille annoncée, remplie par winmm.
+            let r = unsafe { joyGetDevCapsW(id, &mut caps, std::mem::size_of::<JoyCaps>() as u32) };
+            if r == 0 {
+                out.push((id, caps.mid, caps.pid));
+            }
+        }
+        out
     }
 }
 
@@ -708,7 +763,7 @@ mod snes9x {
                     }
                     continue;
                 };
-                let j = format!("(J{:x})", rank(pad, all, |_| true));
+                let j = format!("(J{:x})", winmm_index(pad, all));
                 text = set_ini(&text, &format!("{SECTION}.Joypad{n}:Enabled"), "TRUE");
                 for (key, element) in NINTENDO_FACE {
                     if let Some(b) = winmm_button(pad.layout, element) {
@@ -938,6 +993,7 @@ mod tests {
             ("dpleft", "hat:0,direction:left".into()),
             ("dpright", "hat:0,direction:right".into()),
             ("lefttrigger", "axis:2".into()),
+            ("righttrigger", "axis:5".into()),
         ]
     }
 
@@ -960,6 +1016,9 @@ mod tests {
         assert_eq!(ini_value(&toml, "Instance0.Joystick", "B"), Some("0"));
         assert_eq!(ini_value(&toml, "Instance0.Joystick", "Up"), Some("257"));
         assert_eq!(ini_value(&toml, "Instance0.Firmware", "Language"), Some("2"));
+        let rt = (0x10000 | (5 << 24) | (2 << 20)).to_string();
+        assert_eq!(ini_value(&toml, "Instance0.Joystick", "HK_SwapScreens"), Some(rt.as_str()));
+        assert_eq!(ini_value(&toml, "Instance0.Joystick", "HK_SwapScreenEmphasis"), Some(rt.as_str()));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
