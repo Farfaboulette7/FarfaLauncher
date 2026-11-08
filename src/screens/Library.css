@@ -273,17 +273,23 @@
 .card-tags {
   position: absolute;
   left: 0;
-  bottom: 10px;
+  bottom: 0;
   z-index: 1;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 2px;
+  gap: 1px;
   max-width: 100%;
 }
+/* Petites et au ras du bas : la jaquette reste visible. */
 .card-badge {
-  padding: 3px 10px;
-  font-size: var(--fs-xs);
+  max-width: 100%;
+  padding: 1px 6px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: calc(var(--fs-xs) * 0.82);
+  line-height: 1.35;
   letter-spacing: var(--nier-tracking-wide);
   background: var(--nier-alert);
   color: var(--nier-high);
@@ -292,11 +298,12 @@
 /* Ce qui distingue une ROM de ses homonymes (région, révision…), au-dessus du badge. */
 .card-variant {
   max-width: 100%;
-  padding: 2px 8px;
+  padding: 1px 6px;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font-size: var(--fs-xs);
+  font-size: calc(var(--fs-xs) * 0.82);
+  line-height: 1.35;
   letter-spacing: var(--nier-tracking);
   background: var(--nier-high);
   color: var(--nier-low);
