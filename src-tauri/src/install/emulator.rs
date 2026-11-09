@@ -64,8 +64,15 @@ pub fn cartridge_score(name: &str) -> i32 {
 /// cartouche (une entrée RomM « GoodTools » range toutes les versions d'un jeu ensemble).
 fn main_rom(files: &[RemoteFile]) -> Option<&RemoteFile> {
     disc_index(files).or_else(|| {
-        files.iter().max_by_key(|f| (cartridge_score(&f.file_name), std::cmp::Reverse(f.file_name.len()), f.size))
+        files.iter().max_by_key(|f| (is_rom_like(f), !f.rel_path.contains('/'), cartridge_score(&f.file_name), std::cmp::Reverse(f.file_name.len()), f.size))
     })
+}
+
+/// Fichier de jeu plutôt qu'annexe : un dossier RomM peut aussi ranger des archives de mods,
+/// de DLC ou de sauvegarde (Switch : jeu.nsp, patch/maj.nsp, dlc.zip…).
+fn is_rom_like(f: &RemoteFile) -> bool {
+    let ext = f.file_name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    !["zip", "7z", "rar", "txt", "nfo", "jpg", "jpeg", "png", "pdf", "md", "sfv", "torrent"].contains(&ext.as_str())
 }
 
 /// Fichiers à télécharger : tout le disque, ou la seule cartouche retenue.
@@ -254,6 +261,7 @@ impl InstallJob {
             self.ensure_emulator(rom_id, &emulator).await?
         };
         let exe = installed.executable.clone().ok_or(AppError::NoExecutable)?;
+        self.apply_packs(rom_id, &emulator, &installed).await?;
 
         // Dossier des jeux déduit de l'émulateur : il peut avoir été installé ailleurs.
         let root = installed.game_dir.parent().and_then(Path::parent).map(Path::to_path_buf).unwrap_or_else(|| self.install_root.clone());
@@ -300,7 +308,9 @@ impl InstallJob {
             rom_id,
             name: game.name.clone(),
             version: installed.version.clone(),
-            version_raw: installed.version_raw.clone(),
+            // Version de l'émulateur plus celle des archives du jeu : une archive mise à jour
+            // sur le serveur (mods…) se signale comme une mise à jour du jeu.
+            version_raw: Some(emulator.version_for(rom_id)),
             target: installed.target,
             archive_name: installed.archive_name.clone(),
             executable: Some(exe.clone()),
@@ -448,6 +458,64 @@ impl InstallJob {
         Ok(st)
     }
 
+    /// Archives de ce jeu (mods, mise à jour, sauvegarde de départ…), extraites dans le dossier
+    /// de l'émulateur. Une archive déjà posée dans la même version n'est pas reprise ; une archive
+    /// « si-absent » n'est posée que si son chemin témoin manque.
+    async fn apply_packs(&self, rom_id: i64, emulator: &Emulator, st: &InstalledGame) -> AppResult<()> {
+        let exe = st.executable.as_deref().ok_or(AppError::NoExecutable)?;
+        let exe_dir = st.game_dir.join(rel_to_path(exe)).parent().map(Path::to_path_buf).unwrap_or_else(|| st.game_dir.clone());
+        let internal = st.game_dir.join(INTERNAL_DIR);
+        let markers = internal.join("packs");
+        for pack in emulator.packs_for(rom_id) {
+            let dest = exe_dir.join(rel_to_path(pack.file.dest.as_deref().unwrap_or("")));
+            if let Some(witness) = &pack.if_missing {
+                if dest.join(rel_to_path(witness)).exists() {
+                    continue;
+                }
+            }
+            let marker = markers.join(&pack.file.name);
+            if std::fs::read_to_string(&marker).is_ok_and(|s| s.trim() == pack.file.sha1) && pack.if_missing.is_none() {
+                continue;
+            }
+            tracing::info!("{} : pose de {} dans {}", emulator.name, pack.file.name, dest.display());
+            let archive = internal.join("downloads").join(&pack.file.name);
+            ensure_space(&exe_dir, pack.file.size * 2)?;
+            let remote = pack.file.remote();
+            let client = self.manager_client()?;
+            let mut last = Instant::now() - Duration::from_secs(1);
+            download::download_from(&client, &pack.file.download_path(), &remote, &archive, &self.cancel, |got| {
+                if last.elapsed() >= Duration::from_millis(200) || got == remote.size {
+                    last = Instant::now();
+                    self.emit(rom_id, "download", got, remote.size);
+                }
+            }, || self.emit_verifying(rom_id, remote.size, remote.size))
+            .await?;
+            let staging = internal.join("staging-pack");
+            let (a, s, d, cancel, cb) = (archive.clone(), staging.clone(), dest.clone(), self.cancel.clone(), self.on_progress.clone());
+            let n = blocking(move || -> AppResult<u64> {
+                let mut last = Instant::now() - Duration::from_secs(1);
+                extract::extract(&a, ArchiveKind::Zip, &s, &cancel, |done, total| {
+                    if last.elapsed() >= Duration::from_millis(200) || done == total {
+                        last = Instant::now();
+                        cb(super::Progress { rom_id, phase: "extract", done, total, verifying: false });
+                    }
+                })?;
+                let n = extract::merge_all(&s, &d)?;
+                let _ = std::fs::remove_dir_all(&s);
+                Ok(n)
+            })
+            .await?;
+            let _ = std::fs::remove_file(&archive);
+            if self.cancel.is_cancelled() {
+                return Err(AppError::Cancelled);
+            }
+            std::fs::create_dir_all(&markers).map_err(|e| disk_error("archives de l'émulateur", e))?;
+            std::fs::write(&marker, &pack.file.sha1).map_err(|e| disk_error("archives de l'émulateur", e))?;
+            tracing::info!("{} : {} posée ({n} fichiers)", emulator.name, pack.file.name);
+        }
+        Ok(())
+    }
+
     /// Éléments de configuration (prod.keys…), posés à côté de l'exécutable.
     async fn fetch_configs(&self, page_id: i64, emulator: &Emulator, st: &InstalledGame) -> AppResult<()> {
         if emulator.config.is_empty() {
@@ -523,6 +591,20 @@ mod tests {
         let disc = [f("Jeu (Track 1).bin", 5), f("Jeu (Track 2).bin", 5), f("Jeu.cue", 1)];
         assert_eq!(emulator_files(&disc).len(), 3);
         assert_eq!(main_rom(&disc).unwrap().file_name, "Jeu.cue");
+    }
+
+    #[test]
+    fn picks_the_game_among_its_extras() {
+        let mut patch = f("Super Smash Bros Ultimate [01006A800016E800][v1966080][US].nsp", 3_900);
+        patch.rel_path = "patch/Super Smash Bros Ultimate [01006A800016E800][v1966080][US].nsp".into();
+        let files = vec![
+            f("CitronSSBU.v1 [linux].zip", 5_000),
+            f("Super Smash Bros Ultimate[01006A800016E000][US][v0].nsp", 14_000),
+            f("dlc.zip", 2),
+            f("mods_suyu_backup.zip", 5_000),
+            patch,
+        ];
+        assert_eq!(main_rom(&files).unwrap().file_name, "Super Smash Bros Ultimate[01006A800016E000][US][v0].nsp");
     }
 
     #[test]

@@ -220,7 +220,12 @@ fn read_page(game_dir: &Path, rom_id: i64) -> Option<InstalledGame> {
     let shared = st.shared.clone()?;
     st.game_dir = game_dir.to_path_buf();
     st.version = runtime.version;
-    st.version_raw = runtime.version_raw;
+    // Jeu d'émulateur avec des archives (mods…) : sa version est celle de l'émulateur suivie
+    // de leurs empreintes, gardée tant que l'émulateur n'a pas changé.
+    let with_packs = matches!((&st.version_raw, &runtime.version_raw), (Some(own), Some(rt)) if own.starts_with(&format!("{rt}+")));
+    if !with_packs {
+        st.version_raw = runtime.version_raw;
+    }
     st.target = runtime.target;
     st.archive_name = runtime.archive_name;
     st.executable = runtime.executable.clone();

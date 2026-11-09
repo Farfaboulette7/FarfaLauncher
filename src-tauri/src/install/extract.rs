@@ -212,16 +212,25 @@ pub fn content_root(staging: &Path) -> AppResult<PathBuf> {
 pub fn merge_into(src: &Path, dest: &Path) -> AppResult<u64> {
     fs::create_dir_all(dest).map_err(|e| disk_error("création du dossier du jeu", e))?;
     let mut count = 0;
-    merge_dir(src, dest, Path::new(""), &mut count)?;
+    merge_dir(src, dest, Path::new(""), &mut count, true)?;
     Ok(count)
 }
 
-fn merge_dir(src_root: &Path, dest_root: &Path, rel: &Path, count: &mut u64) -> AppResult<()> {
+/// Comme [`merge_into`], sans chemin protégé : archive d'émulateur posée telle quelle
+/// (une sauvegarde de départ comprise).
+pub fn merge_all(src: &Path, dest: &Path) -> AppResult<u64> {
+    fs::create_dir_all(dest).map_err(|e| disk_error("création du dossier", e))?;
+    let mut count = 0;
+    merge_dir(src, dest, Path::new(""), &mut count, false)?;
+    Ok(count)
+}
+
+fn merge_dir(src_root: &Path, dest_root: &Path, rel: &Path, count: &mut u64, protect: bool) -> AppResult<()> {
     let dir = src_root.join(rel);
     for entry in fs::read_dir(&dir).map_err(|e| log_err(AppError::Disk, "lecture de l'archive extraite", e))? {
         let entry = entry.map_err(|e| log_err(AppError::Disk, "lecture de l'archive extraite", e))?;
         let child_rel = rel.join(entry.file_name());
-        if is_protected(&child_rel) {
+        if protect && is_protected(&child_rel) {
             tracing::info!("chemin protégé conservé tel quel: {}", child_rel.display());
             continue;
         }
@@ -232,7 +241,7 @@ fn merge_dir(src_root: &Path, dest_root: &Path, rel: &Path, count: &mut u64) -> 
                 fs::remove_file(&target).map_err(|e| disk_error("remplacement d'un fichier", e))?;
             }
             fs::create_dir_all(&target).map_err(|e| disk_error("création d'un dossier", e))?;
-            merge_dir(src_root, dest_root, &child_rel, count)?;
+            merge_dir(src_root, dest_root, &child_rel, count, protect)?;
         } else {
             if target.is_dir() {
                 // Un dossier remplacé par un fichier dans la nouvelle version : on ne

@@ -28,6 +28,27 @@ pub fn applicable(list: &[BeforeLaunch]) -> Vec<BeforeLaunch> {
     list.iter().filter(|b| b.system.as_deref().is_none_or(|s| s.eq_ignore_ascii_case(this_system()))).cloned().collect()
 }
 
+/// Efface ces chemins (relatifs au dossier de l'exécutable) avant la partie.
+pub fn clean(paths: &[String], exe_dir: &Path) {
+    for rel in paths {
+        if rel.split('/').any(|c| c.is_empty() || c == "." || c == "..") {
+            continue;
+        }
+        let path = exe_dir.join(crate::install::rel_to_path(rel));
+        let result = if path.is_dir() {
+            std::fs::remove_dir_all(&path)
+        } else if path.exists() {
+            std::fs::remove_file(&path)
+        } else {
+            continue;
+        };
+        match result {
+            Ok(()) => tracing::info!("avant le jeu : {} effacé", path.display()),
+            Err(e) => tracing::warn!("avant le jeu : {} non effacé: {e}", path.display()),
+        }
+    }
+}
+
 /// Lance chaque programme et attend sa fin (bloquant : à appeler hors du fil principal).
 pub fn run_all(list: &[BeforeLaunch], exe_dir: &Path) {
     for b in list {
@@ -96,6 +117,17 @@ mod tests {
         let names: Vec<String> = applicable(&list).into_iter().map(|b| b.program).collect();
         let mine = if cfg!(windows) { "w.exe" } else { "l" };
         assert_eq!(names, vec![mine.to_string(), "tous".to_string()]);
+    }
+
+    #[test]
+    fn cleans_only_inside_the_emulator_folder() {
+        let dir = std::env::temp_dir().join(format!("farfa-effacer-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("user/cache/13.0.4")).unwrap();
+        std::fs::write(dir.join("user/cache/13.0.4/share.lut"), b"x").unwrap();
+        std::fs::write(dir.join("garde.txt"), b"x").unwrap();
+        clean(&["user/cache".into(), "../garde.txt".into(), "absent".into()], &dir);
+        assert!(!dir.join("user/cache").exists() && dir.join("user").exists() && dir.join("garde.txt").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[cfg(windows)]

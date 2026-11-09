@@ -213,6 +213,10 @@ export interface EmulatorOffer {
   repo: string | null;
   /** Éléments de configuration que le serveur n'a pas encore. */
   configMissing: string[];
+  /** Version à installer pour ce jeu : l'émulateur plus ses archives (mods, mise à jour…). */
+  gameVersionKey?: string;
+  /** Taille des archives de ce jeu. */
+  packsSize?: number;
 }
 
 export interface GamesPage {
@@ -598,7 +602,8 @@ export function withEffectiveEmulator(game: Game, inst: InstalledGame | undefine
 export function hasUpdate(game: Game, inst: InstalledGame | undefined): boolean {
   if (!inst?.executable) return false;
   // Installé avec l'émulateur : c'est lui qui est suivi, pas la recomp du jeu.
-  const remote = isEmulatorInstall(inst) ? effectiveEmulator(game, inst)?.versionKey : game.serverVersionRaw;
+  const offer = effectiveEmulator(game, inst);
+  const remote = isEmulatorInstall(inst) ? offer?.gameVersionKey || offer?.versionKey : game.serverVersionRaw;
   return !!remote && remote !== inst.versionRaw;
 }
 
@@ -612,5 +617,5 @@ export function emulatorReady(game: Game): boolean {
 /** Taille à télécharger pour installer le jeu avec son émulateur. */
 export function emulatorDownloadSize(game: Game, emulatorInstalled: boolean): number {
   const roms = game.emulatorRomBytes || game.romFiles.reduce((s, f) => s + f.size, 0);
-  return roms + (emulatorInstalled ? 0 : (game.emulator?.size ?? 0));
+  return roms + (game.emulator?.packsSize ?? 0) + (emulatorInstalled ? 0 : (game.emulator?.size ?? 0));
 }

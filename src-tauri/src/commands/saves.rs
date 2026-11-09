@@ -65,6 +65,11 @@ fn resolve(config_dir: &std::path::Path, st: &mut InstalledGame) -> Option<SaveL
     if let Some(loc) = location(st) {
         return Some(loc);
     }
+    // Jeu d'émulateur : le dossier vient de FarfaRomManager (« sauvegardes: »). Deviné dans le
+    // dossier de l'émulateur, il tomberait sur ses fichiers système (Switch : nand/system/save).
+    if st.shared.as_ref().is_some_and(|s| s.is_emulator()) {
+        return None;
+    }
     let exes = exes(st);
     if exes.is_empty() {
         return None;
@@ -272,6 +277,8 @@ pub async fn after_play(state: &AppState, client: Option<RommClient>, rom_id: i6
             }
             Some(loc)
         }
+        // Jeu d'émulateur : rien n'est deviné dans le dossier de l'émulateur (voir resolve).
+        None if st.shared.as_ref().is_some_and(|s| s.is_emulator()) => None,
         None => {
             let (dir, exes, name) = (st.game_dir.clone(), exes(&st), st.name.clone());
             let loc = tauri::async_runtime::spawn_blocking(move || saves::detect_by_activity(&dir, &exes, &name, started)).await.ok().flatten();

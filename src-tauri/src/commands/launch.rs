@@ -149,6 +149,9 @@ pub async fn play_game(
             env.extend(crate::language::prepare(&st.game_dir, &exe_dir, &rules));
         }
         // Programmes de l'émulateur à lancer d'abord (ex. shaders partagés de lichii-sync).
+        if let Some(e) = state.catalog().emulator_for_install(&st) {
+            launch::before::clean(&e.launch.clean, &exe_dir);
+        }
         let before = state.catalog().emulator_for_install(&st).map(|e| launch::before::applicable(&e.launch.before)).unwrap_or_default();
         if !before.is_empty() {
             let dir = exe_dir.clone();

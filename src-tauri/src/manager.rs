@@ -140,6 +140,41 @@ pub struct Emulator {
     /// Questions posées au lancement et touche qui y répond (dialogs.rs).
     #[serde(default)]
     pub dialogs: Vec<crate::dialogs::DialogAnswer>,
+    /// Archives posées dans le dossier de l'émulateur pour un jeu (mods, mise à jour, sauvegarde…).
+    #[serde(default)]
+    pub packs: Vec<EmulatorPack>,
+}
+
+/// Archive de FarfaRomManager extraite dans le dossier de l'émulateur (`dest`, relatif à
+/// l'exécutable) pour un jeu RomM, ou pour tous ses jeux.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmulatorPack {
+    #[serde(flatten)]
+    pub file: ManagerFile,
+    /// Jeu RomM ; absent : tous les jeux de l'émulateur.
+    #[serde(default)]
+    pub rom_id: Option<i64>,
+    /// Posée seulement si ce chemin (relatif à `dest`) manque : jamais réécrite ensuite.
+    #[serde(default)]
+    pub if_missing: Option<String>,
+}
+
+impl Emulator {
+    /// Archives de ce jeu.
+    pub fn packs_for(&self, rom_id: i64) -> impl Iterator<Item = &EmulatorPack> {
+        self.packs.iter().filter(move |p| p.rom_id.is_none_or(|r| r == rom_id))
+    }
+
+    /// Version installée pour ce jeu : celle de l'émulateur, plus ses archives tenues à jour.
+    pub fn version_for(&self, rom_id: i64) -> String {
+        let packs: Vec<&str> = self.packs_for(rom_id).filter(|p| p.if_missing.is_none()).map(|p| p.file.sha1.get(..8).unwrap_or("")).collect();
+        if packs.is_empty() {
+            self.version.cle.clone()
+        } else {
+            format!("{}+{}", self.version.cle, packs.join("."))
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -182,6 +217,8 @@ pub struct EmulatorLaunch {
     pub portable: Vec<String>,
     /// Programmes lancés avant le jeu (ex. synchronisation de shaders).
     pub before: Vec<BeforeLaunch>,
+    /// Chemins effacés avant chaque partie, relatifs à l'exécutable (cache à refaire…).
+    pub clean: Vec<String>,
 }
 
 /// Programme lancé avant le jeu, relatif à l'exécutable de l'émulateur.
@@ -279,6 +316,12 @@ pub struct EmulatorOffer {
     pub repo: Option<String>,
     /// Éléments de configuration que le serveur n'a pas encore (ex. prod.keys).
     pub config_missing: Vec<String>,
+    /// Version à installer pour ce jeu : celle de l'émulateur, plus ses archives (mods…).
+    #[serde(default)]
+    pub game_version_key: String,
+    /// Taille des archives de ce jeu (mods, mise à jour…).
+    #[serde(default)]
+    pub packs_size: u64,
 }
 
 /// Identifiant d'un émulateur dans les installations : les ID RomM sont positifs.
@@ -333,7 +376,18 @@ impl Catalog {
             systems: e.files.iter().filter_map(|f| f.system.clone()).collect(),
             repo: e.repo.clone(),
             config_missing: e.config_missing.clone(),
+            game_version_key: e.version.cle.clone(),
+            packs_size: 0,
         }
+    }
+
+    /// Offre d'un émulateur pour un jeu précis : ses archives comptent dans sa version et sa taille.
+    pub fn for_game(mut offer: EmulatorOffer, catalog: &Catalog, rom_id: i64) -> EmulatorOffer {
+        if let Some(e) = catalog.emulator(&offer.id) {
+            offer.game_version_key = e.version_for(rom_id);
+            offer.packs_size = e.packs_for(rom_id).map(|p| p.file.size).sum();
+        }
+        offer
     }
 
     pub fn recomp(&self, id: &str) -> Option<&CatalogRecomp> {
@@ -544,7 +598,24 @@ mod tests {
             language: vec![],
             controllers: None,
             dialogs: vec![],
+            packs: vec![],
         }
+    }
+
+    #[test]
+    fn packs_of_a_game_count_in_its_version() {
+        let text = r#"{"recomps":[],"emulators":[{"id":"eden","name":"Eden","consoles":["switch"],"version":{"cle":"v1","nom":"v0.2.1"},
+          "packs":[{"romId":null,"name":"fw.zip","dest":"user","sha1":"aaaaaaaaaaaa","size":10},
+                   {"romId":192,"name":"mods.zip","dest":"user","sha1":"bbbbbbbbbbbb","size":20},
+                   {"romId":192,"name":"save.zip","dest":"user","sha1":"cccccccccccc","size":5,"ifMissing":"nand/x"}]}]}"#;
+        let c: Catalog = serde_json::from_str(text).unwrap();
+        let e = c.emulator("eden").unwrap();
+        assert_eq!(e.packs_for(192).count(), 3);
+        assert_eq!(e.packs_for(7).count(), 1);
+        // Une sauvegarde de départ (« si-absent ») ne change jamais la version.
+        assert_eq!(e.version_for(192), "v1+aaaaaaaa.bbbbbbbb");
+        let o = Catalog::for_game(c.offer("switch", Target::Windows).unwrap(), &c, 192);
+        assert_eq!((o.game_version_key.as_str(), o.packs_size), ("v1+aaaaaaaa.bbbbbbbb", 35));
     }
 
     #[test]

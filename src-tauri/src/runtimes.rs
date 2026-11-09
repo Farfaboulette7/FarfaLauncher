@@ -291,8 +291,9 @@ pub async fn list_library(
 pub fn annotate(game: &mut Game, catalog: &Catalog, recomps: &HashSet<i64>, me: Target) {
     game.recomp = game.recomp || game.runtime.is_some() || recomps.contains(&game.id);
     let console = (game.pc.is_none() && !game.console.is_empty()).then(|| game.console.clone());
-    game.emulator = console.as_deref().and_then(|c| catalog.offer(c, me));
-    game.emulators = console.as_deref().map(|c| catalog.offers(c, me)).unwrap_or_default();
+    let id = game.id;
+    game.emulator = console.as_deref().and_then(|c| catalog.offer(c, me)).map(|o| Catalog::for_game(o, catalog, id));
+    game.emulators = console.as_deref().map(|c| catalog.offers(c, me)).unwrap_or_default().into_iter().map(|o| Catalog::for_game(o, catalog, id)).collect();
 }
 
 /// Détails d'un jeu : ses propres fichiers, plus ceux de son runtime s'il en a un.
