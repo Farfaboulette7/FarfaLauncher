@@ -26,7 +26,7 @@ export interface InstallsState {
   /** Dernière erreur d'installation par jeu (effacée au prochain essai). */
   errors: Map<number, AppError>;
   reload: () => Promise<void>;
-  start: (romId: number, dest?: string, proton?: string | null, withEmulator?: boolean) => Promise<void>;
+  start: (romId: number, dest?: string, proton?: string | null, withEmulator?: boolean, emulator?: string | null) => Promise<void>;
   setInstalled: (game: InstalledGame) => void;
   remove: (romId: number) => void;
   /** Désinstallations et déplacements en cours. */
@@ -104,7 +104,7 @@ export function useInstalls(onAuthError: (e: unknown) => Promise<string>): Insta
   }, [reload, onAuthError]);
 
   const start = useCallback(
-    async (romId: number, dest?: string, proton?: string | null, withEmulator = false) => {
+    async (romId: number, dest?: string, proton?: string | null, withEmulator = false, emulator?: string | null) => {
       setErrors((m) => {
         const next = new Map(m);
         next.delete(romId);
@@ -112,7 +112,7 @@ export function useInstalls(onAuthError: (e: unknown) => Promise<string>): Insta
       });
       setProgress((p) => new Map(p).set(romId, { romId, phase: "prepare", done: 0, total: 0 }));
       try {
-        await backend.installGame(romId, dest, proton, withEmulator);
+        await backend.installGame(romId, dest, proton, withEmulator, emulator);
       } catch (e) {
         setProgress((p) => {
           const next = new Map(p);

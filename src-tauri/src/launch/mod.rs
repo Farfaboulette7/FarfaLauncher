@@ -12,6 +12,7 @@
 //!
 //! Les programmes démarrés pendant la partie sont relevés : voir [`direct`].
 
+pub mod before;
 pub mod direct;
 
 use std::path::{Path, PathBuf};

@@ -11,8 +11,10 @@ import {
   hasUpdate,
   isEmulatorInstall,
   formatSize,
+  EmulatorOffer,
   Game,
   isAvailable,
+  withEffectiveEmulator,
   PcKind,
   ProtonVersion,
   GameStopped,
@@ -46,8 +48,11 @@ interface Props {
 }
 
 
-export function InstallPanel({ game, target, installs, onError }: Props) {
-  const inst = installs.installed.get(game.id);
+export function InstallPanel({ game: base, target, installs, onError }: Props) {
+  const inst = installs.installed.get(base.id);
+  /** Émulateur choisi avant l'installation (`null` : le premier proposé). */
+  const [emulatorChoice, setEmulatorChoice] = useState<string | null>(null);
+  const game = withEffectiveEmulator(base, inst, emulatorChoice);
   const progress = installs.progress.get(game.id);
   const error = installs.errors.get(game.id);
   const [message, setMessage] = useState<string | null>(null);
@@ -261,6 +266,15 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
               </button>
             )}
             {last && <p className="n-hint">{sessionSummary(last)}</p>}
+            {installedWithEmulator && runningSince === undefined && !busy && !launching && (
+              <EmulatorPicker
+                game={base}
+                current={game.emulator}
+                target={target}
+                hint="Changer d'émulateur garde la ROM ; chaque émulateur a ses propres sauvegardes."
+                onPick={(e) => installs.start(game.id, undefined, null, true, e.id)}
+              />
+            )}
             {update && runningSince === undefined && !busy && !launching && (
               <button className="n-btn n-btn--block gd-update" onClick={() => installs.start(game.id, undefined, null, installedWithEmulator)}>
                 Mettre à jour ({inst.versionRaw ? inst.version : "?"} → {installedWithEmulator ? game.emulator?.version : game.serverVersion})
@@ -312,14 +326,18 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
               </div>
             )}
             {emulatorReady(game) && (
-              <button className="n-btn n-btn--block gd-launcher" onClick={() => installs.start(game.id, installDir ?? undefined, null, true)}>
+              <EmulatorPicker game={base} current={game.emulator} target={target} onPick={(e) => setEmulatorChoice(e.id)} />
+            )}
+            {emulatorReady(game) && (
+              <button className="n-btn n-btn--block gd-launcher" onClick={() => installs.start(game.id, installDir ?? undefined, null, true, game.emulator?.id)}>
                 Installer avec {game.emulator?.name} ({formatSize(emulatorDownloadSize(game, emulatorUpToDate))})
               </button>
             )}
           </>
         ) : emulatorReady(game) ? (
           <>
-            <button className="n-btn n-btn--primary n-btn--block" onClick={() => installs.start(game.id, installDir ?? undefined, null, true)}>
+            <EmulatorPicker game={base} current={game.emulator} target={target} onPick={(e) => setEmulatorChoice(e.id)} />
+            <button className="n-btn n-btn--primary n-btn--block" onClick={() => installs.start(game.id, installDir ?? undefined, null, true, game.emulator?.id)}>
               Installer
             </button>
             <p className="n-hint gd-install-dest" title={installDir ?? installs.installRoot ?? undefined}>
@@ -492,6 +510,50 @@ export function InstallPanel({ game, target, installs, onError }: Props) {
   );
 }
 
+/** Choix de l'émulateur quand la console en a plusieurs. */
+function EmulatorPicker({
+  game,
+  current,
+  target,
+  hint,
+  onPick,
+}: {
+  game: Game;
+  current: EmulatorOffer | null;
+  target: Target | null;
+  hint?: string;
+  onPick: (e: EmulatorOffer) => void;
+}) {
+  const all = game.emulators ?? [];
+  if (all.length < 2) return null;
+  return (
+    <div className="gd-emulators">
+      <p className="n-hint">Émulateur</p>
+      <div className="gd-emulators-list" role="radiogroup" aria-label="Émulateur">
+        {all.map((e) => {
+          const on = e.id === current?.id;
+          const usable = e.available && e.configMissing.length === 0;
+          return (
+            <button
+              key={e.id}
+              role="radio"
+              aria-checked={on}
+              className={`n-btn gd-emulator${on ? " is-on" : ""}`}
+              disabled={!usable}
+              title={usable ? `${e.name} ${e.version}` : `Pas de version pour ${target ? TARGET_LABELS[target] : "ce système"}`}
+              onClick={() => !on && onPick(e)}
+            >
+              {e.name}
+              {!usable && <span className="gd-emulator-off"> (indisponible)</span>}
+            </button>
+          );
+        })}
+      </div>
+      {hint && <p className="n-hint">{hint}</p>}
+    </div>
+  );
+}
+
 const PC_KIND_LABELS: Record<PcKind, string> = {
   portable: "jeu prêt à lancer",
   archive: "archive",
@@ -500,8 +562,9 @@ const PC_KIND_LABELS: Record<PcKind, string> = {
 };
 
 /** Détails de l'installation, affichés dans l'onglet « Informations ». */
-export function InstallFacts({ game, target, installs }: { game: Game; target: Target | null; installs: InstallsState }) {
-  const inst = installs.installed.get(game.id);
+export function InstallFacts({ game: base, target, installs }: { game: Game; target: Target | null; installs: InstallsState }) {
+  const inst = installs.installed.get(base.id);
+  const game = withEffectiveEmulator(base, inst);
   const runtimeInstalled = !!game.runtime && !!installs.installed.get(game.runtime.romId)?.executable;
   const withEmulator = isEmulatorInstall(inst) || (!inst && !game.recomp);
   const emulatorSystems = withEmulator ? (game.emulator?.systems ?? []) : [];

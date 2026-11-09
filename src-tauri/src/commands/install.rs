@@ -45,9 +45,18 @@ pub fn install_info(state: State<'_, AppState>) -> InstallInfo {
 /// `dest` : dossier où créer celui du jeu, pour cette installation seulement
 /// (`None` = dossier des jeux des paramètres). `proton` : version de Proton
 /// pour un jeu Windows sous Linux (`None` = la recommandée). `with_emulator` :
-/// installer avec l'émulateur de la console plutôt que la recomp.
+/// installer avec l'émulateur de la console plutôt que la recomp ; `emulator` : lequel (sinon
+/// celui déjà utilisé, ou le premier). Changer d'émulateur garde la ROM déjà téléchargée.
 #[tauri::command]
-pub fn install_game(app: AppHandle, state: State<'_, AppState>, rom_id: i64, dest: Option<String>, proton: Option<String>, with_emulator: Option<bool>) -> AppResult<()> {
+pub fn install_game(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    rom_id: i64,
+    dest: Option<String>,
+    proton: Option<String>,
+    with_emulator: Option<bool>,
+    emulator: Option<String>,
+) -> AppResult<()> {
     let install_root = match dest.map(PathBuf::from) {
         Some(d) if d.is_absolute() => d,
         Some(_) => return Err(AppError::Internal),
@@ -93,6 +102,7 @@ pub fn install_game(app: AppHandle, state: State<'_, AppState>, rom_id: i64, des
         catalog: state.catalog(),
         manager_base: crate::manager::base_url(&state.settings()),
         with_emulator,
+        emulator_id: emulator,
         runtime_lock: state.runtime_lock.clone(),
         on_progress: Arc::new(move |p| {
             let _ = emitter.emit("install-progress", p);

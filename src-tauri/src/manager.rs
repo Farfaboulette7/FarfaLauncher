@@ -180,6 +180,19 @@ pub struct EmulatorLaunch {
     pub env: Vec<(String, String)>,
     /// Fichiers vides à créer à côté de l'exécutable (mode portable).
     pub portable: Vec<String>,
+    /// Programmes lancés avant le jeu (ex. synchronisation de shaders).
+    pub before: Vec<BeforeLaunch>,
+}
+
+/// Programme lancé avant le jeu, relatif à l'exécutable de l'émulateur.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BeforeLaunch {
+    /// `windows` ou `linux` ; absent : tous les systèmes.
+    pub system: Option<String>,
+    pub program: String,
+    /// `{exedir}` : dossier de l'exécutable de l'émulateur.
+    pub args: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -295,9 +308,21 @@ impl Catalog {
     }
 
     pub fn offer(&self, console: &str, target: Target) -> Option<EmulatorOffer> {
-        let e = self.emulator_for_console(console, target)?;
+        Some(Self::offer_of(self.emulator_for_console(console, target)?, target))
+    }
+
+    /// Tous les émulateurs d'une console, dans l'ordre du catalogue (le premier est proposé d'abord).
+    pub fn offers(&self, console: &str, target: Target) -> Vec<EmulatorOffer> {
+        self.emulators.iter().filter(|e| e.consoles.iter().any(|c| c == console)).map(|e| Self::offer_of(e, target)).collect()
+    }
+
+    pub fn emulator(&self, id: &str) -> Option<&Emulator> {
+        self.emulators.iter().find(|e| e.id == id)
+    }
+
+    fn offer_of(e: &Emulator, target: Target) -> EmulatorOffer {
         let file = e.file_for(target);
-        Some(EmulatorOffer {
+        EmulatorOffer {
             id: e.id.clone(),
             name: e.name.clone(),
             version: e.version.nom.clone(),
@@ -308,7 +333,7 @@ impl Catalog {
             systems: e.files.iter().filter_map(|f| f.system.clone()).collect(),
             repo: e.repo.clone(),
             config_missing: e.config_missing.clone(),
-        })
+        }
     }
 
     pub fn recomp(&self, id: &str) -> Option<&CatalogRecomp> {

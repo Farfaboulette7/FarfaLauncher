@@ -244,7 +244,8 @@ impl InstallJob {
     /// Installe l'émulateur s'il manque ou n'est plus à jour, puis la ROM de ce jeu.
     pub(super) async fn install_with_emulator(&self, rom_id: i64) -> AppResult<InstallOutcome> {
         let game = library::fetch_game_details(&self.client, rom_id, self.target).await?;
-        let emulator = self.catalog.emulator_for_console(&game.console, self.target).cloned().ok_or(AppError::NotAvailable)?;
+        let previous = state::find(&self.config_dir, rom_id);
+        let emulator = self.pick_emulator(&game.console, previous.as_ref()).ok_or(AppError::NotAvailable)?;
         if game.rom_files.is_empty() {
             return Err(AppError::NotAvailable);
         }
@@ -256,7 +257,6 @@ impl InstallJob {
 
         // Dossier des jeux déduit de l'émulateur : il peut avoir été installé ailleurs.
         let root = installed.game_dir.parent().and_then(Path::parent).map(Path::to_path_buf).unwrap_or_else(|| self.install_root.clone());
-        let previous = state::find(&self.config_dir, rom_id);
         let rom_dir = previous
             .as_ref()
             .and_then(|p| p.shared.as_ref())
@@ -270,6 +270,12 @@ impl InstallJob {
         let mut last = Instant::now() - Duration::from_secs(1);
         for file in files {
             let dest = rom_dir.join(rom_rel(file));
+            // Même ROM déjà en place (changement d'émulateur) : ni retéléchargée, ni relue en entier.
+            if already_placed(previous.as_ref(), file, &dest) {
+                offset += file.size;
+                self.emit(rom_id, "download", offset, total);
+                continue;
+            }
             download::download(&self.client, file, &dest, &self.cancel, |got| {
                 if last.elapsed() >= Duration::from_millis(200) || got == file.size {
                     last = Instant::now();
@@ -332,6 +338,17 @@ impl InstallJob {
         tracing::info!("« {} » installé avec {} dans {}", st.name, emulator.name, rom_dir.display());
         let st = state::find(&self.config_dir, rom_id).ok_or(AppError::Internal)?;
         Ok(InstallOutcome::Installed { game: st })
+    }
+
+    /// Émulateur à utiliser : celui choisi, sinon celui du jeu déjà installé, sinon le premier de la console.
+    fn pick_emulator(&self, console: &str, previous: Option<&InstalledGame>) -> Option<Emulator> {
+        let of_console = |id: &str| self.catalog.emulator(id).filter(|e| e.consoles.iter().any(|c| c == console));
+        self.emulator_id
+            .as_deref()
+            .and_then(of_console)
+            .or_else(|| previous.and_then(|p| p.shared.as_ref()).filter(|s| s.is_emulator()).and_then(|s| of_console(&s.game)))
+            .or_else(|| self.catalog.emulator_for_console(console, self.target))
+            .cloned()
     }
 
     /// Émulateur installé et à jour. Sa progression s'affiche sur la page `page_id`.
@@ -450,6 +467,13 @@ impl InstallJob {
     fn manager_client(&self) -> AppResult<crate::romm::client::RommClient> {
         self.manager_base.as_deref().map(|b| self.client.with_base(b)).ok_or(AppError::NotAvailable)
     }
+}
+
+/// Fichier déjà téléchargé pour ce jeu : même empreinte, même taille sur le disque.
+fn already_placed(previous: Option<&InstalledGame>, file: &RemoteFile, dest: &Path) -> bool {
+    let Some(sha1) = file.sha1.as_deref() else { return false };
+    let known = previous.is_some_and(|p| p.rom_sources.iter().any(|s| s.sha1.as_deref() == Some(sha1) && s.size == file.size));
+    known && std::fs::metadata(dest).is_ok_and(|m| m.len() == file.size)
 }
 
 /// Retire la ROM d'un jeu. Ses sauvegardes restent à côté si elles sont conservées.

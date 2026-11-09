@@ -107,6 +107,13 @@
 .gd-actions .n-btn--primary { font-size: var(--fs-md); padding: 9px 24px; }
 .gd-actions .gd-launcher { font-size: var(--fs-xs); padding: 4px 12px; }
 .gd-actions .n-btn .n-spinner { background: currentColor; vertical-align: -1px; margin-right: 6px; }
+/* Choix de l'émulateur (console qui en a plusieurs). */
+.gd-emulators { margin-bottom: 10px; }
+.gd-emulators > .n-hint { margin: 0 0 4px; }
+.gd-emulators-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.gd-actions .gd-emulator { font-size: var(--fs-xs); padding: 4px 12px; }
+.gd-emulator.is-on { background: var(--nier-low); color: var(--nier-high); }
+.gd-emulator-off { opacity: 0.7; }
 /* Hauteur fixe : les boutons qui apparaissent ou disparaissent (installation,
    jeu lancé, mise à jour…) ne doivent pas redimensionner la boîte au-dessus. */
 .gd-actions-body { height: clamp(210px, 32vh, 270px); overflow-y: auto; }

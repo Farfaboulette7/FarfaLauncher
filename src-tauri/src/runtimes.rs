@@ -290,7 +290,9 @@ pub async fn list_library(
 /// Ajoute à un jeu ce que le catalogue sait de lui : recomp et émulateur.
 pub fn annotate(game: &mut Game, catalog: &Catalog, recomps: &HashSet<i64>, me: Target) {
     game.recomp = game.recomp || game.runtime.is_some() || recomps.contains(&game.id);
-    game.emulator = if game.pc.is_some() || game.console.is_empty() { None } else { catalog.offer(&game.console, me) };
+    let console = (game.pc.is_none() && !game.console.is_empty()).then(|| game.console.clone());
+    game.emulator = console.as_deref().and_then(|c| catalog.offer(c, me));
+    game.emulators = console.as_deref().map(|c| catalog.offers(c, me)).unwrap_or_default();
 }
 
 /// Détails d'un jeu : ses propres fichiers, plus ceux de son runtime s'il en a un.

@@ -60,6 +60,8 @@ pub struct InstallJob {
     pub manager_base: Option<String>,
     /// Installer ce jeu avec l'émulateur de sa console plutôt que sa recomp.
     pub with_emulator: bool,
+    /// Émulateur choisi parmi ceux de la console (`None` : celui déjà utilisé par le jeu, sinon le premier).
+    pub emulator_id: Option<String>,
     pub runtime_lock: Arc<tokio::sync::Mutex<()>>,
     pub on_progress: Arc<dyn Fn(Progress) + Send + Sync>,
 }
@@ -193,6 +195,7 @@ impl InstallJob {
             catalog: self.catalog.clone(),
             manager_base: self.manager_base.clone(),
             with_emulator: false,
+            emulator_id: None,
             runtime_lock: self.runtime_lock.clone(),
             on_progress: Arc::new(move |p| forward(Progress { rom_id: page_id, ..p })),
         };
@@ -902,6 +905,7 @@ mod tests {
             catalog: Catalog::default(),
             manager_base: None,
             with_emulator: false,
+            emulator_id: None,
             runtime_lock: Arc::new(tokio::sync::Mutex::new(())),
             on_progress: Arc::new(|_| {}),
         };
@@ -1049,6 +1053,7 @@ mod tests {
             catalog: catalog.clone(),
             manager_base: Some(var("FARFA_E2E_MANAGER")),
             with_emulator: false,
+            emulator_id: None,
             runtime_lock: Arc::new(tokio::sync::Mutex::new(())),
             on_progress: Arc::new(|_| {}),
         };
@@ -1123,6 +1128,7 @@ mod tests {
             catalog,
             manager_base: Some(var("FARFA_E2E_MANAGER")),
             with_emulator: true,
+            emulator_id: None,
             runtime_lock: Arc::new(tokio::sync::Mutex::new(())),
             on_progress: Arc::new(|_| {}),
         };
@@ -1200,6 +1206,7 @@ mod tests {
             catalog: catalog.clone(),
             manager_base: Some(var("FARFA_E2E_MANAGER")),
             with_emulator: true,
+            emulator_id: None,
             runtime_lock: Arc::new(tokio::sync::Mutex::new(())),
             on_progress: Arc::new(|_| {}),
         };
@@ -1266,6 +1273,7 @@ mod tests {
             catalog: catalog.clone(),
             manager_base: Some(var("FARFA_E2E_MANAGER")),
             with_emulator: true,
+            emulator_id: None,
             runtime_lock: Arc::new(tokio::sync::Mutex::new(())),
             on_progress: Arc::new(|_| {}),
         };
@@ -1334,6 +1342,7 @@ mod tests {
             catalog: catalog.clone(),
             manager_base: Some(var("FARFA_E2E_MANAGER")),
             with_emulator: true,
+            emulator_id: None,
             runtime_lock: Arc::new(tokio::sync::Mutex::new(())),
             on_progress: Arc::new(|_| {}),
         };
@@ -1387,6 +1396,7 @@ mod tests {
             catalog: catalog.clone(),
             manager_base: Some(var("FARFA_E2E_MANAGER")),
             with_emulator: false,
+            emulator_id: None,
             runtime_lock: Arc::new(tokio::sync::Mutex::new(())),
             on_progress: Arc::new(|_| {}),
         };
@@ -1428,6 +1438,7 @@ mod tests {
             catalog: catalog.clone(),
             manager_base: Some(var("FARFA_E2E_MANAGER")),
             with_emulator: false,
+            emulator_id: None,
             runtime_lock: Arc::new(tokio::sync::Mutex::new(())),
             on_progress: Arc::new(|_| {}),
         };
@@ -1475,6 +1486,7 @@ mod tests {
             catalog: catalog.clone(),
             manager_base: Some(var("FARFA_E2E_MANAGER")),
             with_emulator: true,
+            emulator_id: None,
             runtime_lock: Arc::new(tokio::sync::Mutex::new(())),
             on_progress: Arc::new(|_| {}),
         };

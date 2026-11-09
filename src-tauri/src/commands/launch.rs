@@ -148,6 +148,12 @@ pub async fn play_game(
         if !rules.is_empty() {
             env.extend(crate::language::prepare(&st.game_dir, &exe_dir, &rules));
         }
+        // Programmes de l'émulateur à lancer d'abord (ex. shaders partagés de lichii-sync).
+        let before = state.catalog().emulator_for_install(&st).map(|e| launch::before::applicable(&e.launch.before)).unwrap_or_default();
+        if !before.is_empty() {
+            let dir = exe_dir.clone();
+            let _ = tauri::async_runtime::spawn_blocking(move || launch::before::run_all(&before, &dir)).await;
+        }
         // Manette de chaque joueur, posée avant que le jeu ne prenne les manettes.
         if let Some(format) = state.catalog().controllers_for_install(&st) {
             if let Err(e) = crate::controllers::apply(&format, &st.players, &gamepad::connected(), &exe_dir) {

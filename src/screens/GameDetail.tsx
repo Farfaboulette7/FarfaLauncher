@@ -224,6 +224,8 @@ function noteLines(md: string): { kind: "title" | "item" | "text"; text: string 
       .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
       .replace(/<[^>]+>/g, "")
       .replace(/(\*\*|__|`)/g, "")
+      // Émojis : le moteur web de l'AppImage se fige en les dessinant sous Linux.
+      .replace(/[\p{Extended_Pictographic}\u{1F3FB}-\u{1F3FF}\u{FE0F}\u{200D}\u{20E3}]/gu, "")
       .trim();
   return md
     .split(/\r?\n/)

@@ -261,6 +261,8 @@ export interface Game {
   /** Ce jeu a une recomp. */
   recomp: boolean;
   emulator: EmulatorOffer | null;
+  /** Tous les émulateurs de sa console, au choix (dans l'ordre où ils sont proposés). */
+  emulators: EmulatorOffer[];
   versionFile: RemoteFile | null;
   serverVersion: string | null;
   /** Contenu complet de VERSION.txt (comparé pour les mises à jour). */
@@ -493,8 +495,8 @@ export const backend = {
   favoriteSet: (romId: number, favorite: boolean) => invoke<number[]>("favorite_set", { romId, favorite }),
   installInfo: () => invoke<InstallInfo>("install_info"),
   /** `dest` : dossier où créer celui du jeu (sinon le dossier des jeux des paramètres). */
-  installGame: (romId: number, dest?: string, proton?: string | null, withEmulator = false) =>
-    invoke<void>("install_game", { romId, dest: dest ?? null, proton: proton ?? null, withEmulator }),
+  installGame: (romId: number, dest?: string, proton?: string | null, withEmulator = false, emulator?: string | null) =>
+    invoke<void>("install_game", { romId, dest: dest ?? null, proton: proton ?? null, withEmulator, emulator: emulator ?? null }),
   cancelInstall: (romId: number) => invoke<void>("cancel_install", { romId }),
   executableCandidates: (romId: number) => invoke<string[]>("executable_candidates", { romId }),
   chooseExecutable: (romId: number, executable: string) => invoke<InstalledGame>("choose_executable", { romId, executable }),
@@ -577,10 +579,26 @@ export function isEmulatorInstall(inst: InstalledGame | undefined): boolean {
   return inst?.shared?.kind === "emulator";
 }
 
+/**
+ * Émulateur de ce jeu : celui avec lequel il est installé, sinon celui choisi sur sa page,
+ * sinon le premier proposé pour sa console.
+ */
+export function effectiveEmulator(game: Game, inst: InstalledGame | undefined, chosen?: string | null): EmulatorOffer | null {
+  const all = game.emulators ?? [];
+  if (isEmulatorInstall(inst)) return all.find((e) => e.runtimeRomId === inst!.shared!.runtimeRomId) ?? game.emulator;
+  return all.find((e) => e.id === chosen) ?? game.emulator;
+}
+
+/** Le jeu, avec l'émulateur effectif à la place de celui proposé par défaut. */
+export function withEffectiveEmulator(game: Game, inst: InstalledGame | undefined, chosen?: string | null): Game {
+  const emulator = effectiveEmulator(game, inst, chosen);
+  return emulator === game.emulator ? game : { ...game, emulator };
+}
+
 export function hasUpdate(game: Game, inst: InstalledGame | undefined): boolean {
   if (!inst?.executable) return false;
   // Installé avec l'émulateur : c'est lui qui est suivi, pas la recomp du jeu.
-  const remote = isEmulatorInstall(inst) ? game.emulator?.versionKey : game.serverVersionRaw;
+  const remote = isEmulatorInstall(inst) ? effectiveEmulator(game, inst)?.versionKey : game.serverVersionRaw;
   return !!remote && remote !== inst.versionRaw;
 }
 

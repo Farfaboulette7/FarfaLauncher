@@ -235,6 +235,9 @@ pub struct Game {
     /// Émulateur disponible pour sa console.
     #[serde(default)]
     pub emulator: Option<crate::manager::EmulatorOffer>,
+    /// Tous les émulateurs de sa console, au choix (le premier est `emulator` quand il a une build).
+    #[serde(default)]
+    pub emulators: Vec<crate::manager::EmulatorOffer>,
     pub version_file: Option<RemoteFile>,
     /// Contenu de VERSION.txt côté serveur.
     pub server_version: Option<String>,
@@ -436,6 +439,7 @@ impl Game {
             console: String::new(),
             recomp: true,
             emulator: None,
+            emulators: Vec::new(),
             version_file: None,
             server_version: None,
             server_version_raw: None,
@@ -739,6 +743,7 @@ fn to_game(r: RawRom, base: &str, me: Target, details_loaded: bool) -> Game {
         console,
         recomp: portage,
         emulator: None,
+        emulators: Vec::new(),
         version_file,
         server_version: None,
         server_version_raw: None,
