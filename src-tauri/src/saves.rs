@@ -771,6 +771,10 @@ mod tests {
         let game = tmp();
         fs::create_dir_all(game.join("port/user/card-a")).unwrap();
         fs::write(game.join("port/old.sav"), b"old").unwrap();
+        // Écrit bien avant la partie (sinon il compte comme récent sur une machine rapide).
+        let old = fs::File::options().write(true).open(game.join("port/old.sav")).unwrap();
+        old.set_modified(SystemTime::now() - std::time::Duration::from_secs(60)).unwrap();
+        drop(old);
         let since = SystemTime::now() + std::time::Duration::from_secs(5);
         // Rien d'écrit depuis le début de la partie.
         assert_eq!(detect_by_activity(&game, &[], "Zzz Jeu Test", since), None);
