@@ -143,7 +143,10 @@ pub async fn play_game(
     let mut env: Vec<(String, String)> = direct.map(|d| d.env.clone()).unwrap_or_default();
     if prepared.is_none() {
         let program = st.game_dir.join(rel_to_path(direct.map(|d| d.exe.as_str()).unwrap_or(&exe)));
-        let exe_dir = program.parent().unwrap_or(&st.game_dir).to_path_buf();
+        let exe_dir = match state.catalog().emulator_for_install(&st) {
+            Some(e) => e.data_dir(&st.game_dir, direct.map(|d| d.exe.as_str()).unwrap_or(&exe)),
+            None => program.parent().unwrap_or(&st.game_dir).to_path_buf(),
+        };
         let rules = state.catalog().language_for_install(&st);
         if !rules.is_empty() {
             env.extend(crate::language::prepare(&st.game_dir, &exe_dir, &rules));

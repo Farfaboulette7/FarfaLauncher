@@ -782,7 +782,7 @@ pub(crate) fn make_executable(path: &Path) {
 #[cfg(not(unix))]
 pub(crate) fn make_executable(_path: &Path) {}
 
-fn remove_quarantine(game_dir: &Path) {
+pub(crate) fn remove_quarantine(game_dir: &Path) {
     if cfg!(target_os = "macos") {
         match std::process::Command::new("xattr").args(["-dr", "com.apple.quarantine"]).arg(game_dir).status() {
             Ok(s) if s.success() => tracing::info!("attribut de quarantaine retiré"),

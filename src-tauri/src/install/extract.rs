@@ -69,15 +69,78 @@ pub fn extract(
     }
     fs::create_dir_all(staging).map_err(|e| disk_error("création du dossier temporaire", e))?;
     match kind {
-        ArchiveKind::Zip => extract_zip(archive, staging, cancel, &mut progress),
-        ArchiveKind::TarGz => extract_tar_gz(archive, staging, cancel, &mut progress),
+        ArchiveKind::Zip => extract_zip(archive, staging, cancel, &mut progress)?,
+        ArchiveKind::TarGz => extract_tar_gz(archive, staging, cancel, &mut progress)?,
         ArchiveKind::AppImage => {
             let name = archive.file_name().ok_or(AppError::Extract)?;
             fs::copy(archive, staging.join(name)).map_err(|e| disk_error("copie de l'AppImage", e))?;
             progress(1, 1);
-            Ok(())
         }
     }
+    if cfg!(target_os = "macos") {
+        unpack_disk_images(staging)?;
+    }
+    Ok(())
+}
+
+/// Images disque macOS (`.dmg`) livrées dans l'archive : montées en lecture seule, leurs
+/// applications copiées à côté (liens et attributs gardés), puis démontées et supprimées.
+fn unpack_disk_images(dir: &Path) -> AppResult<()> {
+    let dmgs: Vec<PathBuf> = walk_files(dir, 2).into_iter().filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("dmg"))).collect();
+    for dmg in dmgs {
+        let dest = dmg.parent().unwrap_or(dir).to_path_buf();
+        let mount = dir.join(format!(".montage-{}", std::process::id()));
+        let _ = fs::create_dir_all(&mount);
+        let mut attach = std::process::Command::new("hdiutil");
+        attach.args(["attach", "-nobrowse", "-readonly", "-noautoopen", "-mountpoint"]).arg(&mount).arg(&dmg);
+        // Licence à accepter dans certaines images : réponse « Y ».
+        attach.stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::null());
+        let mut child = attach.spawn().map_err(|e| log_err(AppError::Extract, "hdiutil attach", e))?;
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = io::Write::write_all(&mut stdin, b"Y\n");
+        }
+        let ok = child.wait().map(|s| s.success()).unwrap_or(false);
+        if !ok {
+            let _ = fs::remove_dir(&mount);
+            tracing::error!("image disque illisible : {}", dmg.display());
+            return Err(AppError::Extract);
+        }
+        let mut copied = 0;
+        for entry in fs::read_dir(&mount).map_err(|e| disk_error("lecture de l'image disque", e))?.filter_map(Result::ok) {
+            let name = entry.file_name();
+            if !name.to_string_lossy().to_lowercase().ends_with(".app") {
+                continue;
+            }
+            let status = std::process::Command::new("ditto").arg(entry.path()).arg(dest.join(&name)).status();
+            if status.map(|s| s.success()).unwrap_or(false) {
+                copied += 1;
+            }
+        }
+        let _ = std::process::Command::new("hdiutil").args(["detach", "-force"]).arg(&mount).stdout(std::process::Stdio::null()).status();
+        let _ = fs::remove_dir(&mount);
+        if copied == 0 {
+            tracing::error!("aucune application dans {}", dmg.display());
+            return Err(AppError::Extract);
+        }
+        tracing::info!("{} : {copied} application(s) copiée(s)", dmg.display());
+        fs::remove_file(&dmg).map_err(|e| disk_error("suppression de l'image disque", e))?;
+    }
+    Ok(())
+}
+
+/// Fichiers jusqu'à `depth` niveaux sous `dir` (sans descendre dans les .app).
+fn walk_files(dir: &Path, depth: usize) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let Ok(rd) = fs::read_dir(dir) else { return out };
+    for e in rd.filter_map(Result::ok) {
+        let p = e.path();
+        match e.file_type() {
+            Ok(t) if t.is_file() => out.push(p),
+            Ok(t) if t.is_dir() && depth > 0 && !p.extension().is_some_and(|x| x.eq_ignore_ascii_case("app")) => out.extend(walk_files(&p, depth - 1)),
+            _ => {}
+        }
+    }
+    out
 }
 
 /// Ouvre un zip qui commence au début du fichier (cas de toutes nos archives).

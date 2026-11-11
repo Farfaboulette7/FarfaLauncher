@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [windows-latest, ubuntu-22.04, macos-14]
+        platform: [windows-latest, ubuntu-22.04, macos-latest]
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
@@ -44,7 +44,7 @@ jobs:
   # Application Mac (Apple Silicon) construite à chaque push : téléchargeable dans
   # les artefacts du run, pour la faire essayer avant une publication.
   mac-app:
-    runs-on: macos-14
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 

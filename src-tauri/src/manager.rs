@@ -219,6 +219,11 @@ pub struct EmulatorLaunch {
     pub before: Vec<BeforeLaunch>,
     /// Chemins effacés avant chaque partie, relatifs à l'exécutable (cache à refaire…).
     pub clean: Vec<String>,
+    /// Sur Mac, dossier des données de l'émulateur relatif à son bundle `.app`
+    /// (`Contents/MacOS` pour DuckStation) : `{exedir}`, le mode portable, la configuration
+    /// et les sauvegardes s'y rapportent au lieu du dossier qui contient le `.app`.
+    #[serde(rename = "macData")]
+    pub mac_data: Option<String>,
 }
 
 /// Programme lancé avant le jeu, relatif à l'exécutable de l'émulateur.
@@ -336,6 +341,18 @@ pub fn runtime_id(emulator_id: &str) -> i64 {
 }
 
 impl Emulator {
+    /// Dossier de référence de l'émulateur (`{exedir}`) : celui de l'exécutable, ou sur Mac
+    /// celui que désigne `macData` dans le bundle.
+    pub fn data_dir(&self, game_dir: &std::path::Path, exe: &str) -> std::path::PathBuf {
+        let program = game_dir.join(crate::install::rel_to_path(exe));
+        if cfg!(target_os = "macos") && exe.to_ascii_lowercase().ends_with(".app") {
+            if let Some(rel) = self.launch.mac_data.as_deref().filter(|r| !r.is_empty() && !r.split('/').any(|p| p == "..")) {
+                return program.join(crate::install::rel_to_path(rel));
+            }
+        }
+        program.parent().map(std::path::Path::to_path_buf).unwrap_or_else(|| game_dir.to_path_buf())
+    }
+
     /// Build pour ce système, par ordre de préférence.
     pub fn file_for(&self, target: Target) -> Option<&ManagerFile> {
         target.candidates().iter().find_map(|t| self.files.iter().find(|f| f.system.as_deref() == Some(t.suffix())))

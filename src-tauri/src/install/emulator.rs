@@ -288,8 +288,8 @@ fn expand_disc(text: &str, id: Option<&str>) -> Option<String> {
 
 /// Dossier des sauvegardes d'un jeu : à côté de la ROM, relatif à l'exécutable, ou dans
 /// les dossiers de l'utilisateur (`{appdata}/…`).
-fn saves_dir(dir: Option<&str>, rom_dir: &Path, game_dir: &Path, exe: &str, disc: Option<&str>) -> Option<PathBuf> {
-    let exe_dir = game_dir.join(rel_to_path(exe)).parent().map(Path::to_path_buf).unwrap_or_else(|| game_dir.to_path_buf());
+fn saves_dir(dir: Option<&str>, rom_dir: &Path, exe_dir: &Path, disc: Option<&str>) -> Option<PathBuf> {
+    let exe_dir = exe_dir.to_path_buf();
     match expand_disc(dir?, disc)?.as_str() {
         "{romdir}" => Some(rom_dir.to_path_buf()),
         dir if dir.starts_with('{') => crate::language::expand(dir, &exe_dir),
@@ -390,7 +390,7 @@ impl InstallJob {
                 cache_dir: None,
                 kind: Some(KIND_EMULATOR.to_string()),
                 rom_dir: Some(rom_dir.clone()),
-                saves_dir: saves_dir(save_dir, &rom_dir, &installed.game_dir, &exe, disc.as_deref()),
+                saves_dir: saves_dir(save_dir, &rom_dir, &emulator.data_dir(&installed.game_dir, &exe), disc.as_deref()),
                 save_patterns: save_patterns.iter().filter_map(|p| expand_disc(&expand(p, &rom_path, &rom_dir, rom_stem), disc.as_deref())).collect(),
             }),
         };
@@ -470,7 +470,8 @@ impl InstallJob {
         let exe = runtimes::pick_exe(&candidates, hint, Some(&emulator.version.nom)).or_else(|| candidates.first().cloned()).ok_or(AppError::NoExecutable)?;
         let exe_rel = rel_to_path(&exe);
         make_executable(&game_dir.join(&exe_rel));
-        let exe_dir = game_dir.join(&exe_rel).parent().map(Path::to_path_buf).unwrap_or_else(|| game_dir.clone());
+        super::remove_quarantine(&game_dir);
+        let exe_dir = emulator.data_dir(&game_dir, &exe);
         for rel in &emulator.launch.portable {
             let marker = exe_dir.join(rel_to_path(rel));
             if !marker.exists() {
@@ -513,7 +514,7 @@ impl InstallJob {
     /// « si-absent » n'est posée que si son chemin témoin manque.
     async fn apply_packs(&self, rom_id: i64, emulator: &Emulator, st: &InstalledGame) -> AppResult<()> {
         let exe = st.executable.as_deref().ok_or(AppError::NoExecutable)?;
-        let exe_dir = st.game_dir.join(rel_to_path(exe)).parent().map(Path::to_path_buf).unwrap_or_else(|| st.game_dir.clone());
+        let exe_dir = emulator.data_dir(&st.game_dir, exe);
         let internal = st.game_dir.join(INTERNAL_DIR);
         let markers = internal.join("packs");
         for pack in emulator.packs_for(rom_id) {
@@ -572,7 +573,7 @@ impl InstallJob {
             return Ok(());
         }
         let exe = st.executable.as_deref().ok_or(AppError::NoExecutable)?;
-        let exe_dir = st.game_dir.join(rel_to_path(exe)).parent().map(Path::to_path_buf).unwrap_or_else(|| st.game_dir.clone());
+        let exe_dir = emulator.data_dir(&st.game_dir, exe);
         let client = self.manager_client()?;
         for file in &emulator.config {
             let dest = exe_dir.join(rel_to_path(file.dest.as_deref().unwrap_or(&file.name)));

@@ -72,7 +72,7 @@ jobs:
             args: ""
           - platform: ubuntu-22.04
             args: ""
-          - platform: macos-14
+          - platform: macos-latest
             args: "--target aarch64-apple-darwin"
     runs-on: ${{ matrix.platform }}
     steps:
@@ -85,7 +85,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-14' && 'aarch64-apple-darwin' || '' }}
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || '' }}
 
       - uses: Swatinem/rust-cache@v2
         with:

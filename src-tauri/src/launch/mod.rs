@@ -108,11 +108,13 @@ pub fn spawn(game_dir: &Path, launch: Launch<'_>) -> AppResult<RunningGame> {
     if !exe.exists() {
         return Err(AppError::NoExecutable);
     }
-    // `open` ne transmet ni arguments ni variables : programme du bundle lancé directement.
-    let exe = if launch.args.is_empty() && launch.env.is_empty() { exe } else { app_binary(&exe).unwrap_or(exe) };
+    // Bundle macOS : son programme est lancé directement (arguments, variables, arrêt et
+    // pause comme ailleurs), depuis le dossier qui contient le .app (fichiers du jeu à côté).
+    let bundle_dir = app_binary(&exe).is_some().then(|| exe.parent().unwrap_or(game_dir).to_path_buf());
+    let exe = app_binary(&exe).unwrap_or(exe);
     let work_dir = match &launch.cwd {
         Some(rel) if game_dir.join(rel).is_dir() => game_dir.join(rel),
-        _ => exe.parent().unwrap_or(game_dir).to_path_buf(),
+        _ => bundle_dir.unwrap_or_else(|| exe.parent().unwrap_or(game_dir).to_path_buf()),
     };
     let args = direct::expand_args(launch.args, game_dir);
     let mut cmd = match launch.runner {
@@ -159,21 +161,48 @@ pub fn spawn(game_dir: &Path, launch: Launch<'_>) -> AppResult<RunningGame> {
     Ok(RunningGame { child, started: Instant::now(), run_log, watcher, stop: Arc::default(), paused: Arc::default() })
 }
 
-/// Programme à l'intérieur d'un bundle macOS.
-fn app_binary(exe: &Path) -> Option<PathBuf> {
+/// Programme à l'intérieur d'un bundle macOS : celui que nomme `CFBundleExecutable`
+/// dans son Info.plist (le dossier MacOS contient aussi des bibliothèques et des aides).
+pub fn app_binary(exe: &Path) -> Option<PathBuf> {
     if !cfg!(target_os = "macos") || !exe.to_string_lossy().to_lowercase().ends_with(".app") {
         return None;
     }
     let macos = exe.join("Contents").join("MacOS");
-    std::fs::read_dir(macos).ok()?.filter_map(Result::ok).map(|e| e.path()).find(|p| p.is_file())
+    let plist = exe.join("Contents").join("Info.plist");
+    let named = std::fs::read_to_string(&plist)
+        .ok()
+        .and_then(|t| plist_string(&t, "CFBundleExecutable"))
+        .or_else(|| {
+            // Info.plist binaire : plutil le lit.
+            let out = Command::new("plutil").args(["-extract", "CFBundleExecutable", "raw", "-o", "-"]).arg(&plist).output().ok()?;
+            out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        })
+        .map(|name| macos.join(name))
+        .filter(|p| p.is_file());
+    named.or_else(|| {
+        let stem = exe.file_stem()?.to_string_lossy().to_lowercase();
+        let files: Vec<PathBuf> = std::fs::read_dir(&macos).ok()?.filter_map(Result::ok).map(|e| e.path()).filter(|p| p.is_file()).collect();
+        let is_lib = |p: &PathBuf| p.extension().is_some_and(|e| e == "dylib" || e == "so");
+        files.iter().find(|p| p.file_name().is_some_and(|n| n.to_string_lossy().to_lowercase() == stem)).or_else(|| files.iter().find(|p| !is_lib(p))).cloned()
+    })
+}
+
+/// Valeur texte d'une clé dans un Info.plist au format XML.
+fn plist_string(text: &str, key: &str) -> Option<String> {
+    let after = &text[text.find(&format!("<key>{key}</key>"))? + key.len() + 11..];
+    let start = after.find("<string>")? + 8;
+    let end = after[start..].find("</string>")?;
+    // Rien d'autre qu'un blanc entre la clé et sa valeur.
+    after[..start - 8].trim().is_empty().then(|| after[start..start + end].trim().to_string())
 }
 
 fn build_command(exe: &Path) -> Command {
     let lower = exe.to_string_lossy().to_lowercase();
     if cfg!(target_os = "macos") && lower.ends_with(".app") {
+        // Bundle dont le programme est introuvable : macOS le lance lui-même.
         let mut c = Command::new("open");
-        // -W : attendre la fermeture ; -n : nouvelle instance.
-        c.arg("-W").arg("-n").arg(exe);
+        // -W : attendre la fermeture ; -n : nouvelle instance ; --args : la suite va au programme.
+        c.arg("-W").arg("-n").arg(exe).arg("--args");
         return c;
     }
     if cfg!(unix) && lower.ends_with(".sh") {
@@ -638,5 +667,21 @@ mod tests {
         assert_eq!(var.1, format!("{}\\x", direct::GAME_DIR_VAR));
         assert!(learned.env.iter().all(|(k, _)| k != "PATH"), "{:?}", learned.env);
         let _ = std::fs::remove_dir_all(&game_dir);
+    }
+}
+
+#[cfg(test)]
+mod plist_tests {
+    #[test]
+    fn reads_bundle_executable() {
+        let t = "<plist><dict>
+	<key>CFBundleName</key>
+	<string>Melee</string>
+	<key>CFBundleExecutable</key>
+	<string>melee</string>
+</dict></plist>";
+        assert_eq!(super::plist_string(t, "CFBundleExecutable").as_deref(), Some("melee"));
+        assert_eq!(super::plist_string(t, "CFBundleName").as_deref(), Some("Melee"));
+        assert_eq!(super::plist_string(t, "CFBundleIconFile"), None);
     }
 }
