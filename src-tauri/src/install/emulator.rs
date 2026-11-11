@@ -119,13 +119,15 @@ pub fn refreshed_launch(emulator: &Emulator, st: &InstalledGame) -> Option<Direc
     Some(DirectLaunch { exe: old.exe.clone(), args, cwd: old.cwd.clone(), env })
 }
 
-/// Identifiant d'un disque : GameCube ou Wii (`GZ2P01`, dans son en-tête) ou PSP
-/// (`ULES00151`, dans `UMD_DATA.BIN`, aussi au format CHD).
+/// Identifiant d'un disque : GameCube ou Wii (`GZ2P01`, dans son en-tête), PSP
+/// (`ULES00151`, dans `UMD_DATA.BIN`) ou PS2 (`SLES-50330`, dans `SYSTEM.CNF`),
+/// aussi au format CHD.
 pub fn disc_id(path: &Path) -> Option<String> {
     use std::io::{Read, Seek, SeekFrom};
     let ext = path.extension()?.to_string_lossy().to_ascii_lowercase();
     if ext == "chd" {
-        return psp_id(&mut ChdSectors::open(path)?);
+        let mut disc = ChdSectors::open(path)?;
+        return psp_id(&mut disc).or_else(|| ps2_id(&mut disc));
     }
     // RVZ / WIA : copie de l'en-tête du disque à 0x58 ; CISO : 0x8000 ; WBFS : 0x200.
     let offset = match ext.as_str() {
@@ -142,7 +144,11 @@ pub fn disc_id(path: &Path) -> Option<String> {
     if id.iter().all(u8::is_ascii_alphanumeric) {
         return Some(String::from_utf8_lossy(&id).into_owned());
     }
-    (ext == "iso").then(|| psp_id(&mut IsoSectors(file))).flatten()
+    if ext != "iso" {
+        return None;
+    }
+    let mut disc = IsoSectors(file);
+    psp_id(&mut disc).or_else(|| ps2_id(&mut disc))
 }
 
 const SECTOR: usize = 2048;
@@ -164,35 +170,55 @@ impl Sectors for IsoSectors {
     }
 }
 
-/// CHD de DVD (`chdman createdvd`) : des blocs de secteurs de 2048 octets.
+/// Image CHD : de DVD (`chdman createdvd`, blocs de secteurs de 2048 octets) ou de
+/// CD (`createcd`, trames de 2352 octets suivies de 96 octets de sous-code).
 struct ChdSectors {
     chd: chd::Chd<std::io::BufReader<std::fs::File>>,
     hunk_size: u64,
+    /// Taille d'une trame dans un bloc : 2048 (DVD) ou 2448 (CD).
+    frame: u64,
     compressed: Vec<u8>,
 }
+
+/// Trame de CD avec sous-code, telle que la range un CHD de CD.
+const CD_FRAME: u64 = 2448;
 
 impl ChdSectors {
     fn open(path: &Path) -> Option<Self> {
         let file = std::io::BufReader::new(std::fs::File::open(path).ok()?);
         let chd = chd::Chd::open(file, None).ok()?;
         let hunk_size = u64::from(chd.header().hunk_size());
-        (hunk_size >= SECTOR as u64 && hunk_size % SECTOR as u64 == 0).then_some(Self { chd, hunk_size, compressed: Vec::new() })
+        let frame = if hunk_size % CD_FRAME == 0 {
+            CD_FRAME
+        } else if hunk_size >= SECTOR as u64 && hunk_size % SECTOR as u64 == 0 {
+            SECTOR as u64
+        } else {
+            return None;
+        };
+        Some(Self { chd, hunk_size, frame, compressed: Vec::new() })
     }
 }
 
 impl Sectors for ChdSectors {
     fn sector(&mut self, lba: u64) -> Option<Vec<u8>> {
-        let offset = lba * SECTOR as u64;
+        let offset = lba * self.frame;
         let mut out = self.chd.get_hunksized_buffer();
         let mut hunk = self.chd.hunk(u32::try_from(offset / self.hunk_size).ok()?).ok()?;
         hunk.read_hunk_in(&mut self.compressed, &mut out).ok()?;
-        let start = (offset % self.hunk_size) as usize;
+        let mut start = (offset % self.hunk_size) as usize;
+        // Trame brute (piste MODE1_RAW, MODE2_RAW : motif de synchronisation en tête) : données
+        // après l'en-tête, 16 octets en mode 1, 24 en mode 2 (forme 1). Piste MODE1 « cuite » :
+        // les 2048 octets de données d'emblée.
+        const SYNC: [u8; 12] = [0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0];
+        if self.frame == CD_FRAME && out.get(start..start + 12) == Some(&SYNC[..]) {
+            start += if out.get(start + 15) == Some(&2) { 24 } else { 16 };
+        }
         out.get(start..start + SECTOR).map(<[u8]>::to_vec)
     }
 }
 
-/// `UMD_DATA.BIN` à la racine du disque PSP (ISO 9660) : « ULES-00151|… ».
-fn psp_id(disc: &mut dyn Sectors) -> Option<String> {
+/// Fichier à la racine d'un disque ISO 9660 : premier secteur et taille.
+fn root_file(disc: &mut dyn Sectors, wanted: &[u8]) -> Option<(u64, u32)> {
     let pvd = disc.sector(16)?;
     if &pvd[1..6] != b"CD001" {
         return None;
@@ -206,15 +232,39 @@ fn psp_id(disc: &mut dyn Sectors) -> Option<String> {
             let len = dir[pos] as usize;
             let name_len = dir[pos + 32] as usize;
             let name = dir.get(pos + 33..pos + 33 + name_len)?;
-            if name.eq_ignore_ascii_case(b"UMD_DATA.BIN;1") || name.eq_ignore_ascii_case(b"UMD_DATA.BIN") {
-                let data = disc.sector(u64::from(u32::from_le_bytes(dir[pos + 2..pos + 6].try_into().ok()?)))?;
-                let text = String::from_utf8_lossy(&data[..data.iter().position(|&b| b == b'|').unwrap_or(16).min(16)]).replace('-', "");
-                return (text.len() == 9 && text.bytes().all(|b| b.is_ascii_alphanumeric())).then_some(text);
+            let bare = name.strip_suffix(b";1").unwrap_or(name);
+            if bare.eq_ignore_ascii_case(wanted) {
+                let at = u64::from(u32::from_le_bytes(dir[pos + 2..pos + 6].try_into().ok()?));
+                return Some((at, u32::from_le_bytes(dir[pos + 10..pos + 14].try_into().ok()?)));
             }
             pos += len.max(1);
         }
     }
     None
+}
+
+/// `UMD_DATA.BIN` à la racine du disque PSP (ISO 9660) : « ULES-00151|… ».
+fn psp_id(disc: &mut dyn Sectors) -> Option<String> {
+    let (at, _) = root_file(disc, b"UMD_DATA.BIN")?;
+    let data = disc.sector(at)?;
+    let text = String::from_utf8_lossy(&data[..data.iter().position(|&b| b == b'|').unwrap_or(16).min(16)]).replace('-', "");
+    (text.len() == 9 && text.bytes().all(|b| b.is_ascii_alphanumeric())).then_some(text)
+}
+
+/// `SYSTEM.CNF` d'un disque PS2 : « BOOT2 = cdrom0:\SLES_503.30;1 » → `SLES-50330`,
+/// l'identifiant que PCSX2 donne au jeu (et que portent ses sauvegardes).
+fn ps2_id(disc: &mut dyn Sectors) -> Option<String> {
+    let (at, _) = root_file(disc, b"SYSTEM.CNF")?;
+    ps2_serial(&String::from_utf8_lossy(&disc.sector(at)?))
+}
+
+fn ps2_serial(cnf: &str) -> Option<String> {
+    let line = cnf.lines().find(|l| l.trim_start().to_ascii_uppercase().starts_with("BOOT2"))?;
+    let file = line.rsplit(['\\', ':']).next()?.split(';').next()?.trim();
+    let (prefix, number) = file.split_once('_')?;
+    let number: String = number.chars().filter(char::is_ascii_digit).collect();
+    (prefix.len() == 4 && prefix.bytes().all(|b| b.is_ascii_alphabetic()) && !number.is_empty())
+        .then(|| format!("{}-{number}", prefix.to_ascii_uppercase()))
 }
 
 /// Variables d'un disque : `{discid}` (identifiant entier), `{gameid}` (4 caractères),
@@ -723,6 +773,24 @@ mod psp_tests {
         let id = super::disc_id(&path);
         println!("{} → {id:?}", path.display());
         assert!(id.is_some_and(|i| i.len() == 9));
+    }
+
+    /// `FARFA_E2E_PS2=<jeu .chd>;<autre .chd>… cargo test -- --ignored ps2_chd_ids --nocapture`.
+    #[test]
+    #[ignore]
+    fn ps2_chd_ids() {
+        for p in std::env::var("FARFA_E2E_PS2").unwrap().split(';') {
+            let id = super::disc_id(std::path::Path::new(p));
+            println!("{p} → {id:?}");
+            assert!(id.is_some_and(|i| i.len() >= 9 && i.as_bytes()[4] == b'-'));
+        }
+    }
+
+    #[test]
+    fn ps2_serials() {
+        assert_eq!(super::ps2_serial("BOOT2 = cdrom0:\\SLES_503.30;1\r\nVER = 1.00\r\n").as_deref(), Some("SLES-50330"));
+        assert_eq!(super::ps2_serial("boot2=cdrom0:\\SCUS_971.13;1").as_deref(), Some("SCUS-97113"));
+        assert_eq!(super::ps2_serial("BOOT = cdrom:\\SLUS_012.34;1"), None);
     }
 
     #[test]

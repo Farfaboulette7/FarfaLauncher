@@ -25,7 +25,7 @@ pub struct PlayerPad {
 pub fn ports(format: &str) -> usize {
     match format_name(format) {
         "dolphin" | "punes" | "aurora" | "recharged" | "eden" => 4,
-        "snes9x" => 2,
+        "snes9x" | "duckstation" | "pcsx2" => 2,
         "mgba" | "ppsspp" | "melonds" => 1,
         _ => 0,
     }
@@ -90,6 +90,8 @@ pub fn apply(format: &str, players: &[Option<PlayerPad>], pads: &[PadInfo], exe_
         "ppsspp" => ppsspp::apply(&ports, exe_dir),
         "melonds" => melonds::apply(&ports, pads, exe_dir),
         "snes9x" => snes9x::apply(&ports, pads, exe_dir),
+        "duckstation" => duckstation::apply(&ports, pads, exe_dir),
+        "pcsx2" => pcsx2::apply(&ports, pads, exe_dir),
         other => Err(format!("format de manettes inconnu : {other}")),
     }
 }
@@ -390,6 +392,170 @@ mod eden {
                     if ini_value(&text, "Controls", &format!("player_{i}_connected")).is_some_and(|v| v == "true") {
                         text = set_ini(&text, &format!("{connected}\\default"), "false");
                         text = set_ini(&text, &connected, "false");
+                    }
+                }
+            }
+        }
+        write(&path, &before, &text)
+    }
+}
+
+/// DuckStation (PS1) : `settings.ini` à côté de l'exécutable (mode portable),
+/// sections [Pad1] et [Pad2], comme les écrit son association automatique.
+mod duckstation {
+    use super::*;
+
+    /// Appareil tel que DuckStation le nomme : GUID et numéro de série quand la
+    /// manette en a un (PlayStation, Bluetooth), sinon son numéro de joueur SDL
+    /// (l'emplacement XInput, puis les numéros libres dans l'ordre d'arrivée).
+    pub fn device(pad: &PadInfo, all: &[PadInfo]) -> String {
+        if let Some(serial) = pad.serial.as_deref().filter(|s| !s.is_empty()) {
+            return if serial.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+                format!("SDL-{}-{serial}", pad.guid)
+            } else {
+                let hex: String = serial.bytes().map(|b| format!("{b:02x}")).collect();
+                format!("SDL-SB-{}-{hex}", pad.guid)
+            };
+        }
+        format!("SDL-{}", sdl_player(pad, all))
+    }
+
+    /// Numéro de joueur SDL : l'emplacement XInput, sinon les numéros libres dans
+    /// l'ordre d'arrivée (comme SDL l'attribue, et DuckStation et PCSX2 après lui).
+    pub fn sdl_player(pad: &PadInfo, all: &[PadInfo]) -> usize {
+        if let Some(slot) = pad.xinput {
+            return usize::from(slot);
+        }
+        let taken: Vec<usize> = all.iter().filter_map(|p| p.xinput.map(usize::from)).collect();
+        let n = rank(pad, all, |p| p.xinput.is_none());
+        (0..).filter(|i| !taken.contains(i)).nth(n).unwrap_or(n)
+    }
+
+    pub fn section(device: &str) -> Vec<String> {
+        let mut out = vec!["Type = AnalogController".to_string()];
+        for (key, input) in [
+            ("Up", "DPadUp"),
+            ("Right", "DPadRight"),
+            ("Down", "DPadDown"),
+            ("Left", "DPadLeft"),
+            ("Triangle", "Y"),
+            ("Circle", "B"),
+            ("Cross", "A"),
+            ("Square", "X"),
+            ("Select", "Back"),
+            ("Start", "Start"),
+            ("L1", "LeftShoulder"),
+            ("R1", "RightShoulder"),
+            ("L2", "+LeftTrigger"),
+            ("R2", "+RightTrigger"),
+            ("L3", "LeftStick"),
+            ("R3", "RightStick"),
+            ("LLeft", "-LeftX"),
+            ("LRight", "+LeftX"),
+            ("LDown", "+LeftY"),
+            ("LUp", "-LeftY"),
+            ("RLeft", "-RightX"),
+            ("RRight", "+RightX"),
+            ("RDown", "+RightY"),
+            ("RUp", "-RightY"),
+            ("Analog", "Guide"),
+            ("SmallMotor", "SmallMotor"),
+            ("LargeMotor", "LargeMotor"),
+        ] {
+            out.push(format!("{key} = {device}/{input}"));
+        }
+        out
+    }
+
+    pub fn apply(ports: &[Option<PadInfo>], all: &[PadInfo], exe_dir: &Path) -> Result<(), String> {
+        let path = path_for("{exedir}/settings.ini", "{exedir}/settings.ini", exe_dir)?;
+        let before = read(&path);
+        let mut text = before.clone();
+        for i in 0..2 {
+            let section_name = format!("Pad{}", i + 1);
+            match ports.get(i).cloned().flatten() {
+                Some(pad) => {
+                    let dev = device(&pad, all);
+                    // Même manette qu'avant : les réglages faits dans DuckStation restent.
+                    let same = ini_value(&text, &section_name, "Cross").is_some_and(|v| v.split(" & ").any(|b| b == format!("{dev}/A")));
+                    if !same {
+                        text = replace_section(&text, &section_name, &section(&dev));
+                    }
+                }
+                // Joueur 1 sans manette : le clavier par défaut de DuckStation reste.
+                None if i == 0 => {}
+                None => {
+                    if ini_value(&text, &section_name, "Type").is_some_and(|t| t != "None") {
+                        text = set_ini(&text, &format!("{section_name}.Type"), "None");
+                    }
+                }
+            }
+        }
+        write(&path, &before, &text)
+    }
+}
+
+/// PCSX2 (PS2) : `PCSX2/inis/PCSX2.ini` à côté de l'exécutable (mode portable),
+/// sections [Pad1] et [Pad2] en manette DualShock 2, comme son association automatique.
+mod pcsx2 {
+    use super::*;
+
+    pub fn section(device: &str) -> Vec<String> {
+        let mut out = vec!["Type = DualShock2".to_string()];
+        for (key, input) in [
+            ("Up", "DPadUp"),
+            ("Right", "DPadRight"),
+            ("Down", "DPadDown"),
+            ("Left", "DPadLeft"),
+            ("Triangle", "FaceNorth"),
+            ("Circle", "FaceEast"),
+            ("Cross", "FaceSouth"),
+            ("Square", "FaceWest"),
+            ("Select", "Back"),
+            ("Start", "Start"),
+            ("L1", "LeftShoulder"),
+            ("L2", "+LeftTrigger"),
+            ("R1", "RightShoulder"),
+            ("R2", "+RightTrigger"),
+            ("L3", "LeftStick"),
+            ("R3", "RightStick"),
+            ("Analog", "Guide"),
+            ("LUp", "-LeftY"),
+            ("LRight", "+LeftX"),
+            ("LDown", "+LeftY"),
+            ("LLeft", "-LeftX"),
+            ("RUp", "-RightY"),
+            ("RRight", "+RightX"),
+            ("RDown", "+RightY"),
+            ("RLeft", "-RightX"),
+            ("LargeMotor", "LargeMotor"),
+            ("SmallMotor", "SmallMotor"),
+        ] {
+            out.push(format!("{key} = {device}/{input}"));
+        }
+        out
+    }
+
+    pub fn apply(ports: &[Option<PadInfo>], all: &[PadInfo], exe_dir: &Path) -> Result<(), String> {
+        let path = path_for("{exedir}/PCSX2/inis/PCSX2.ini", "{exedir}/PCSX2/inis/PCSX2.ini", exe_dir)?;
+        let before = read(&path);
+        let mut text = before.clone();
+        for i in 0..2 {
+            let section_name = format!("Pad{}", i + 1);
+            match ports.get(i).cloned().flatten() {
+                Some(pad) => {
+                    let dev = format!("SDL-{}", super::duckstation::sdl_player(&pad, all));
+                    // Même manette qu'avant : les réglages faits dans PCSX2 restent.
+                    let same = ini_value(&text, &section_name, "Cross").is_some_and(|v| v.split(" & ").any(|b| b == format!("{dev}/FaceSouth")));
+                    if !same {
+                        text = replace_section(&text, &section_name, &section(&dev));
+                    }
+                }
+                // Joueur 1 sans manette : le clavier par défaut de PCSX2 reste.
+                None if i == 0 => {}
+                None => {
+                    if ini_value(&text, &section_name, "Type").is_some_and(|t| t != "None") {
+                        text = set_ini(&text, &format!("{section_name}.Type"), "None");
                     }
                 }
             }
@@ -1188,6 +1354,48 @@ mod tests {
     }
 
     /// Manette Xbox (XInput), comparée à ce qu'écrit Suyu pour la même manette.
+    #[test]
+    fn duckstation_devices_and_file() {
+        let x1 = pad(1, "Xbox Controller", "0300", "xinput1", Some(1));
+        let mut ps = pad(2, "PS5 Controller", "050000004c050000e60c000000810000", "", None);
+        ps.serial = Some("a0-ab-51-11-22-33".into());
+        let generic = pad(3, "Manette", "0301", "/dev/x", None);
+        let all = [x1.clone(), ps.clone(), generic.clone()];
+        assert_eq!(duckstation::device(&x1, &all), "SDL-1");
+        assert_eq!(duckstation::device(&ps, &all), "SDL-050000004c050000e60c000000810000-a0-ab-51-11-22-33");
+        // Numéros libres hors XInput : 0 (pris par aucune), puis 2…
+        assert_eq!(duckstation::device(&generic, &all), "SDL-2");
+
+        let dir = std::env::temp_dir().join(format!("farfa-duck-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("settings.ini"), "[Main]\nLanguage = fr\n\n[Pad1]\nType = AnalogController\nUp = Keyboard/Up\n").unwrap();
+        apply("duckstation", &[], &[x1.clone(), generic.clone()], &dir).unwrap();
+        let text = std::fs::read_to_string(dir.join("settings.ini")).unwrap();
+        assert!(text.contains("Language = fr") && !text.contains("Keyboard/Up"));
+        assert!(text.contains("[Pad1]\nType = AnalogController\nUp = SDL-1/DPadUp") && text.contains("Cross = SDL-1/A"));
+        assert!(text.contains("[Pad2]\nType = AnalogController") && text.contains("L2 = SDL-0/+LeftTrigger"));
+        // Changement fait dans DuckStation, même manette : gardé. Joueur 2 parti : port vide.
+        std::fs::write(dir.join("settings.ini"), text.replace("Square = SDL-1/X", "Square = SDL-1/Y")).unwrap();
+        apply("duckstation", &[], &[x1], &dir).unwrap();
+        let text = std::fs::read_to_string(dir.join("settings.ini")).unwrap();
+        assert!(text.contains("Square = SDL-1/Y") && text.contains("[Pad2]\nType=None"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn pcsx2_file() {
+        let x0 = pad(1, "Xbox Controller", "0300", "xinput0", Some(0));
+        let dir = std::env::temp_dir().join(format!("farfa-pcsx2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        apply("pcsx2", &[], &[x0], &dir).unwrap();
+        let text = std::fs::read_to_string(dir.join("PCSX2/inis/PCSX2.ini")).unwrap();
+        assert!(text.contains("[Pad1]
+Type = DualShock2
+Up = SDL-0/DPadUp") && text.contains("Cross = SDL-0/FaceSouth") && text.contains("R2 = SDL-0/+RightTrigger"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn eden_xbox() {
         let mut x = pad(3, "Xbox Series X Controller", "030003f05e040000ff02000000007801", "xinput0", Some(0));
