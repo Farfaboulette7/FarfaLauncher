@@ -21,6 +21,7 @@ mod saves;
 mod secrets;
 mod settings;
 mod state;
+mod switch_content;
 
 /// Au-delà, les jaquettes les plus anciennes sont retirées au démarrage (elles se retéléchargent).
 const IMAGE_CACHE_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;

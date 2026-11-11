@@ -1470,12 +1470,16 @@ mod tests {
         let exe_dir = st.game_dir.join(rel_to_path(&d.exe)).parent().unwrap().to_path_buf();
         let rules = catalog.language_for_install(&st);
         crate::language::prepare(&st.game_dir, &exe_dir, &rules);
+        if catalog.emulator_for_install(&st).is_some_and(|e| e.consoles.iter().any(|c| c == "switch")) {
+            crate::switch_content::apply(&exe_dir, st.shared.as_ref().and_then(|s| s.rom_dir.as_ref()).unwrap()).unwrap();
+        }
         println!("ROM {:?} ; lancement {:?} ; saves {:?} {:?}", st.roms, d.args, st.saves.dir, st.saves.patterns);
         let launch = crate::launch::Launch { exe: rel_to_path(&d.exe), args: &d.args, env: &d.env, cwd: None, learn: false, runner: None };
         let running = crate::launch::spawn(&st.game_dir, launch).unwrap();
         let pid = running.pid();
         let waiter = tokio::task::spawn_blocking(move || running.wait(|| {}));
-        tokio::time::sleep(Duration::from_secs(25)).await;
+        let wait = std::env::var("FARFA_E2E_WAIT").ok().and_then(|w| w.parse().ok()).unwrap_or(25);
+        tokio::time::sleep(Duration::from_secs(wait)).await;
         // Fermeture normale d'abord : l'émulateur écrit alors sa configuration et la sauvegarde.
         std::process::Command::new("taskkill").args(["/PID", &pid.to_string()]).status().unwrap();
         tokio::time::sleep(Duration::from_secs(5)).await;

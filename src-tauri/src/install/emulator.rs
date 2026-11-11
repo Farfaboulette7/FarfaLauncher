@@ -64,8 +64,37 @@ pub fn cartridge_score(name: &str) -> i32 {
 /// cartouche (une entrée RomM « GoodTools » range toutes les versions d'un jeu ensemble).
 fn main_rom(files: &[RemoteFile]) -> Option<&RemoteFile> {
     disc_index(files).or_else(|| {
-        files.iter().max_by_key(|f| (is_rom_like(f), !f.rel_path.contains('/'), cartridge_score(&f.file_name), std::cmp::Reverse(f.file_name.len()), f.size))
+        files.iter().max_by_key(|f| (is_rom_like(f), switch_base(&f.file_name), !f.rel_path.contains('/'), cartridge_score(&f.file_name), std::cmp::Reverse(f.file_name.len()), f.size))
     })
+}
+
+/// Contenu Switch : jeu, mise à jour ou DLC.
+fn is_switch_content(name: &str) -> bool {
+    let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    matches!(ext.as_str(), "nsp" | "nsz" | "xci" | "xcz")
+}
+
+/// Jeu de base plutôt que mise à jour ou DLC posés à côté. L'ID de titre le dit
+/// (`[0100…000]` : le jeu ; `…800` : sa mise à jour ; le reste : des DLC), sinon le nom
+/// (« update », « dlc », ou une version de mise à jour comme `v131072`).
+fn switch_base(name: &str) -> u8 {
+    if !is_switch_content(name) {
+        return 1;
+    }
+    let n = name.to_ascii_lowercase();
+    let title_id = n.split(['[', ']', '(', ')', ' ', '_']).find(|w| w.len() == 16 && w.starts_with("01") && w.chars().all(|c| c.is_ascii_hexdigit()));
+    if let Some(id) = title_id {
+        return if id.ends_with("000") { 2 } else { 0 };
+    }
+    let update_version = n.match_indices('v').any(|(i, _)| {
+        let digits = n[i + 1..].chars().take_while(char::is_ascii_digit).count();
+        digits >= 5 && (i == 0 || !n.as_bytes()[i - 1].is_ascii_alphanumeric())
+    });
+    if update_version || ["update", "upd]", "[upd", "dlc"].iter().any(|w| n.contains(w)) {
+        0
+    } else {
+        1
+    }
 }
 
 /// Fichier de jeu plutôt qu'annexe : un dossier RomM peut aussi ranger des archives de mods,
@@ -80,7 +109,13 @@ pub fn emulator_files(files: &[RemoteFile]) -> Vec<&RemoteFile> {
     if disc_index(files).is_some() {
         return files.iter().collect();
     }
-    main_rom(files).into_iter().collect()
+    let main = main_rom(files);
+    // Switch : le jeu avec ses mises à jour et DLC, que Citron et Eden lisent dans son dossier
+    // (voir `switch_content`).
+    if main.is_some_and(|m| is_switch_content(&m.file_name)) {
+        return files.iter().filter(|f| is_switch_content(&f.file_name)).collect();
+    }
+    main.into_iter().collect()
 }
 
 /// Chemin de la ROM dans son dossier : `ROM/x.gba` → `x.gba` (entrée portage-*).
@@ -708,6 +743,32 @@ mod tests {
         assert_eq!(rom_rel(&x), PathBuf::from("x.gba"));
         x.rel_path = "Disc 1/x.bin".into();
         assert_eq!(rom_rel(&x), PathBuf::from("Disc 1").join("x.bin"));
+    }
+
+    #[test]
+    fn switch_base_game_with_its_update_and_dlc() {
+        let files = [
+            f("Castlevania Belmonts Curse [0100BA4026E94800][v65536][Up v1.1.0].nsp", 3182299415),
+            f("Castlevania Belmonts Curse [0100BA4026E94000][v0].nsp", 560321310),
+            f("Castlevania Belmonts Curse [Alucard Style Costume DLC][0100BA4026E95001].nsp", 124112),
+            f("notes.nfo", 10),
+        ];
+        assert_eq!(main_rom(&files).unwrap().file_name, files[1].file_name);
+        let names: Vec<&str> = emulator_files(&files).iter().map(|f| f.file_name.as_str()).collect();
+        assert_eq!(names.len(), 3, "jeu, mise à jour et DLC, sans le .nfo : {names:?}");
+        // Sans ID de titre : la mise à jour se reconnaît à sa version.
+        let pika = [f("Pokemon Lets Go Pikachu v131072.nsp", 65125332), f("Pokemon Lets Go Pikachu.xci", 7985954816)];
+        assert_eq!(main_rom(&pika).unwrap().file_name, "Pokemon Lets Go Pikachu.xci");
+        let botw = [
+            f("The Legend of Zelda Breath of the Wild 1.9.0 [01007EF00011E800][v1114112].nsp", 991994208),
+            f("The Legend of Zelda Breath of the Wild [01007EF00011E000][v0].nsp", 14476256004),
+            f("The Legend of Zelda Breath of the Wild DLC Pack [2 DLCs].zip", 1393309644),
+        ];
+        assert_eq!(main_rom(&botw).unwrap().file_name, botw[1].file_name);
+        assert_eq!(emulator_files(&botw).len(), 2, "le zip n'est pas lisible par l'émulateur");
+        // Autres consoles : la seule cartouche retenue, comme avant.
+        let gba = [f("Jeu (Europe).gba", 4), f("Jeu (USA).gba", 4)];
+        assert_eq!(emulator_files(&gba).len(), 1);
     }
 
     #[test]

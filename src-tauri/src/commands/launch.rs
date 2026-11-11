@@ -166,6 +166,15 @@ pub async fn play_game(
                 tracing::warn!("manettes non attribuées: {e}");
             }
         }
+        // Citron et Eden : mises à jour et DLC du jeu lus dans son dossier.
+        if let Some(e) = state.catalog().emulator_for_install(&st).filter(|e| e.consoles.iter().any(|c| c == "switch")) {
+            if let Some(rom_dir) = st.shared.as_ref().and_then(|s| s.rom_dir.as_ref()) {
+                match crate::switch_content::apply(&exe_dir, rom_dir) {
+                    Ok(()) => tracing::info!("{} : contenu (mises à jour, DLC) lu dans {}", e.name, rom_dir.display()),
+                    Err(err) => tracing::warn!("contenu du jeu non déclaré à {}: {err}", e.name),
+                }
+            }
+        }
     }
     let spec = match (&prepared, direct) {
         (Some(p), _) => Launch { exe: p.exe.clone(), args: &p.args, env: &[], cwd: p.cwd.clone(), learn: false, runner: p.runner.as_ref() },
