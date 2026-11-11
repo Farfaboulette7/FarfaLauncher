@@ -250,7 +250,12 @@ mod dolphin {
     }
 
     pub fn apply(ports: &[Option<PadInfo>], all: &[PadInfo], exe_dir: &Path) -> Result<(), String> {
-        let dir = path_for("{exedir}/User/Config", "{config}/dolphin-emu", exe_dir)?;
+        // Dolphin portable (portable.txt, aussi dans le .app sur Mac) : User/ à côté.
+        let dir = if exe_dir.join("portable.txt").is_file() {
+            exe_dir.join("User").join("Config")
+        } else {
+            path_for("{exedir}/User/Config", "{config}/dolphin-emu", exe_dir)?
+        };
         let (gc_path, wii_path, main_path) = (dir.join("GCPadNew.ini"), dir.join("WiimoteNew.ini"), dir.join("Dolphin.ini"));
         let (gc_before, wii_before, main_before) = (read(&gc_path), read(&wii_path), read(&main_path));
         let (mut gc_text, mut wii_text, mut main_text) = (gc_before.clone(), wii_before.clone(), main_before.clone());

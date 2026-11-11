@@ -9,6 +9,8 @@ pub mod download;
 pub mod emulator;
 pub mod extract;
 pub mod state;
+#[cfg(test)]
+mod mac_e2e;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

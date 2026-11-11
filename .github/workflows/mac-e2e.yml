@@ -1,0 +1,58 @@
+# Tour du Mac (Apple Silicon), lancé à la main : chaque émulateur et chaque recomp qui a
+# une build Mac est installé depuis le vrai FarfaRomManager, lancé, photographié et fermé.
+# Captures et compte rendu dans les artefacts du run.
+#
+# Secrets requis (Settings → Secrets and variables → Actions) :
+#   FARFA_E2E_URL      adresse publique de RomM
+#   FARFA_E2E_TOKEN    jeton RomM dédié à ces tests
+#   FARFA_E2E_MANAGER  adresse publique de FarfaRomManager
+name: Tour du Mac
+
+on:
+  workflow_dispatch:
+    inputs:
+      roms:
+        description: "Jeu RomM de chaque émulateur (id:jeu, séparés par des virgules)"
+        default: "mgba:388,melonds:5678,ppsspp:7774,dolphin:8460,duckstation:77,pcsx2:10404,citron:10525,eden:10525"
+
+permissions:
+  contents: read
+
+jobs:
+  tour:
+    runs-on: macos-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - run: npm ci
+      # Le build de l'interface est requis : Tauri l'embarque à la compilation.
+      - run: npm run build
+
+      - name: Installer, lancer et photographier
+        working-directory: src-tauri
+        env:
+          FARFA_E2E_URL: ${{ secrets.FARFA_E2E_URL }}
+          FARFA_E2E_TOKEN: ${{ secrets.FARFA_E2E_TOKEN }}
+          FARFA_E2E_MANAGER: ${{ secrets.FARFA_E2E_MANAGER }}
+          FARFA_E2E_MAC_ROMS: ${{ inputs.roms }}
+          FARFA_E2E_OUT: ${{ github.workspace }}/tour-du-mac
+        run: cargo test --lib -- --ignored mac_tour_e2e --nocapture
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tour-du-mac
+          path: tour-du-mac
+          retention-days: 14
