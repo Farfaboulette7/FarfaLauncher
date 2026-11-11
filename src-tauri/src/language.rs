@@ -140,10 +140,13 @@ fn env_dir(key: &str) -> Option<PathBuf> {
     std::env::var_os(key).filter(|v| !v.is_empty()).map(PathBuf::from)
 }
 
-/// `%APPDATA%`, `~/.local/share` sous Linux.
+/// `%APPDATA%`, `~/Library/Application Support` sur Mac, `~/.local/share` sous Linux.
 fn appdata() -> Option<PathBuf> {
     if cfg!(windows) {
         env_dir("APPDATA")
+    } else if cfg!(target_os = "macos") {
+        // Dossier des préférences SDL et de la plupart des portages sur Mac.
+        env_dir("HOME").map(|h| h.join("Library").join("Application Support"))
     } else {
         env_dir("XDG_DATA_HOME").or_else(|| env_dir("HOME").map(|h| h.join(".local/share")))
     }

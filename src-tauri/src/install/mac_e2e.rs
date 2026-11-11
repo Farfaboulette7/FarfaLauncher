@@ -93,6 +93,8 @@ async fn play(catalog: &Catalog, st: &state::InstalledGame, out: &Path, label: &
 #[ignore]
 async fn mac_tour_e2e() {
     let var = |k: &str| std::env::var(k).unwrap_or_default();
+    // Journal du launcher dans la sortie du test : les erreurs d'installation y sont détaillées.
+    let _ = tracing_subscriber::fmt().with_env_filter("info").with_test_writer().try_init();
     let client = RommClient::new(&var("FARFA_E2E_URL"), Some(var("FARFA_E2E_TOKEN"))).unwrap();
     let out = PathBuf::from(var("FARFA_E2E_OUT"));
     std::fs::create_dir_all(&out).unwrap();
@@ -125,7 +127,9 @@ async fn mac_tour_e2e() {
         .split(',')
         .filter_map(|p| p.split_once(':').and_then(|(e, r)| Some((e.trim().to_string(), r.trim().parse().ok()?))))
         .collect();
-    for e in &catalog.emulators {
+    // `FARFA_E2E_ONLY` : seulement les éléments dont le nom contient ce texte (« Recomp »…).
+    let only = var("FARFA_E2E_ONLY");
+    for e in catalog.emulators.iter().filter(|e| format!("Émulateur {}", e.name).contains(&only)) {
         let name = format!("Émulateur {}", e.name);
         if e.file_for(target).is_none() {
             verdicts.push(Verdict { name, detail: "pas de build Mac au catalogue".into(), ok: false });
@@ -149,7 +153,7 @@ async fn mac_tour_e2e() {
     }
 
     // Recomps : leur premier jeu sur RomM.
-    for r in &catalog.recomps {
+    for r in catalog.recomps.iter().filter(|r| format!("Recomp {}", r.name).contains(&only)) {
         let name = format!("Recomp {}", r.name);
         if !r.files.iter().any(|f| target.candidates().iter().any(|t| f.system.as_deref() == Some(t.suffix()))) {
             verdicts.push(Verdict { name, detail: "pas de build Mac".into(), ok: false });

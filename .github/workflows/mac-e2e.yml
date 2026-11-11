@@ -51,6 +51,8 @@ jobs:
           FARFA_E2E_MANAGER: ${{ secrets.FARFA_E2E_MANAGER }}
           FARFA_E2E_MAC_ROMS: ${{ inputs.roms || 'mgba:388,melonds:5678,ppsspp:7774,dolphin:8460,duckstation:77,pcsx2:10404,citron:10525,eden:10525' }}
           FARFA_E2E_OUT: ${{ github.workspace }}/tour-du-mac
+          # Tag « tour-mac-…-recomp » : seulement les recomps.
+          FARFA_E2E_ONLY: ${{ contains(github.ref_name, 'recomp') && 'Recomp' || '' }}
         run: cargo test --lib -- --ignored mac_tour_e2e --nocapture
 
       - uses: actions/upload-artifact@v4
