@@ -27,13 +27,20 @@
       "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; media-src 'self' asset: http://asset.localhost; connect-src ipc: http://ipc.localhost asset: http://asset.localhost; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; frame-src 'self' asset: http://asset.localhost blob:; object-src 'none'",
       "assetProtocol": {
         "enable": true,
-        "scope": ["$APPCACHE/**"]
+        "scope": [
+          "$APPCACHE/**"
+        ]
       }
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "appimage"],
+    "targets": [
+      "nsis",
+      "appimage",
+      "app",
+      "dmg"
+    ],
     "createUpdaterArtifacts": true,
     "publisher": "Farfaboulette7",
     "shortDescription": "Launcher de portages PC hébergés sur RomM",
@@ -53,14 +60,22 @@
     "windows": {
       "nsis": {
         "installMode": "currentUser",
-        "languages": ["French"]
+        "languages": [
+          "French"
+        ]
       }
+    },
+    "macOS": {
+      "signingIdentity": "-",
+      "minimumSystemVersion": "11.0"
     }
   },
   "plugins": {
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDdERUYyMURDNTFGQkRDRDQKUldUVTNQdFIzQ0h2ZmNFUlRodnp3QldkdnFPUmlZZ1pLdHF1TmU0T1dvWFBYVUdPeGpPSlJHM3MK",
-      "endpoints": ["https://github.com/Farfaboulette7/FarfaLauncher/releases/latest/download/latest.json"],
+      "endpoints": [
+        "https://github.com/Farfaboulette7/FarfaLauncher/releases/latest/download/latest.json"
+      ],
       "windows": {
         "installMode": "passive"
       }

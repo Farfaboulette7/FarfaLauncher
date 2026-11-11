@@ -1,10 +1,10 @@
-# Vérifications à chaque push sur main : types TypeScript, build de
-# l'interface et tests Rust (Windows, plateforme prioritaire, et Linux).
+# Vérifications à chaque push sur main (et sur la branche macos) : types TypeScript,
+# build de l'interface et tests Rust (Windows, plateforme prioritaire, Linux et Mac).
 name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, macos]
   pull_request:
 
 jobs:
@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [windows-latest, ubuntu-22.04]
+        platform: [windows-latest, ubuntu-22.04, macos-14]
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
@@ -40,3 +40,35 @@ jobs:
       - run: npm run build
       - run: cargo test
         working-directory: src-tauri
+
+  # Application Mac (Apple Silicon) construite à chaque push : téléchargeable dans
+  # les artefacts du run, pour la faire essayer avant une publication.
+  mac-app:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - run: npm ci
+
+      - name: Construire FaRFa project.app et le .dmg
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npx tauri build --bundles app,dmg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FarfaLauncher-macOS-arm64
+          path: src-tauri/target/release/bundle/dmg/*.dmg
+          retention-days: 14
