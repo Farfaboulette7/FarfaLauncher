@@ -9,6 +9,9 @@
 name: Tour du Mac
 
 on:
+  # Tag « tour-mac-… » poussé depuis la branche à tester, ou lancement à la main.
+  push:
+    tags: ["tour-mac-*"]
   workflow_dispatch:
     inputs:
       roms:
@@ -46,7 +49,7 @@ jobs:
           FARFA_E2E_URL: ${{ secrets.FARFA_E2E_URL }}
           FARFA_E2E_TOKEN: ${{ secrets.FARFA_E2E_TOKEN }}
           FARFA_E2E_MANAGER: ${{ secrets.FARFA_E2E_MANAGER }}
-          FARFA_E2E_MAC_ROMS: ${{ inputs.roms }}
+          FARFA_E2E_MAC_ROMS: ${{ inputs.roms || 'mgba:388,melonds:5678,ppsspp:7774,dolphin:8460,duckstation:77,pcsx2:10404,citron:10525,eden:10525' }}
           FARFA_E2E_OUT: ${{ github.workspace }}/tour-du-mac
         run: cargo test --lib -- --ignored mac_tour_e2e --nocapture
 
