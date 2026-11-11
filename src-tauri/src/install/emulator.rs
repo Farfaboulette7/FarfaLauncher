@@ -335,6 +335,8 @@ impl InstallJob {
         ensure_space(&rom_dir, total)?;
         let mut offset = 0;
         let mut last = Instant::now() - Duration::from_secs(1);
+        // Jeu joué jusqu'ici avec sa recomp : la ROM posée à côté d'elle est reprise.
+        let mut reused: Vec<(PathBuf, String)> = Vec::new();
         for file in files {
             let dest = rom_dir.join(rom_rel(file));
             // Même ROM déjà en place (changement d'émulateur) : ni retéléchargée, ni relue en entier.
@@ -342,6 +344,19 @@ impl InstallJob {
                 offset += file.size;
                 self.emit(rom_id, "download", offset, total);
                 continue;
+            }
+            if let Some(old) = recomp_copy(previous.as_ref(), file) {
+                let (from, to) = (old.clone(), dest.clone());
+                match blocking(move || super::reuse_file(&from, &to).map_err(|e| disk_error("reprise de la ROM de la recomp", e))).await {
+                    Ok(()) => {
+                        tracing::info!("ROM reprise de la recomp : {}", old.display());
+                        reused.push((old, file.rel_path.clone()));
+                        offset += file.size;
+                        self.emit(rom_id, "download", offset, total);
+                        continue;
+                    }
+                    Err(e) => tracing::warn!("ROM de la recomp non reprise ({}): {}", old.display(), e.code()),
+                }
             }
             download::download(&self.client, file, &dest, &self.cancel, |got| {
                 if last.elapsed() >= Duration::from_millis(200) || got == file.size {
@@ -382,7 +397,8 @@ impl InstallJob {
                 .map(|(f, p)| RomSource { rel_path: f.rel_path.clone(), size: f.size, sha1: f.sha1.clone(), md5: f.md5.clone(), placed: vec![p.clone()] })
                 .collect(),
             mods_downloaded: Vec::new(),
-            saves: previous.as_ref().map(|p| p.saves.clone()).unwrap_or_else(SaveSync::default),
+            // Sauvegardes d'une recomp à part (sur FarfaRomManager) : l'émulateur cherche les siennes.
+            saves: previous.as_ref().filter(|p| p.shared.as_ref().is_some_and(|s| s.is_emulator())).map(|p| p.saves.clone()).unwrap_or_else(SaveSync::default),
             direct_launch: Some(DirectLaunch { exe: exe.clone(), args, cwd: bundle_cwd(&exe), env }),
             prefer_launcher: false,
             players: previous.as_ref().map(|p| p.players.clone()).unwrap_or_default(),
@@ -404,6 +420,7 @@ impl InstallJob {
             }),
         };
         state::write_state(&self.config_dir, &st)?;
+        super::remove_reused(&reused);
         tracing::info!("« {} » installé avec {} dans {}", st.name, emulator.name, rom_dir.display());
         let st = state::find(&self.config_dir, rom_id).ok_or(AppError::Internal)?;
         Ok(InstallOutcome::Installed { game: st })
@@ -602,6 +619,14 @@ fn already_placed(previous: Option<&InstalledGame>, file: &RemoteFile, dest: &Pa
     let Some(sha1) = file.sha1.as_deref() else { return false };
     let known = previous.is_some_and(|p| p.rom_sources.iter().any(|s| s.sha1.as_deref() == Some(sha1) && s.size == file.size));
     known && std::fs::metadata(dest).is_ok_and(|m| m.len() == file.size)
+}
+
+/// ROM posée à côté de la recomp du jeu (installation précédente, sans émulateur).
+fn recomp_copy(previous: Option<&InstalledGame>, file: &RemoteFile) -> Option<PathBuf> {
+    let p = previous.filter(|p| p.shared.is_none() && p.pc.is_none())?;
+    let src = p.rom_sources.iter().find(|s| super::same_rom(s, file) && s.placed.len() == 1)?;
+    let old = p.game_dir.join(rel_to_path(&src.placed[0]));
+    std::fs::metadata(&old).is_ok_and(|m| m.is_file() && m.len() == file.size).then_some(old)
 }
 
 /// Retire la ROM d'un jeu. Ses sauvegardes restent à côté si elles sont conservées.

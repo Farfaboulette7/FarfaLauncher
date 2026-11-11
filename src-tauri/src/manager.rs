@@ -501,9 +501,11 @@ impl Catalog {
         self.recomps.iter().flat_map(|r| r.games.iter().filter_map(|g| Some((g.previous_rom_id?, g.rom_id?)))).filter(|(a, b)| a != b).collect()
     }
 
-    /// Fiche RomM qui garde l'ancienne sauvegarde d'un jeu de recomp.
-    pub fn romm_save_id(&self, rom_id: i64) -> i64 {
-        self.moved_games().into_iter().find(|(_, new)| *new == rom_id).map(|(old, _)| old).unwrap_or(rom_id)
+    /// Ancienne fiche `portage-*` d'un jeu de recomp passé dans sa vraie console : elle garde
+    /// la sauvegarde faite avec la recomp. La ROM de la console, elle, n'a sur RomM que celles
+    /// des émulateurs.
+    pub fn old_save_id(&self, rom_id: i64) -> Option<i64> {
+        self.moved_games().into_iter().find(|(_, new)| *new == rom_id).map(|(old, _)| old)
     }
 
     /// Jeux qui ont une recomp au catalogue.
@@ -653,8 +655,8 @@ mod tests {
           "gameFiles":[{"name":"MHGU-data.extract.zip","path":"jeux/mh/MHGU-data.extract.zip","size":5,"sha1":"abcdef0123456789abcdef0123456789abcdef01"}]}],"emulators":[]}"#;
         let c: Catalog = serde_json::from_str(text).unwrap();
         assert_eq!(c.moved_games(), [(10557, 10532)]);
-        assert_eq!(c.romm_save_id(10532), 10557);
-        assert_eq!(c.romm_save_id(3406), 3406);
+        assert_eq!(c.old_save_id(10532), Some(10557));
+        assert_eq!(c.old_save_id(3406), None);
         let mut g = crate::romm::library::Game::from_catalog(&c.recomps[0], Target::Windows);
         g.rom_files = vec![RemoteFile { id: 1, file_name: "x.nsp".into(), rel_path: "x.nsp".into(), size: 1, sha1: None, md5: None, from_manager: false }];
         g.use_catalog(&c.recomps[0], Target::Windows);

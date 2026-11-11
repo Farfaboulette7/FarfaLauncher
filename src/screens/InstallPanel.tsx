@@ -87,6 +87,9 @@ export function InstallPanel({ game: base, target, installs, onError }: Props) {
   const emulatorInst = game.emulator ? installs.installed.get(game.emulator.runtimeRomId) : undefined;
   const emulatorUpToDate = !!emulatorInst?.executable && emulatorInst.versionRaw === game.emulator?.versionKey;
   const installedWithEmulator = isEmulatorInstall(inst);
+  /** Jeu installé avec un émulateur alors qu'il a une recomp pour ce système (et inversement). */
+  const canSwitchToRecomp = installedWithEmulator && game.recomp && !game.pc && !game.runtime && isAvailable(game);
+  const canSwitchToEmulator = !!inst?.executable && !inst.shared && !inst.pc && game.recomp && emulatorReady(game);
   const pendingChoice = !!inst && !inst.executable && !progress;
   const runningSince = installs.running.get(game.id);
   // Dossier des mods du jeu installé : bouton pour l'ouvrir s'il existe.
@@ -274,6 +277,22 @@ export function InstallPanel({ game: base, target, installs, onError }: Props) {
                 hint="Changer d'émulateur garde la ROM ; chaque émulateur a ses propres sauvegardes."
                 onPick={(e) => installs.start(game.id, undefined, null, true, e.id)}
               />
+            )}
+            {canSwitchToRecomp && runningSince === undefined && !busy && !launching && (
+              <>
+                <button className="n-btn n-btn--block gd-launcher" onClick={() => installs.start(game.id, undefined, null, false)}>
+                  Passer à la recomp
+                </button>
+                <p className="n-hint">La ROM déjà téléchargée est reprise. La recomp a ses propres sauvegardes, celles de l'émulateur restent sur le serveur.</p>
+              </>
+            )}
+            {canSwitchToEmulator && runningSince === undefined && !busy && !launching && (
+              <>
+                <button className="n-btn n-btn--block gd-launcher" onClick={() => installs.start(game.id, undefined, null, true, game.emulator?.id)}>
+                  Passer en émulation ({game.emulator?.name})
+                </button>
+                <p className="n-hint">La ROM est reprise et le dossier de la recomp reste sur le disque. L'émulateur a ses propres sauvegardes.</p>
+              </>
             )}
             {update && runningSince === undefined && !busy && !launching && (
               <button className="n-btn n-btn--block gd-update" onClick={() => installs.start(game.id, undefined, null, installedWithEmulator)}>

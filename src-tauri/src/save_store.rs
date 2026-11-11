@@ -40,7 +40,9 @@ pub enum SaveStore {
 pub struct RecompSave {
     romm: RommClient,
     manager: RommClient,
-    rom_id: i64,
+    /// Ancienne fiche `portage-*` du jeu, d'où sa sauvegarde est reprise une fois. Sans elle,
+    /// la sauvegarde RomM de la ROM est celle d'un émulateur : elle ne va pas à la recomp.
+    rom_id: Option<i64>,
     path: String,
 }
 
@@ -62,7 +64,7 @@ fn key_for_rom(catalog: &Catalog, rom_id: i64) -> Option<(String, String)> {
 impl SaveStore {
     pub fn of(catalog: &Catalog, settings: &Settings, client: RommClient, st: &InstalledGame) -> Self {
         match (recomp_key(catalog, st), manager::base_url(settings)) {
-            (Some((recomp, game)), Some(base)) => SaveStore::Recomp(RecompSave::new(client, &base, catalog.romm_save_id(st.rom_id), &recomp, &game)),
+            (Some((recomp, game)), Some(base)) => SaveStore::Recomp(RecompSave::new(client, &base, catalog.old_save_id(st.rom_id), &recomp, &game)),
             _ => SaveStore::Romm { client, rom_id: st.rom_id },
         }
     }
@@ -95,7 +97,7 @@ impl SaveStore {
 }
 
 impl RecompSave {
-    pub fn new(romm: RommClient, manager_base: &str, rom_id: i64, recomp: &str, game: &str) -> Self {
+    pub fn new(romm: RommClient, manager_base: &str, rom_id: Option<i64>, recomp: &str, game: &str) -> Self {
         let manager = romm.with_base(manager_base);
         Self { romm, manager, rom_id, path: format!("api/saves/{recomp}/{game}") }
     }
@@ -123,7 +125,8 @@ impl RecompSave {
 
     /// Copie sur FarfaRomManager la sauvegarde gardée sur la fiche RomM, qui reste en place.
     pub async fn import_from_romm(&self) -> AppResult<Option<RemoteSave>> {
-        let old = match romm::find(&self.romm, self.rom_id).await {
+        let Some(rom_id) = self.rom_id else { return Ok(None) };
+        let old = match romm::find(&self.romm, rom_id).await {
             Ok(old) => old,
             // Token sans droit sur les sauvegardes RomM : il n'en a jamais envoyé.
             Err(AppError::ScopeMissing) => None,
@@ -132,7 +135,7 @@ impl RecompSave {
         let Some(old) = old else { return Ok(None) };
         let zip = romm::download(&self.romm, &old).await?;
         let updated_at = self.upload(zip).await?;
-        tracing::info!("sauvegarde du jeu {} reprise de RomM ({})", self.rom_id, self.path);
+        tracing::info!("sauvegarde du jeu {} reprise de RomM ({})", rom_id, self.path);
         Ok(Some(RemoteSave { updated_at, romm: None }))
     }
 }
@@ -151,7 +154,7 @@ pub async fn import_all(config_dir: &Path, catalog: &Catalog, settings: &Setting
         if done.contains(&key) {
             continue;
         }
-        let save = RecompSave::new(client.clone(), &base, catalog.romm_save_id(rom_id), &recomp, &game);
+        let save = RecompSave::new(client.clone(), &base, catalog.old_save_id(rom_id), &recomp, &game);
         let checked = match save.find().await {
             Ok(Some(_)) => Ok(()),
             Ok(None) => save.import_from_romm().await.map(|_| ()),
