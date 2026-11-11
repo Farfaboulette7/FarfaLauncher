@@ -756,10 +756,14 @@ mod disc_tests {
         let (dir, patterns) = saves.for_console("wii");
         if cfg!(windows) {
             assert_eq!(dir, Some("User/Wii/title/00010000"));
-        } else {
+            assert_eq!(patterns, ["{gameidhex}"]);
+        } else if cfg!(target_os = "linux") {
             assert_eq!(dir, Some("{appdata}/dolphin-emu/Wii/title/00010000"));
+            assert_eq!(patterns, ["{gameidhex}"]);
+        } else {
+            // Mac sans ligne « macos » : le dossier commun.
+            assert_eq!(dir, Some("User"));
         }
-        assert_eq!(patterns, ["{gameidhex}"]);
         assert_eq!(saves.for_console("gba").0, Some("User"));
     }
 }

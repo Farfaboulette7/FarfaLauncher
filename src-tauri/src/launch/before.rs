@@ -115,8 +115,14 @@ mod tests {
         let b = |s: Option<&str>, p: &str| BeforeLaunch { system: s.map(String::from), program: p.into(), args: vec![] };
         let list = vec![b(Some("windows"), "w.exe"), b(Some("linux"), "l"), b(None, "tous")];
         let names: Vec<String> = applicable(&list).into_iter().map(|b| b.program).collect();
-        let mine = if cfg!(windows) { "w.exe" } else { "l" };
-        assert_eq!(names, vec![mine.to_string(), "tous".to_string()]);
+        let expected: Vec<String> = if cfg!(windows) {
+            vec!["w.exe".into(), "tous".into()]
+        } else if cfg!(target_os = "linux") {
+            vec!["l".into(), "tous".into()]
+        } else {
+            vec!["tous".into()]
+        };
+        assert_eq!(names, expected);
     }
 
     #[test]

@@ -753,7 +753,7 @@ mod saves_tests {
               "language":[{"system":"windows","format":"ini","file":"{exedir}/puNES.cfg","key":"language","value":"french"}]}"#,
         )
         .unwrap();
-        let expected = if cfg!(windows) { "prb" } else { "{appdata}/puNES/prb" };
+        let expected = if cfg!(target_os = "linux") { "{appdata}/puNES/prb" } else { "prb" };
         assert_eq!(e.saves.dir_here(), Some(expected));
         assert_eq!(e.language.len(), 1);
         // Catalogue d'avant : ni bySystem ni language.
