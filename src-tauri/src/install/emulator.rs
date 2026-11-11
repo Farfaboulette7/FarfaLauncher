@@ -333,6 +333,10 @@ fn expand_disc(text: &str, id: Option<&str>) -> Option<String> {
 /// Dossier des sauvegardes d'un jeu : à côté de la ROM, relatif à l'exécutable, ou dans
 /// les dossiers de l'utilisateur (`{appdata}/…`).
 fn saves_dir(dir: Option<&str>, rom_dir: &Path, exe_dir: &Path, disc: Option<&str>) -> Option<PathBuf> {
+    // Switch : profil et ID du jeu connus au lancement seulement (voir `switch_saves`).
+    if dir.is_some_and(crate::switch_saves::is_deferred) {
+        return None;
+    }
     let exe_dir = exe_dir.to_path_buf();
     match expand_disc(dir?, disc)?.as_str() {
         "{romdir}" => Some(rom_dir.to_path_buf()),
@@ -451,7 +455,7 @@ impl InstallJob {
                 kind: Some(KIND_EMULATOR.to_string()),
                 rom_dir: Some(rom_dir.clone()),
                 saves_dir: saves_dir(save_dir, &rom_dir, &emulator.data_dir(&installed.game_dir, &exe), disc.as_deref()),
-                save_patterns: save_patterns.iter().filter_map(|p| expand_disc(&expand(p, &rom_path, &rom_dir, rom_stem), disc.as_deref())).collect(),
+                save_patterns: save_patterns.iter().filter(|p| !crate::switch_saves::is_deferred(p)).filter_map(|p| expand_disc(&expand(p, &rom_path, &rom_dir, rom_stem), disc.as_deref())).collect(),
             }),
         };
         state::write_state(&self.config_dir, &st)?;

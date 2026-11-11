@@ -7,6 +7,7 @@
 pub mod detect;
 pub mod download;
 pub mod emulator;
+pub mod prepare;
 pub mod extract;
 pub mod state;
 #[cfg(test)]
@@ -349,7 +350,16 @@ impl InstallJob {
             pc: None,
             shared: None,
         };
+        // Recomp qui construit le jeu (Hookshot) : son outil d'abord, pour poser la copie du jeu
+        // à côté ; le jeu construit devient ensuite l'exécutable.
+        let prepare: Vec<String> = if runtime.is_none() { self.catalog.recomp_prepare(rom_id).to_vec() } else { Vec::new() };
+        let builder = prepare.first().and_then(|names| prepare::pick_program(&candidates, names));
+        if !prepare.is_empty() && builder.is_none() {
+            tracing::error!("outil de construction {} absent des candidats {candidates:?}", prepare[0]);
+            return Err(AppError::NoExecutable);
+        }
         let kept = match runtime {
+            _ if builder.is_some() => builder.clone(),
             Some(r) => runtimes::pick_exe(&candidates, &r.exe, game.server_version.as_deref()).or_else(|| {
                 tracing::warn!("exécutable {} absent des candidats", r.exe);
                 candidates.first().cloned()
@@ -370,10 +380,40 @@ impl InstallJob {
                 return Ok(InstallOutcome::NeedsChoice { game: st });
             }
         };
-        let st = finalize(&self.config_dir, st, &chosen, &game).await?;
+        let mut st = finalize(&self.config_dir, st, &chosen, &game).await?;
         // La ROM est maintenant à côté de la recomp : la copie de l'émulateur est retirée.
         remove_reused(&reused);
+        if let Some(builder) = builder {
+            st = self.build_game(rom_id, st, &builder, &prepare[1..]).await?;
+        }
         Ok(InstallOutcome::Installed { game: st })
+    }
+
+    /// Construit le jeu avec l'outil de la recomp, puis prend le jeu construit pour exécutable.
+    async fn build_game(&self, rom_id: i64, mut st: InstalledGame, builder: &str, args: &[String]) -> AppResult<InstalledGame> {
+        let rom = st.roms.first().map(|r| st.game_dir.join(rel_to_path(r))).ok_or(AppError::NotAvailable)?;
+        let args = prepare::expand(args, &rom, &st.game_dir);
+        self.emit(rom_id, "build", 0, 1000);
+        let (dir, program, cancel, cb) = (st.game_dir.clone(), builder.to_string(), self.cancel.clone(), self.on_progress.clone());
+        blocking(move || prepare::run(&dir, &program, &args, &cancel, move |done| cb(Progress { rom_id, phase: "build", done, total: 1000, verifying: false }))).await?;
+        self.emit(rom_id, "finalize", 0, 0);
+        let gd = st.game_dir.clone();
+        let target = self.target;
+        let candidates: Vec<String> = blocking(move || Ok(detect::find_candidates(&gd, target).iter().map(|p| path_to_rel(p)).collect())).await?;
+        let game_exe = self
+            .catalog
+            .recomp_exe(rom_id)
+            .and_then(|hint| runtimes::pick_exe(&candidates, hint, None))
+            .filter(|e| e != builder)
+            .ok_or_else(|| {
+                tracing::error!("jeu construit introuvable parmi {candidates:?}");
+                AppError::NoExecutable
+            })?;
+        tracing::info!("jeu construit : {game_exe}");
+        make_executable(&st.game_dir.join(rel_to_path(&game_exe)));
+        st.executable = Some(game_exe);
+        state::write_state(&self.config_dir, &st)?;
+        Ok(st)
     }
 }
 
@@ -1580,6 +1620,52 @@ mod tests {
         waiter.await.unwrap();
         assert!(text.contains("Paper Cut") || text.contains("ttyd"), "jeu fermé avant 20 s");
         println!("dossier de test : {}", base.display());
+    }
+
+    /// Vrai serveur, recomp qui construit le jeu (Hookshot) : `FARFA_E2E_ROM`, plus URL, TOKEN, MANAGER.
+    /// Garde le dossier (`farfa-prepare-e2e`) pour lancer le jeu ensuite.
+    #[cfg(windows)]
+    #[tokio::test]
+    #[ignore]
+    async fn recomp_prepare_e2e() {
+        let var = |k: &str| std::env::var(k).unwrap();
+        let rom: i64 = var("FARFA_E2E_ROM").parse().unwrap();
+        let client = RommClient::new(&var("FARFA_E2E_URL"), Some(var("FARFA_E2E_TOKEN"))).unwrap();
+        let base = std::env::temp_dir().join("farfa-prepare-e2e");
+        let config = base.join("config");
+        std::fs::create_dir_all(&config).unwrap();
+        let manager = client.with_base(&var("FARFA_E2E_MANAGER"));
+        let catalog: Catalog = serde_json::from_str(&manager.send(manager.get("api/catalog")).await.unwrap().text().await.unwrap()).unwrap();
+        let last = Arc::new(std::sync::Mutex::new(String::new()));
+        let seen = last.clone();
+        let job = InstallJob {
+            client,
+            config_dir: config.clone(),
+            install_root: base.join("Jeux"),
+            target: Target::Windows,
+            cancel: CancellationToken::new(),
+            proton: None,
+            manifest: Manifest::default().with_catalog(&catalog),
+            catalog: catalog.clone(),
+            manager_base: Some(var("FARFA_E2E_MANAGER")),
+            with_emulator: false,
+            emulator_id: None,
+            runtime_lock: Arc::new(tokio::sync::Mutex::new(())),
+            on_progress: Arc::new(move |p| {
+                let line = format!("{} {}", p.phase, if p.total > 0 { p.done * 100 / p.total } else { 0 });
+                let mut l = seen.lock().unwrap();
+                if *l != line {
+                    println!("{line}");
+                    *l = line;
+                }
+            }),
+        };
+        let st = match job.run(rom).await.unwrap() {
+            InstallOutcome::Installed { game } => game,
+            InstallOutcome::NeedsChoice { game } => panic!("choix demandé parmi {:?}", game.pending_candidates),
+        };
+        println!("exécutable : {:?} ; ROM {:?} ; dossier {}", st.executable, st.roms, st.game_dir.display());
+        assert!(st.executable.as_deref().is_some_and(|e| e.ends_with("bin/hookshot.exe")));
     }
 
     /// Vrai serveur, PPSSPP lancé : `FARFA_E2E_ROM` (jeu PSP en .chd), plus URL, TOKEN, MANAGER.

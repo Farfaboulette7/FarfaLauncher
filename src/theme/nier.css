@@ -414,6 +414,11 @@ body::after {
   filter: drop-shadow(1px 1px 0 var(--nier-shadow));
 }
 .lib-brand-name { display: flex; align-items: center; margin: 0; }
+/* Numéro de version du launcher, en tout petit à côté du nom. */
+.lib-version { margin-left: 0.6em; font-size: 0.55em; letter-spacing: 0.05em; opacity: 0.55; text-transform: none; align-self: flex-end; padding-bottom: 0.25em; }
+/* Nouvelle version sortie pendant que le launcher tourne. */
+.lib-update { animation: lib-update-pulse 2.4s ease-in-out infinite; }
+@keyframes lib-update-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
 .login-brand { display: flex; align-items: center; }
 .login-brand .brand-logo { height: 1.4em; }
 

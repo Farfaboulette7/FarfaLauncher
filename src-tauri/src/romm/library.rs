@@ -610,6 +610,8 @@ fn to_game(r: RawRom, base: &str, me: Target, details_loaded: bool) -> Game {
     let files: Vec<(RemoteFile, Option<String>)> = r
         .files
         .into_iter()
+        // Métadonnées du NAS Synology (`x@SynoEAStream`, `@eaDir/`) : pas des fichiers du jeu.
+        .filter(|f| !f.file_name.contains("@SynoEAStream") && !f.full_path.contains("@eaDir"))
         .map(|f| {
             let rel = relative_path(&r.full_path, &r.fs_name, &f.full_path);
             let category = f.category;

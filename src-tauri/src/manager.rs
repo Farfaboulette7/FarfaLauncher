@@ -62,6 +62,8 @@ pub struct CatalogMod {
 pub struct RecompLaunch {
     pub exe: Option<String>,
     pub args: Vec<String>,
+    /// Construction du jeu après l'installation : programme(s) puis arguments (`preparer:`).
+    pub prepare: Vec<String>,
     pub env: Vec<(String, String)>,
     pub data_dir: Option<String>,
     pub save_dir: Option<String>,
@@ -473,6 +475,11 @@ impl Catalog {
             cwd: None,
             env: recomp.launch.env.iter().map(|(k, v)| (k.clone(), expand(v))).collect(),
         })
+    }
+
+    /// Construction du jeu après l'installation de sa recomp (`preparer:`).
+    pub fn recomp_prepare(&self, rom_id: i64) -> &[String] {
+        self.recomp_for_rom(rom_id).filter(|r| !r.is_shared()).map(|r| r.launch.prepare.as_slice()).unwrap_or(&[])
     }
 
     /// Exécutable imposé par `exe:` pour une recomp à un seul jeu.

@@ -119,6 +119,11 @@ fn server_unavailable(e: &AppError) -> bool {
 #[tauri::command]
 pub async fn save_check(state: State<'_, AppState>, rom_id: i64) -> AppResult<SaveCheck> {
     let mut st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
+    crate::switch_saves::fill(&state.catalog(), &state.config_dir, &mut st, None);
+    if crate::switch_saves::waiting(&state.catalog(), &st) {
+        tracing::info!("« {} » : ID du jeu Switch pas encore connu, appris après une partie qui sauvegarde", st.name);
+        return Ok(SaveCheck::Ready);
+    }
     if st.saves.off {
         // Coupée faute de dossier trouvé : on retente, la détection a pu
         // progresser (ou le jeu a créé ses sauvegardes depuis).
@@ -260,6 +265,8 @@ pub enum SaveUpload {
 /// Après la partie : envoie la sauvegarde si elle a changé depuis le dernier échange.
 pub async fn after_play(state: &AppState, client: Option<RommClient>, rom_id: i64, started: SystemTime) -> (SaveUpload, Option<AppError>) {
     let Some(mut st) = state::find(&state.config_dir, rom_id) else { return (SaveUpload::Off, None) };
+    // Jeu Switch : dossier trouvé maintenant que la partie l'a créé.
+    crate::switch_saves::fill(&state.catalog(), &state.config_dir, &mut st, Some(started));
     // Coupée faute de dossier (pas par choix d'un dossier) : on cherche quand même.
     if st.saves.off && st.saves.dir.is_some() {
         return (SaveUpload::Off, None);
@@ -333,5 +340,17 @@ pub async fn after_play(state: &AppState, client: Option<RommClient>, rom_id: i6
             tracing::error!("« {} » : sauvegarde non envoyée ({})", st.name, e.code());
             (SaveUpload::Failed, Some(e))
         }
+    }
+}
+
+/// Shaders partagés de ce jeu sur FarfaRomManager, par émulateur Switch (vide sinon).
+#[tauri::command]
+pub async fn shader_info(state: State<'_, AppState>, rom_id: i64) -> AppResult<serde_json::Value> {
+    let Some(base) = crate::manager::base_url(&state.settings()) else { return Ok(serde_json::json!({})) };
+    let manager = state.client()?.with_base(&base);
+    match manager.get_json::<serde_json::Value>(&format!("api/shaders/rom/{rom_id}")).await {
+        Ok(v) => Ok(v),
+        // Gestionnaire sans les shaders (pas encore à jour) ou injoignable : rien à montrer.
+        Err(_) => Ok(serde_json::json!({})),
     }
 }

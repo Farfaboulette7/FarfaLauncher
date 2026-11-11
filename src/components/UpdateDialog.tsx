@@ -10,9 +10,11 @@ import { logToFile } from "./ErrorBoundary";
 interface Props {
   update: Update;
   onClose: () => void;
+  /** Ouverte depuis le bouton de l'en-tête : « Plus tard » possible. */
+  optional?: boolean;
 }
 
-export function UpdateDialog({ update, onClose }: Props) {
+export function UpdateDialog({ update, onClose, optional = false }: Props) {
   const [state, setState] = useState<"idle" | "downloading" | "installing" | "error">("idle");
   const [done, setDone] = useState(0);
   const [total, setTotal] = useState(0);
@@ -35,7 +37,7 @@ export function UpdateDialog({ update, onClose }: Props) {
 
   const busy = state === "downloading" || state === "installing";
   // Mise à jour obligatoire : « Plus tard » seulement si elle a échoué (hors ligne…).
-  const failed = state === "error";
+  const failed = state === "error" || (optional && state === "idle");
   return (
     <Dialog
       title="Mise à jour du launcher"
@@ -57,7 +59,7 @@ export function UpdateDialog({ update, onClose }: Props) {
     >
       <p>
         La version <strong>{update.version}</strong> de FaRFa project est disponible (vous avez la {update.currentVersion}).
-        Cette mise à jour est obligatoire.
+        {optional ? "Le launcher redémarre une fois la mise à jour installée." : "Cette mise à jour est obligatoire."}
       </p>
       {update.body && <pre className="update-notes">{update.body}</pre>}
       {state === "downloading" && (

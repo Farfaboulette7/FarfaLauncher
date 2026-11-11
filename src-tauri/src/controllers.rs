@@ -347,7 +347,55 @@ mod eden {
         input(pad, element)?.strip_prefix("axis:").map(str::to_string)
     }
 
+    /// Adaptateur GameCube (Nintendo WUP-028, ou manette qui l'imite comme la GC Ultimate
+    /// en mode GC) : Citron et Eden le lisent eux-mêmes (`engine:gcpad`), pas par SDL.
+    pub fn is_gc_adapter(pad: &PadInfo) -> bool {
+        let g = pad.guid.to_ascii_lowercase();
+        g.len() == 32 && &g[8..12] == "7e05" && &g[16..20] == "3703"
+    }
+
+    /// Association de l'émulateur pour une manette GameCube (type 5), sur le port de
+    /// l'adaptateur : celle que Citron écrit quand on la règle à la main.
+    pub fn gc_entries(port: usize, player: usize) -> Vec<(String, String)> {
+        let b = |n: u32| format!("\"engine:gcpad,port:{port},button:{n}\"");
+        let trigger = |n: u32, axis: u32| format!("\"engine:gcpad,port:{port},button:{n},direction:+,axis:{axis},threshold:0.500000,range:1.900000\"");
+        let stick = |x: u32, y: u32| format!("\"engine:gcpad,port:{port},axis_x:{x},axis_y:{y},deadzone:0.100000,range:0.700000\"");
+        let empty = || "[empty]".to_string();
+        [
+            ("button_a", b(256)),
+            ("button_b", b(512)),
+            ("button_x", b(1024)),
+            ("button_y", b(2048)),
+            ("button_lstick", empty()),
+            ("button_rstick", empty()),
+            ("button_l", empty()),
+            ("button_r", b(16)),
+            ("button_zl", trigger(64, 4)),
+            ("button_zr", trigger(32, 5)),
+            ("button_plus", b(4096)),
+            ("button_minus", empty()),
+            ("button_dleft", b(1)),
+            ("button_dup", b(8)),
+            ("button_dright", b(2)),
+            ("button_ddown", b(4)),
+            ("button_slleft", b(64)),
+            ("button_srleft", b(32)),
+            ("button_home", empty()),
+            ("button_screenshot", empty()),
+            ("button_slright", b(64)),
+            ("button_srright", b(32)),
+            ("lstick", stick(0, 1)),
+            ("rstick", stick(2, 3)),
+        ]
+        .into_iter()
+        .map(|(k, v)| (format!("player_{player}_{k}"), v))
+        .collect()
+    }
+
     pub fn entries(pad: &PadInfo, all: &[PadInfo], player: usize) -> Vec<(String, String)> {
+        if is_gc_adapter(pad) {
+            return gc_entries(rank(pad, all, is_gc_adapter), player);
+        }
         let src = source(pad, all);
         let mut out = Vec::new();
         for (switch, element) in BUTTONS {
@@ -379,14 +427,29 @@ mod eden {
             let connected = format!("Controls.player_{i}_connected");
             match ports.get(i).cloned().flatten() {
                 Some(pad) => {
+                    let gc = is_gc_adapter(&pad);
                     // Même manette au même port qu'avant : les réglages faits dans Eden restent.
+                    let wanted = if gc { format!("engine:gcpad,port:{}", rank(&pad, all, is_gc_adapter)) } else { source(&pad, all) };
                     let same = ini_value(&text, "Controls", &format!("player_{i}_button_a"))
-                        .is_some_and(|v| source(&pad, all).split(',').all(|part| v.split([',', '"']).any(|p| p == part)));
+                        .is_some_and(|v| wanted.split(',').all(|part| v.split([',', '"']).any(|p| p == part)));
                     if !same {
                         for (key, value) in entries(&pad, all, i) {
                             text = set_ini(&text, &format!("Controls.{key}\\default"), "false");
                             text = set_ini(&text, &format!("Controls.{key}"), &value);
                         }
+                        tracing::info!("manettes : joueur {} sur « {} » ({wanted})", i + 1, pad.name);
+                    }
+                    // Type de manette : GameCube (5) pour l'adaptateur, Pro Controller (0) sinon.
+                    let kind = format!("Controls.player_{i}_type");
+                    let current = ini_value(&text, "Controls", &format!("player_{i}_type"));
+                    let new_kind = match (gc, current) {
+                        (true, c) if c != Some("5") => Some("5"),
+                        (false, Some("5")) => Some("0"),
+                        _ => None,
+                    };
+                    if let Some(k) = new_kind {
+                        text = set_ini(&text, &format!("{kind}\\default"), "false");
+                        text = set_ini(&text, &kind, k);
                     }
                     text = set_ini(&text, &format!("{connected}\\default"), "false");
                     text = set_ini(&text, &connected, "true");
@@ -1429,6 +1492,33 @@ Up = SDL-0/DPadUp") && text.contains("Cross = SDL-0/FaceSouth") && text.contains
         std::fs::write(dir.join("user/config/qt-config.ini"), text.replace(&format!("{g},button:1"), &format!("{g},button:0"))).unwrap();
         apply("eden", &[], &[x], &dir).unwrap();
         assert!(std::fs::read_to_string(dir.join("user/config/qt-config.ini")).unwrap().contains(&format!("player_0_button_a=\"engine:sdl,{g},button:0\"")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn eden_gamecube_adapter() {
+        // GC Ultimate en mode GC sous Linux : vue comme l'adaptateur GameCube de Nintendo.
+        let gc = pad(5, "HHL GCU 1", "0300b0be7e0500003703000010010000", "usb", None);
+        let mut pro = pad(6, "Nintendo Switch Pro Controller", "0300b0be7e0500000920000010026803", "usb", None);
+        pro.bindings = vec![("east", "button:1".to_string()), ("south", "button:0".to_string())];
+        assert!(eden::is_gc_adapter(&gc) && !eden::is_gc_adapter(&pro));
+        let dir = std::env::temp_dir().join(format!("farfa-eden-gc-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        apply("eden", &[], &[gc.clone()], &dir).unwrap();
+        let ini = dir.join("user/config/qt-config.ini");
+        let text = std::fs::read_to_string(&ini).unwrap();
+        assert!(text.contains("player_0_type=5") && text.contains("player_0_connected=true"));
+        assert!(text.contains("player_0_button_a=\"engine:gcpad,port:0,button:256\""));
+        assert!(text.contains("player_0_lstick=\"engine:gcpad,port:0,axis_x:0,axis_y:1,deadzone:0.100000,range:0.700000\""));
+        assert!(text.contains("player_0_button_minus=[empty]"));
+        // Réglage retouché dans Citron, même adaptateur : gardé.
+        std::fs::write(&ini, text.replace("port:0,button:16\"", "port:0,button:128\"")).unwrap();
+        apply("eden", &[], &[gc], &dir).unwrap();
+        assert!(std::fs::read_to_string(&ini).unwrap().contains("player_0_button_r=\"engine:gcpad,port:0,button:128\""));
+        // Passée en Pro Controller : SDL et type Pro.
+        apply("eden", &[], &[pro], &dir).unwrap();
+        let text = std::fs::read_to_string(&ini).unwrap();
+        assert!(text.contains("player_0_type=0") && text.contains("player_0_button_a=\"engine:sdl,port:0,guid:030000007e0500000920000010026803"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -346,6 +346,7 @@ export type InstallPhase =
   | "extract"
   | "installer"
   | "client"
+  | "build"
   | "finalize";
 
 export interface InstallProgress {
@@ -535,6 +536,7 @@ export const backend = {
   setFullscreen: (on: boolean) => invoke<void>("set_fullscreen", { on }),
   gamepads: () => invoke<PadInfo[]>("gamepads"),
   saveCheck: (romId: number) => invoke<SaveCheck>("save_check", { romId }),
+  shaderInfo: (romId: number) => invoke<Record<string, SharedShaders>>("shader_info", { romId }),
   setSaveLocation: (romId: number, dir: string | null, off: boolean) =>
     invoke<InstalledGame>("set_save_location", { romId, dir, off }),
   openSaveFolder: (romId: number) => invoke<void>("open_save_folder", { romId }),
@@ -567,6 +569,14 @@ export function formatPlaytime(ms: number): string {
 /** Mise à jour disponible : le VERSION.txt du serveur diffère de celui installé
  *  (ou la version installée est inconnue). */
 /** Le jeu peut être installé sur ce système. */
+/** Shaders d'un jeu Switch réunis sur FarfaRomManager pour un émulateur. */
+export interface SharedShaders {
+  count: number;
+  players: number[];
+  sessions: { at: string; added: number }[];
+  updatedAt: string;
+}
+
 export function isAvailable(game: Game): boolean {
   return !!game.myArchive || !!game.pc?.runnable;
 }

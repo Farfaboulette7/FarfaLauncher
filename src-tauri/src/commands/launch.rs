@@ -141,6 +141,7 @@ pub async fn play_game(
     let direct = refreshed.as_ref().or(st.direct_launch.as_ref()).filter(|d| !open_menu && !st.prefer_launcher && st.game_dir.join(rel_to_path(&d.exe)).exists());
     // Recomp ou émulateur : français par défaut, posé avant le lancement.
     let mut env: Vec<(String, String)> = direct.map(|d| d.env.clone()).unwrap_or_default();
+    let mut shader_job: Option<crate::shaders::Job> = None;
     if prepared.is_none() {
         let program = st.game_dir.join(rel_to_path(direct.map(|d| d.exe.as_str()).unwrap_or(&exe)));
         let exe_dir = match state.catalog().emulator_for_install(&st) {
@@ -174,6 +175,11 @@ pub async fn play_game(
                     Err(err) => tracing::warn!("contenu du jeu non déclaré à {}: {err}", e.name),
                 }
             }
+        }
+        // Citron et Eden : shaders déjà vus par les autres joueurs, reçus du serveur.
+        shader_job = shaders_job(&state, &st, &exe_dir);
+        if let Some(job) = &shader_job {
+            job.before().await;
         }
     }
     let spec = match (&prepared, direct) {
@@ -239,11 +245,29 @@ pub async fn play_game(
         }
         // Même pour une session courte : le joueur a pu sauvegarder.
         let (save, save_error) = saves::after_play(&state, state.client().ok(), rom_id, std::time::SystemTime::from(started)).await;
+        if let Some(job) = &shader_job {
+            job.after(std::time::SystemTime::from(started)).await;
+        }
         // Dossier des sauvegardes peut-être trouvé à la sortie du jeu : état à jour.
         let game = game.or_else(|| state::find(&state.config_dir, rom_id));
         let _ = app.emit("game-stopped", GameStopped { rom_id, duration_ms: session.duration_ms, recorded, pending, save, save_error, game });
     });
     Ok(())
+}
+
+/// Partage des shaders pour un jeu Switch lancé par Citron ou Eden.
+fn shaders_job(state: &AppState, st: &state::InstalledGame, exe_dir: &std::path::Path) -> Option<crate::shaders::Job> {
+    let emulator = state.catalog().emulator_for_install(st).filter(|e| e.consoles.iter().any(|c| c == "switch"))?.id.clone();
+    let base = crate::manager::base_url(&state.settings())?;
+    let rom_dir = st.shared.as_ref()?.rom_dir.clone()?;
+    Some(crate::shaders::Job {
+        manager: state.client().ok()?.with_base(&base),
+        emulator,
+        rom_id: st.rom_id,
+        shader_root: exe_dir.join("user").join("shader"),
+        config_dir: state.config_dir.clone(),
+        roms: st.roms.iter().map(|r| rom_dir.join(rel_to_path(r))).collect(),
+    })
 }
 
 /// Retient le jeu démarré par le launcher ; renvoie l'état s'il a changé.

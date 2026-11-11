@@ -1,3 +1,5 @@
+import { getVersion } from "@tauri-apps/api/app";
+import type { Update } from "@tauri-apps/plugin-updater";
 import { Emblem } from "../components/Emblem";
 import { CSSProperties, memo, ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
@@ -148,9 +150,16 @@ interface Props {
   /** Déconnexion volontaire (notice = null) ou forcée (token révoqué…). */
   onLogout: (notice: string | null) => void;
   onCheckUpdates: () => Promise<string>;
+  /** Nouvelle version sortie pendant que le launcher tourne. */
+  update: Update | null;
+  onUpdate: () => void;
 }
 
-export function Library({ session, onLogout, onCheckUpdates }: Props) {
+export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }: Props) {
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+  useEffect(() => {
+    getVersion().then(setAppVersion).catch(() => undefined);
+  }, []);
   const [snapshot, setSnapshot] = useState<LibrarySnapshot | null>(null);
   const [target, setTarget] = useState<Target | null>(null);
   const [loading, setLoading] = useState(true);
@@ -559,6 +568,7 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
           <p className="n-subtitle lib-brand-name">
             <Emblem className="brand-logo" />
             FaRFa project
+            {appVersion && <span className="lib-version">v{appVersion}</span>}
           </p>
           <nav className="lib-tabs" role="tablist">
             {TABS.map((t) => (
@@ -576,6 +586,11 @@ export function Library({ session, onLogout, onCheckUpdates }: Props) {
         </div>
         <div className="lib-status">
           <span className="lib-user">{session.offline ? "Hors ligne" : session.username}</span>
+          {update && (
+            <button className="n-btn lib-update" onClick={onUpdate} title={`Installer la version ${update.version} (le launcher redémarre)`}>
+              Mettre à jour ({update.version})
+            </button>
+          )}
           <button
             className="n-btn"
             onClick={() => {

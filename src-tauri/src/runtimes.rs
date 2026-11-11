@@ -332,6 +332,18 @@ pub fn data_dir(name: &str) -> Option<PathBuf> {
 /// (AppImage) et l'ancienne reste sur le disque : celle de la version installée d'abord.
 pub fn pick_exe(candidates: &[String], exe: &str, version: Option<&str>) -> Option<String> {
     let exe = exe.to_lowercase();
+    // Chemin (`bin/hookshot`) : le fichier à cet endroit, quelle que soit son extension.
+    if exe.contains('/') {
+        let suffix = format!("/{}", exe.trim_start_matches('/'));
+        return candidates
+            .iter()
+            .find(|c| {
+                let c = format!("/{}", c.to_lowercase());
+                let stem = c.rsplit_once('.').filter(|(_, ext)| !ext.contains('/')).map(|(s, _)| s.to_string()).unwrap_or(c.clone());
+                stem.ends_with(&suffix)
+            })
+            .cloned();
+    }
     let name = |c: &str| c.rsplit('/').next().unwrap_or(c).to_lowercase();
     // Le nom exact d'abord : `mGBA.exe` plutôt que `mgba-sdl.exe`.
     let exact = |c: &str| Path::new(&name(c)).file_stem().is_some_and(|s| s.to_string_lossy() == exe);

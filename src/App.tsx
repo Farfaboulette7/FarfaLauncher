@@ -48,7 +48,7 @@ export default function App() {
   } else if (!session.connected) {
     screen = <Login initialServerUrl={session.serverUrl} notice={session.notice} onLoggedIn={setSession} />;
   } else {
-    screen = <Library session={session} onLogout={backToLogin} onCheckUpdates={updater.checkNow} />;
+    screen = <Library session={session} onLogout={backToLogin} onCheckUpdates={updater.checkNow} update={updater.waiting} onUpdate={updater.open} />;
   }
 
   return (
@@ -57,7 +57,7 @@ export default function App() {
       {screen}
       {session?.connected && <NowPlaying />}
       {intro && <Intro onDone={endIntro} />}
-      {updater.available && <UpdateDialog update={updater.available} onClose={updater.dismiss} />}
+      {updater.available && <UpdateDialog update={updater.available} onClose={updater.dismiss} optional={updater.optional} />}
     </>
   );
 }

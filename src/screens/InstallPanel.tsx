@@ -21,6 +21,7 @@ import {
   InstallPhase,
   isAppError,
   SaveChoice,
+  SharedShaders,
   Target,
   TARGET_LABELS,
 } from "../api/backend";
@@ -37,6 +38,7 @@ const PHASE_LABELS: Record<InstallPhase, string> = {
   extract: "Extraction",
   installer: "Installation",
   client: "Téléchargement du client",
+  build: "Construction du jeu",
   finalize: "Finalisation…",
 };
 
@@ -587,6 +589,28 @@ export function InstallFacts({ game: base, target, installs }: { game: Game; tar
   const runtimeInstalled = !!game.runtime && !!installs.installed.get(game.runtime.romId)?.executable;
   const withEmulator = isEmulatorInstall(inst) || (!inst && !game.recomp);
   const emulatorSystems = withEmulator ? (game.emulator?.systems ?? []) : [];
+  const [shaders, setShaders] = useState<Record<string, SharedShaders>>({});
+  useEffect(() => {
+    let live = true;
+    setShaders({});
+    if (!withEmulator) return;
+    backend
+      .shaderInfo(base.id)
+      .then((s) => live && setShaders(s))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [base.id, withEmulator]);
+  const shaderLines = Object.entries(shaders).map(([emu, s]) => {
+    const name = game.emulators?.find((e) => e.id === emu)?.name ?? emu;
+    const last = s.sessions[s.sessions.length - 1]?.added ?? 0;
+    const recent = s.sessions.slice(-3);
+    // Plus rien de neuf aux dernières parties : il en manque sans doute peu.
+    const almost = recent.length >= 3 && recent.reduce((n, x) => n + x.added, 0) <= Math.max(1, s.count / 100);
+    const players = s.players.length > 1 ? ` · ${s.players.length} joueurs` : "";
+    return `${name} : ${s.count.toLocaleString("fr-FR")}${players} · +${last} à la dernière partie${almost ? " (presque complet)" : ""}`;
+  });
   return (
     <>
       {game.runtime && !withEmulator && (
@@ -667,6 +691,16 @@ export function InstallFacts({ game: base, target, installs }: { game: Game; tar
           <dd>{formatSize(emulatorDownloadSize(game, installs.installed.get(game.emulator?.runtimeRomId ?? -1)?.versionRaw === game.emulator?.versionKey))}</dd>
         </>
       )}
+      {shaderLines.length > 0 && (
+        <>
+          <dt>Shaders partagés</dt>
+          <dd title="Shaders déjà vus par les joueurs, réunis sur le serveur : reçus avant la partie, ils évitent les saccades.">
+            {shaderLines.map((l) => (
+              <div key={l}>{l}</div>
+            ))}
+          </dd>
+        </>
+      )}
       <dt>Plateformes</dt>
       <dd>
         <ul className="gd-platforms">
@@ -732,6 +766,7 @@ function ProgressView({
         <div className={pct === null ? "is-indeterminate" : undefined} style={pct === null ? undefined : { width: `${pct}%` }} />
       </div>
       {installing && <p className="n-hint">Installation en cours, elle ne peut plus être annulée.</p>}
+      {phase === "build" && <p className="n-hint">Le jeu est construit sur ce PC à partir de votre copie : 10 à 45 minutes selon le processeur.</p>}
       {phase !== "finalize" && !installing && (
         <button className="n-link" onClick={onCancel}>
           Annuler

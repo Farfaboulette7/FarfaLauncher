@@ -20,8 +20,10 @@ mod save_store;
 mod saves;
 mod secrets;
 mod settings;
+mod shaders;
 mod state;
 mod switch_content;
+mod switch_saves;
 
 /// Au-delà, les jaquettes les plus anciennes sont retirées au démarrage (elles se retéléchargent).
 const IMAGE_CACHE_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
@@ -108,6 +110,7 @@ pub fn run() {
             commands::music::music_tracks,
             commands::music::music_files,
             commands::saves::save_check,
+            commands::saves::shader_info,
             commands::saves::set_save_location,
             commands::saves::open_save_folder,
             commands::install::install_info,
