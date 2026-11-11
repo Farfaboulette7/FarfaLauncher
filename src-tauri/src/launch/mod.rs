@@ -109,12 +109,11 @@ pub fn spawn(game_dir: &Path, launch: Launch<'_>) -> AppResult<RunningGame> {
         return Err(AppError::NoExecutable);
     }
     // Bundle macOS : son programme est lancé directement (arguments, variables, arrêt et
-    // pause comme ailleurs), depuis le dossier qui contient le .app (fichiers du jeu à côté).
-    let bundle_dir = app_binary(&exe).is_some().then(|| exe.parent().unwrap_or(game_dir).to_path_buf());
+    // pause comme ailleurs), depuis son dossier (Contents/MacOS) sauf `cwd` donné.
     let exe = app_binary(&exe).unwrap_or(exe);
     let work_dir = match &launch.cwd {
         Some(rel) if game_dir.join(rel).is_dir() => game_dir.join(rel),
-        _ => bundle_dir.unwrap_or_else(|| exe.parent().unwrap_or(game_dir).to_path_buf()),
+        _ => exe.parent().unwrap_or(game_dir).to_path_buf(),
     };
     let args = direct::expand_args(launch.args, game_dir);
     let mut cmd = match launch.runner {

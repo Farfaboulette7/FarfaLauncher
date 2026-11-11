@@ -119,6 +119,15 @@ pub fn refreshed_launch(emulator: &Emulator, st: &InstalledGame) -> Option<Direc
     Some(DirectLaunch { exe: old.exe.clone(), args, cwd: old.cwd.clone(), env })
 }
 
+/// Émulateur en bundle `.app` (Mac) : lancé depuis le dossier qui contient le bundle, où
+/// les dérivés de yuzu cherchent `user/` et mGBA son `portable.ini`.
+fn bundle_cwd(exe: &str) -> Option<String> {
+    if !cfg!(target_os = "macos") || !exe.to_ascii_lowercase().ends_with(".app") {
+        return None;
+    }
+    Some(exe.rsplit_once('/').map(|(dir, _)| dir.to_string()).unwrap_or_default())
+}
+
 /// Identifiant d'un disque : GameCube ou Wii (`GZ2P01`, dans son en-tête), PSP
 /// (`ULES00151`, dans `UMD_DATA.BIN`) ou PS2 (`SLES-50330`, dans `SYSTEM.CNF`),
 /// aussi au format CHD.
@@ -374,7 +383,7 @@ impl InstallJob {
                 .collect(),
             mods_downloaded: Vec::new(),
             saves: previous.as_ref().map(|p| p.saves.clone()).unwrap_or_else(SaveSync::default),
-            direct_launch: Some(DirectLaunch { exe: exe.clone(), args, cwd: None, env }),
+            direct_launch: Some(DirectLaunch { exe: exe.clone(), args, cwd: bundle_cwd(&exe), env }),
             prefer_launcher: false,
             players: previous.as_ref().map(|p| p.players.clone()).unwrap_or_default(),
             installed_at: previous.as_ref().map(|p| p.installed_at).unwrap_or(now),

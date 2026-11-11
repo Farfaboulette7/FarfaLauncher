@@ -713,7 +713,11 @@ fn unchanged_rom(sources: &[state::RomSource], f: &RemoteFile, game_dir: &Path) 
 }
 
 fn exe_parent(exe_rel: &Path) -> PathBuf {
-    // Pour un bundle `.app`, la « position » de l'exécutable est celle du bundle.
+    // Bundle `.app` sur Mac : le dossier de son programme (Contents/MacOS), comme le
+    // dossier de l'exécutable sous Windows ; c'est là que les portages cherchent leurs fichiers.
+    if cfg!(target_os = "macos") && exe_rel.extension().is_some_and(|e| e.eq_ignore_ascii_case("app")) {
+        return exe_rel.join("Contents").join("MacOS");
+    }
     exe_rel.parent().map(Path::to_path_buf).unwrap_or_default()
 }
 
