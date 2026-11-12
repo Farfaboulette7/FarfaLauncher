@@ -1,12 +1,18 @@
+// Sans la feature `gui` (programme du Steam Deck), une partie du moteur ne sert pas.
+#![cfg_attr(not(feature = "gui"), allow(dead_code, unused_imports))]
+
 mod assets;
 mod cache;
+#[cfg(feature = "gui")]
 mod commands;
 mod controllers;
+pub mod deck;
 mod dialogs;
 mod error;
 mod external;
 mod gamepad;
 mod hardware;
+#[cfg(feature = "gui")]
 mod ingame;
 mod install;
 mod language;
@@ -15,12 +21,15 @@ mod logging;
 mod manager;
 mod optimize;
 mod pc;
+mod play;
 mod report;
 mod platform;
 mod romm;
 mod runtimes;
 mod save_store;
+mod save_sync;
 mod saves;
+#[cfg(feature = "gui")]
 mod secrets;
 mod settings;
 mod shaders;
@@ -29,10 +38,13 @@ mod switch_content;
 mod switch_saves;
 
 /// Au-delà, les jaquettes les plus anciennes sont retirées au démarrage (elles se retéléchargent).
+#[cfg(feature = "gui")]
 const IMAGE_CACHE_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
+#[cfg(feature = "gui")]
 use tauri::Manager;
 
+#[cfg(feature = "gui")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     external::prepare_linux();

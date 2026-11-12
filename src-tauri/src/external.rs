@@ -6,7 +6,9 @@
 //! cet environnement plante ou ne s'ouvre pas. On lance donc `xdg-open` avec
 //! l'environnement d'origine, nettoyé de ce que l'AppImage a ajouté.
 
+#[cfg(feature = "gui")]
 use tauri::AppHandle;
+#[cfg(feature = "gui")]
 use tauri_plugin_opener::OpenerExt;
 
 use crate::error::{log_err, AppError, AppResult};
@@ -33,6 +35,7 @@ pub fn prepare_linux() {
 }
 
 /// Ouvre une adresse web dans le navigateur par défaut.
+#[cfg(feature = "gui")]
 pub fn open_url(app: &AppHandle, url: &str) -> AppResult<()> {
     if appimage_open(url) {
         return Ok(());
@@ -43,6 +46,7 @@ pub fn open_url(app: &AppHandle, url: &str) -> AppResult<()> {
 }
 
 /// Ouvre un dossier ou un fichier dans le gestionnaire de fichiers.
+#[cfg(feature = "gui")]
 pub fn open_path(app: &AppHandle, path: &str, context: &str) -> AppResult<()> {
     if appimage_open(path) {
         return Ok(());

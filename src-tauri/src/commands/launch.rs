@@ -1,24 +1,17 @@
 //! Bouton « Jouer » : lancement, suivi de la session et envoi du temps de jeu.
-//! Événements : `game-started` puis `game-stopped`.
+//! Événements : `game-started` puis `game-stopped`. La préparation et la fin
+//! de partie sont dans `play`, partagé avec le programme du Steam Deck.
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
-use time::OffsetDateTime;
 
-use super::saves::{self, SaveChoice, SaveUpload};
 use crate::error::{AppError, AppResult};
 use crate::gamepad;
-use crate::install::{rel_to_path, state};
-use crate::install::state::DirectLaunch;
-use crate::launch::{self, Launch};
-use crate::pc::cod::CodMode;
-use crate::pc::dosbox;
-use crate::pc::proton::{self, Runner};
-use crate::romm::playtime::{self, PendingSession};
+use crate::install::state;
+use crate::play::{self, CodChoice};
+use crate::romm::playtime;
+use crate::save_sync::{SaveChoice, SaveUpload};
 use crate::state::AppState;
-
-/// Sessions plus courtes ignorées (plantage au démarrage, fausse manip).
-const MIN_SESSION_SECS: i64 = 30;
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -36,61 +29,6 @@ struct GameStopped {
     game: Option<state::InstalledGame>,
     /// Le jeu semble avoir planté : l'interface propose d'envoyer un rapport.
     crashed: bool,
-}
-
-/// Mode choisi pour un Call of Duty.
-#[derive(Debug, Clone, Copy, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CodChoice {
-    mode: CodMode,
-    /// Plutonium : en ligne (`true`) ou en LAN.
-    #[serde(default)]
-    online: bool,
-}
-
-/// Lancement d'un jeu PC, préparé avant la partie.
-struct PreparedPc {
-    exe: std::path::PathBuf,
-    args: Vec<String>,
-    cwd: Option<std::path::PathBuf>,
-    runner: Option<Runner>,
-}
-
-/// Nom du joueur en LAN : celui de la session de l'ordinateur.
-fn player_name() -> String {
-    ["USERNAME", "USER"]
-        .iter()
-        .find_map(|k| std::env::var(k).ok())
-        .map(|n| n.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_').take(15).collect::<String>())
-        .filter(|n| !n.is_empty())
-        .unwrap_or_else(|| "Joueur".into())
-}
-
-/// Jeu PC : Proton prêt (téléchargé si besoin), client Call of Duty à jour.
-async fn prepare_pc(state: &AppState, st: &state::InstalledGame, cod: Option<CodChoice>) -> AppResult<Option<PreparedPc>> {
-    let Some(pc) = &st.pc else { return Ok(None) };
-    let runner = match &pc.proton {
-        Some(setup) => Some(proton::runner(&state.config_dir, setup, pc.steam_app_id, &tokio_util::sync::CancellationToken::new(), |_, _| {}).await?),
-        None => None,
-    };
-    if let Some(game) = pc.cod {
-        let choice = cod.ok_or(AppError::ModeRequired)?;
-        let (exe, args, cwd) =
-            crate::pc::install::prepare_cod(game, choice.mode, choice.online, &st.game_dir, runner.as_ref(), &player_name()).await?;
-        return Ok(Some(PreparedPc { exe, args, cwd, runner }));
-    }
-    let exe = st.executable.as_deref().ok_or(AppError::NoExecutable)?;
-    let mut args = pc.args.clone();
-    if dosbox::is_dosbox(exe) {
-        // Touches personnalisées : config lue en dernier par DOSBox.
-        let path_for = |p: &std::path::Path| if runner.is_some() { proton::windows_path(p) } else { p.to_string_lossy().into_owned() };
-        match dosbox::write(&st.game_dir, &pc.keys, path_for) {
-            Ok(Some(conf)) => args.extend(["-conf".to_string(), path_for(&conf)]),
-            Ok(None) => {}
-            Err(e) => tracing::warn!("touches DOSBox non écrites: {e}"),
-        }
-    }
-    Ok(Some(PreparedPc { exe: rel_to_path(exe), args, cwd: pc.cwd.as_deref().map(rel_to_path), runner }))
 }
 
 #[tauri::command]
@@ -111,7 +49,7 @@ pub async fn play_game(
     menu: Option<bool>,
 ) -> AppResult<()> {
     let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
-    let exe = st.executable.clone().ok_or(AppError::NoExecutable)?;
+    st.executable.as_ref().ok_or(AppError::NoExecutable)?;
     if state.installs.lock().unwrap().contains_key(&rom_id) || state.is_busy(rom_id) {
         return Err(AppError::Busy);
     }
@@ -120,91 +58,14 @@ pub async fn play_game(
     if !state.running.lock().unwrap().insert(rom_id) {
         return Err(AppError::AlreadyRunning);
     }
-    if let Err(e) = saves::before_play(&state, rom_id, save_choice).await {
-        state.running.lock().unwrap().remove(&rom_id);
-        return Err(e);
-    }
-    let prepared = match prepare_pc(&state, &st, cod).await {
-        Ok(p) => p,
+    let started = match play::start(&state, rom_id, save_choice, cod, menu == Some(true), &gamepad::connected()).await {
+        Ok(s) => s,
         Err(e) => {
             state.running.lock().unwrap().remove(&rom_id);
             return Err(e);
         }
     };
-    // Jeu déjà relevé derrière le launcher : lancé directement.
-    let open_menu = menu == Some(true) && st.shared.is_some();
-    // Émulateur : arguments relus sur le catalogue.
-    // Recomp à un seul jeu avec `argument:` : lancée sur sa ROM, sans son menu.
-    let refreshed = state
-        .catalog()
-        .emulator_for_install(&st)
-        .and_then(|e| crate::install::emulator::refreshed_launch(e, &st))
-        .or_else(|| state.catalog().recomp_launch(&st));
-    let direct = refreshed.as_ref().or(st.direct_launch.as_ref()).filter(|d| !open_menu && !st.prefer_launcher && st.game_dir.join(rel_to_path(&d.exe)).exists());
-    // Recomp ou émulateur : français par défaut, posé avant le lancement.
-    let mut env: Vec<(String, String)> = direct.map(|d| d.env.clone()).unwrap_or_default();
-    let mut shader_job: Option<crate::shaders::Job> = None;
-    if prepared.is_none() {
-        let program = st.game_dir.join(rel_to_path(direct.map(|d| d.exe.as_str()).unwrap_or(&exe)));
-        let exe_dir = match state.catalog().emulator_for_install(&st) {
-            Some(e) => e.data_dir(&st.game_dir, direct.map(|d| d.exe.as_str()).unwrap_or(&exe)),
-            None => program.parent().unwrap_or(&st.game_dir).to_path_buf(),
-        };
-        let rules = state.catalog().language_for_install(&st);
-        if !rules.is_empty() {
-            env.extend(crate::language::prepare(&st.game_dir, &exe_dir, &rules));
-        }
-        // Programmes de l'émulateur à lancer d'abord (ex. shaders partagés de lichii-sync).
-        if let Some(e) = state.catalog().emulator_for_install(&st) {
-            launch::before::clean(&e.launch.clean, &exe_dir);
-        }
-        let before = state.catalog().emulator_for_install(&st).map(|e| launch::before::applicable(&e.launch.before)).unwrap_or_default();
-        if !before.is_empty() {
-            let dir = exe_dir.clone();
-            let _ = tauri::async_runtime::spawn_blocking(move || launch::before::run_all(&before, &dir)).await;
-        }
-        // Manette de chaque joueur, posée avant que le jeu ne prenne les manettes.
-        if let Some(format) = state.catalog().controllers_for_install(&st) {
-            if let Err(e) = crate::controllers::apply(&format, &st.players, &gamepad::connected(), &exe_dir) {
-                tracing::warn!("manettes non attribuées: {e}");
-            }
-        }
-        // Citron et Eden : mises à jour et DLC du jeu lus dans son dossier.
-        if let Some(e) = state.catalog().emulator_for_install(&st).filter(|e| e.consoles.iter().any(|c| c == "switch")) {
-            if let Some(rom_dir) = st.shared.as_ref().and_then(|s| s.rom_dir.as_ref()) {
-                match crate::switch_content::apply(&exe_dir, rom_dir) {
-                    Ok(()) => tracing::info!("{} : contenu (mises à jour, DLC) lu dans {}", e.name, rom_dir.display()),
-                    Err(err) => tracing::warn!("contenu du jeu non déclaré à {}: {err}", e.name),
-                }
-            }
-        }
-        // Réglages optimisés pour ce PC (FarfaRomManager), sauf si le joueur les a coupés.
-        let rules = state.catalog().optimize_for_install(&st);
-        if !rules.is_empty() && !state.settings().optimize_off.contains(&st.rom_id) {
-            let title = crate::switch_saves::title_id(&state.catalog(), &state.config_dir, &st);
-            let game = crate::optimize::GameRef { rom_id: st.rom_id, title: title.as_deref() };
-            env.extend(crate::optimize::apply(&rules, crate::hardware::get(), &game, &exe_dir));
-        }
-        // Citron et Eden : shaders déjà vus par les autres joueurs, reçus du serveur.
-        shader_job = shaders_job(&state, &st, &exe_dir);
-        if let Some(job) = &shader_job {
-            job.before().await;
-        }
-    }
-    let spec = match (&prepared, direct) {
-        (Some(p), _) => Launch { exe: p.exe.clone(), args: &p.args, env: &[], cwd: p.cwd.clone(), learn: false, runner: p.runner.as_ref() },
-        (None, Some(d)) => Launch { exe: rel_to_path(&d.exe), args: &d.args, env: &env, cwd: d.cwd.as_deref().map(rel_to_path), learn: false, runner: None },
-        // Jeu d'un runtime : son lancement est connu, le menu de la recomp n'a rien à apprendre.
-        (None, None) => Launch { exe: rel_to_path(&exe), args: &[], env: &env, cwd: None, learn: st.shared.is_none(), runner: None },
-    };
-    let running = match launch::spawn(&st.game_dir, spec) {
-        Ok(r) => r,
-        Err(e) => {
-            state.running.lock().unwrap().remove(&rom_id);
-            return Err(e);
-        }
-    };
-    let started = OffsetDateTime::now_utc();
+    let play::Started { running, started, shader_job, game: st } = started;
     state.playing.lock().unwrap().insert(rom_id, crate::ingame::Playing { started: std::time::Instant::now(), stop: running.stop_flag(), control: running.control() });
     let _ = app.emit("game-started", rom_id);
     crate::ingame::prepare(&app);
@@ -221,7 +82,6 @@ pub async fn play_game(
         })
         .await
         .unwrap_or((None, false));
-        let ended = OffsetDateTime::now_utc();
         ended_flag.store(true, std::sync::atomic::Ordering::Relaxed);
         let state = app.state::<AppState>();
         state.running.lock().unwrap().remove(&rom_id);
@@ -235,65 +95,13 @@ pub async fn play_game(
             let _ = window.unminimize();
             let _ = window.set_focus();
         }
-        let game = learned.and_then(|d| remember_direct(&state, rom_id, d));
-
-        let session = PendingSession::new(rom_id, started, ended);
-        let recorded = (ended - started).whole_seconds() >= MIN_SESSION_SECS;
-        let mut pending = 0;
-        if recorded {
-            if let Err(e) = playtime::enqueue(&state.config_dir, session.clone()) {
-                tracing::error!("session de jeu non enregistrée localement: {}", e.code());
-            }
-            pending = match state.client() {
-                Ok(client) => playtime::flush(&client, &state.config_dir).await.unwrap_or_else(|_| playtime::pending_count(&state.config_dir)),
-                Err(_) => playtime::pending_count(&state.config_dir),
-            };
-        } else {
-            tracing::info!("session de {} s ignorée (moins de {MIN_SESSION_SECS} s)", (ended - started).whole_seconds());
-        }
-        // Même pour une session courte : le joueur a pu sauvegarder.
-        let (save, save_error) = saves::after_play(&state, state.client().ok(), rom_id, std::time::SystemTime::from(started)).await;
-        if let Some(job) = &shader_job {
-            job.after(std::time::SystemTime::from(started)).await;
-        }
-        // Dossier des sauvegardes peut-être trouvé à la sortie du jeu : état à jour.
-        let game = game.or_else(|| state::find(&state.config_dir, rom_id));
-        let _ = app.emit("game-stopped", GameStopped { rom_id, duration_ms: session.duration_ms, recorded, pending, save, save_error, game, crashed });
+        let f = play::finish(&state, rom_id, started, learned, shader_job).await;
+        let _ = app.emit(
+            "game-stopped",
+            GameStopped { rom_id, duration_ms: f.duration_ms, recorded: f.recorded, pending: f.pending, save: f.save, save_error: f.save_error, game: f.game, crashed },
+        );
     });
     Ok(())
-}
-
-/// Partage des shaders pour un jeu Switch lancé par Citron ou Eden.
-fn shaders_job(state: &AppState, st: &state::InstalledGame, exe_dir: &std::path::Path) -> Option<crate::shaders::Job> {
-    let emulator = state.catalog().emulator_for_install(st).filter(|e| e.consoles.iter().any(|c| c == "switch" || c == "switch-2"))?.id.clone();
-    let (shader_root, cache_name) = crate::shaders::locate(exe_dir)?;
-    let base = crate::manager::base_url(&state.settings())?;
-    let rom_dir = st.shared.as_ref()?.rom_dir.clone()?;
-    Some(crate::shaders::Job {
-        manager: state.client().ok()?.with_base(&base),
-        emulator,
-        rom_id: st.rom_id,
-        shader_root,
-        cache_name,
-        config_dir: state.config_dir.clone(),
-        roms: st.roms.iter().map(|r| rom_dir.join(rel_to_path(r))).collect(),
-    })
-}
-
-/// Retient le jeu démarré par le launcher ; renvoie l'état s'il a changé.
-fn remember_direct(state: &AppState, rom_id: i64, direct: DirectLaunch) -> Option<state::InstalledGame> {
-    let mut st = state::find(&state.config_dir, rom_id)?;
-    if st.direct_launch.as_ref() == Some(&direct) {
-        return None;
-    }
-    st.direct_launch = Some(direct);
-    match state::write_state(&state.config_dir, &st) {
-        Ok(()) => Some(st),
-        Err(e) => {
-            tracing::error!("lancement direct non retenu: {}", e.code());
-            None
-        }
-    }
 }
 
 /// Passer par le launcher du jeu (`true`) ou lancer directement le jeu relevé.

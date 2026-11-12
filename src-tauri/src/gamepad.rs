@@ -22,6 +22,7 @@ use sdl3_sys::hints::*;
 use sdl3_sys::init::{SDL_InitSubSystem, SDL_QuitSubSystem, SDL_INIT_GAMEPAD};
 use sdl3_sys::joystick::SDL_JoystickID;
 use serde::Serialize;
+#[cfg(feature = "gui")]
 use tauri::{AppHandle, Emitter};
 
 pub const EVENT: &str = "gamepad";
@@ -175,6 +176,35 @@ pub fn connected() -> Vec<PadInfo> {
     pads
 }
 
+/// Programme sans interface (Steam Deck) : relevé ponctuel des manettes
+/// branchées, sans fil de lecture, juste avant de lancer un jeu.
+#[cfg(not(feature = "gui"))]
+pub fn snapshot() -> Vec<PadInfo> {
+    let mut pads = Vec::new();
+    // SAFETY : SDL initialisé, lu puis refermé sur ce seul fil ; pointeurs vérifiés.
+    unsafe {
+        // Pas d'accès exclusif aux manettes (HIDAPI) : le jeu doit les lire ensuite.
+        SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI, c"0".as_ptr());
+        if !SDL_InitSubSystem(SDL_INIT_GAMEPAD) {
+            tracing::warn!("manettes indisponibles: {:?}", text(sdl3_sys::error::SDL_GetError()));
+            return pads;
+        }
+        let mut count = 0;
+        let ids = SDL_GetGamepads(&mut count);
+        if !ids.is_null() {
+            for i in 0..count.max(0) as usize {
+                if let Some((pad, info)) = open(*ids.add(i), i as u64) {
+                    SDL_CloseGamepad(pad);
+                    pads.push(info);
+                }
+            }
+            sdl3_sys::stdinc::SDL_free(ids.cast());
+        }
+        SDL_QuitSubSystem(SDL_INIT_GAMEPAD);
+    }
+    pads
+}
+
 /// Famille de la manette, d'après le fabricant puis le nom.
 fn layout(vendor: Option<u16>, name: &str) -> &'static str {
     let name = name.to_ascii_lowercase();
@@ -287,6 +317,7 @@ fn button_name(b: i32) -> Option<&'static str> {
 }
 
 /// Lecture des manettes ouverte : manettes SDL en cours et dernières valeurs envoyées.
+#[cfg(feature = "gui")]
 struct Session {
     open: BTreeMap<u32, *mut SDL_Gamepad>,
     sent: BTreeMap<(usize, &'static str), f32>,
@@ -303,6 +334,7 @@ struct Session {
     layouts_sent: bool,
 }
 
+#[cfg(feature = "gui")]
 impl Session {
     fn start(watch: bool) -> Option<Session> {
         // SAFETY : réglages et initialisation sur le fil des manettes.
@@ -465,6 +497,7 @@ impl Session {
 }
 
 /// Démarre la lecture des manettes sur un fil dédié (SDL veut un seul fil).
+#[cfg(feature = "gui")]
 pub fn start(app: AppHandle) {
     std::thread::Builder::new()
         .name("manettes".into())

@@ -1,0 +1,50 @@
+# FarfaLauncherDeck : le moteur du launcher sans interface, pour le Steam Deck
+# (plugin NieRDeck). Compilé à chaque push sur la branche deck, ou à la demande ;
+# le binaire Linux x86_64 est dans les artefacts du run, pour l'essayer sur le
+# Deck avant une publication.
+name: Deck
+
+on:
+  push:
+    branches: [deck]
+  workflow_dispatch:
+
+jobs:
+  deck:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: deck
+
+      # SDL (manettes) compilé en statique : libudev pour trouver les manettes.
+      - name: Dépendances système
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake pkg-config libudev-dev
+
+      - name: Compiler
+        working-directory: src-tauri
+        run: cargo build --release --no-default-features --bin farfalauncherdeck
+
+      - name: Essai
+        working-directory: src-tauri
+        run: |
+          ./target/release/farfalauncherdeck version
+          FARFALAUNCHERDECK_CONFIG="$RUNNER_TEMP/deck" ./target/release/farfalauncherdeck info
+
+      - name: Préparer
+        run: |
+          mkdir -p out
+          cp src-tauri/target/release/farfalauncherdeck out/FarfaLauncherDeck-linux-x86_64
+          chmod +x out/FarfaLauncherDeck-linux-x86_64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FarfaLauncherDeck-linux-x86_64
+          path: out/FarfaLauncherDeck-linux-x86_64

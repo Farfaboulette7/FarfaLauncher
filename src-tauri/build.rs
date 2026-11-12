@@ -11,5 +11,7 @@ fn main() {
             }
         }
     }
+    // Le programme sans interface (Steam Deck) n'a pas de fenêtre Tauri.
+    #[cfg(feature = "gui")]
     tauri_build::build()
 }
