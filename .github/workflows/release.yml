@@ -112,8 +112,48 @@ jobs:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.args }}
 
+  # FarfaLauncherDeck : le même moteur sans interface, pour le Steam Deck (onglet
+  # Catalogue de NieRDeck, qui le télécharge depuis la dernière release).
+  deck:
+    needs: create-release
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: deck
+
+      - name: Dépendances système
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake pkg-config libudev-dev libdbus-1-dev libxss-dev libxkbcommon-dev libwayland-dev libegl1-mesa-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev libxtst-dev libasound2-dev libpulse-dev libdrm-dev libgbm-dev
+
+      - name: Compiler
+        working-directory: src-tauri
+        run: cargo build --release --no-default-features --bin farfalauncherdeck
+
+      - name: Joindre à la release
+        uses: actions/github-script@v7
+        env:
+          release_id: ${{ needs.create-release.outputs.release_id }}
+        with:
+          script: |
+            const fs = require('fs');
+            await github.rest.repos.uploadReleaseAsset({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: Number(process.env.release_id),
+              name: 'FarfaLauncherDeck-linux-x86_64',
+              data: fs.readFileSync('src-tauri/target/release/farfalauncherdeck'),
+              headers: { 'content-type': 'application/octet-stream' },
+            });
+
   publish-release:
-    needs: [create-release, build]
+    needs: [create-release, build, deck]
     runs-on: ubuntu-latest
     steps:
       - name: Publier la release
