@@ -30,7 +30,13 @@ jobs:
 
       - name: Compiler
         working-directory: src-tauri
-        run: cargo build --release --no-default-features --bin farfalauncherdeck
+        # Erreurs reprises en annotations : lisibles sans ouvrir le journal du run.
+        run: |
+          set -o pipefail
+          cargo build --release --no-default-features --bin farfalauncherdeck --message-format short 2>&1 | tee build.log || {
+            grep -E "error|panicked|undefined reference|cannot find|not found" build.log | head -30 | while IFS= read -r l; do echo "::error::$l"; done
+            exit 1
+          }
 
       - name: Essai
         working-directory: src-tauri
