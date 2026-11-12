@@ -190,20 +190,21 @@ pub async fn finish(state: &AppState, rom_id: i64, started: OffsetDateTime, lear
     let game = learned.and_then(|d| remember_direct(state, rom_id, d));
     let session = PendingSession::new(rom_id, started, ended);
     let recorded = (ended - started).whole_seconds() >= MIN_SESSION_SECS;
-    let mut pending = 0;
     if recorded {
+        // Gardée sur le disque d'abord : envoyée plus tard si besoin.
         if let Err(e) = playtime::enqueue(&state.config_dir, session.clone()) {
             tracing::error!("session de jeu non enregistrée localement: {}", e.code());
         }
-        pending = match state.client() {
-            Ok(client) => playtime::flush(&client, &state.config_dir).await.unwrap_or_else(|_| playtime::pending_count(&state.config_dir)),
-            Err(_) => playtime::pending_count(&state.config_dir),
-        };
     } else {
         tracing::info!("session de {} s ignorée (moins de {MIN_SESSION_SECS} s)", (ended - started).whole_seconds());
     }
-    // Même pour une session courte : le joueur a pu sauvegarder.
+    // La sauvegarde en premier (Steam Deck : le programme peut être arrêté peu après
+    // la fermeture du jeu). Même pour une session courte : le joueur a pu sauvegarder.
     let (save, save_error) = save_sync::after_play(state, state.client().ok(), rom_id, std::time::SystemTime::from(started)).await;
+    let pending = match state.client() {
+        Ok(client) if recorded => playtime::flush(&client, &state.config_dir).await.unwrap_or_else(|_| playtime::pending_count(&state.config_dir)),
+        _ => playtime::pending_count(&state.config_dir),
+    };
     if let Some(job) = &shader_job {
         job.after(std::time::SystemTime::from(started)).await;
     }

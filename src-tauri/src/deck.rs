@@ -44,14 +44,27 @@ Commandes (réponses en JSON, une ligne par message) :
   executables <id>              exécutables possibles d'un jeu installé
   choisir <id> <exécutable>     termine une installation qui attend ce choix
   desinstaller <id> [--garder-sauvegardes]
-  jouer <id>                    sauvegarde du serveur, réglages, jeu, envoi de la sauvegarde";
+  jouer <id>                    sauvegarde du serveur, réglages, jeu, envoi de la sauvegarde
+  synchroniser [<id>]           envoie les sauvegardes changées et le temps de jeu en attente";
+
+/// Fermeture demandée du jeu en cours (`jouer`), levée à la réception du signal d'arrêt de Steam.
+static GAME_STOP: std::sync::OnceLock<Arc<std::sync::atomic::AtomicBool>> = std::sync::OnceLock::new();
 
 /// Taille des pages de `jeux`.
 const PAGE: usize = 100;
 
 /// Point d'entrée du programme `farfalauncherdeck`.
 pub fn main() {
+    // Lancé par Steam, la sortie d'erreur est perdue : une panique va aussi dans le journal.
+    std::panic::set_hook(Box::new(|info| {
+        let place = info.location().map(|l| format!("{}:{}", l.file(), l.line())).unwrap_or_default();
+        let msg = info.payload().downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| info.payload().downcast_ref::<String>().cloned()).unwrap_or_default();
+        tracing::error!("panique à {place} : {msg}\n{}", std::backtrace::Backtrace::force_capture());
+        emit(json!({ "type": "error", "code": "internal", "message": format!("panique à {place} : {msg}") }));
+    }));
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // Journal écrit par un fil à part : sa garde le vide à la fin du programme.
+    let log_guard = crate::logging::init(&config_dir().join("logs"));
     let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
         Ok(r) => r,
         Err(e) => {
@@ -60,6 +73,25 @@ pub fn main() {
         }
     };
     let code = runtime.block_on(async move {
+        // « Quitter le jeu » de Steam envoie le signal d'arrêt à tout le groupe : le
+        // jeu se ferme, et ce programme doit survivre pour envoyer la sauvegarde.
+        #[cfg(unix)]
+        if args.first().is_some_and(|c| c == "jouer") {
+            use tokio::signal::unix::{signal, SignalKind};
+            for kind in [SignalKind::terminate(), SignalKind::interrupt(), SignalKind::hangup()] {
+                if let Ok(mut s) = signal(kind) {
+                    tokio::spawn(async move {
+                        while s.recv().await.is_some() {
+                            tracing::info!("arrêt demandé ({kind:?}) : fermeture du jeu, puis envoi de la sauvegarde");
+                            // Le jeu tourne dans son propre groupe : on lui transmet la demande.
+                            if let Some(stop) = GAME_STOP.get() {
+                                stop.store(true, std::sync::atomic::Ordering::Relaxed);
+                            }
+                        }
+                    });
+                }
+            }
+        }
         match run(args).await {
             Ok(result) => {
                 emit(json!({ "type": "result", "data": result }));
@@ -71,6 +103,8 @@ pub fn main() {
             }
         }
     });
+    drop(runtime);
+    drop(log_guard);
     std::process::exit(code);
 }
 
@@ -124,10 +158,6 @@ fn open_state() -> AppState {
     let config_dir = config_dir();
     let log_dir = config_dir.join("logs");
     let cache_dir = config_dir.join("cache");
-    if let Some(guard) = crate::logging::init(&log_dir) {
-        // Le programme est court : le journal vit jusqu'à sa fin.
-        std::mem::forget(guard);
-    }
     crate::saves::set_prefixes_dir(crate::pc::proton::prefixes_dir(&config_dir));
     let default_root = home().join("FarfaLauncher").join("Jeux");
     let state = AppState::new(config_dir.clone(), log_dir, cache_dir, default_root);
@@ -216,6 +246,7 @@ async fn run(args: Vec<String>) -> AppResult<Value> {
             Ok(json!({ "romId": id }))
         }
         "jouer" => play(&open_state(), rom_id(rest.first())?).await,
+        "synchroniser" => sync(&open_state(), rest.first().and_then(|a| a.parse().ok())).await,
         _ => {
             eprintln!("{USAGE}");
             Err(AppError::Internal)
@@ -295,13 +326,41 @@ async fn consoles(state: &AppState) -> AppResult<Value> {
     for p in platforms.iter_mut() {
         p.has_emulator = catalog.offer(&p.slug, me).is_some_and(|o| o.available) || catalog.offer(&p.fs_slug, me).is_some_and(|o| o.available);
     }
-    platforms.retain(|p| p.has_emulator || library::is_portage(&p.fs_slug) || crate::pc::is_pc_folder(&p.fs_slug));
-    Ok(json!({ "consoles": platforms }))
+    platforms.retain(|p| p.rom_count > 0 && (p.has_emulator || library::is_portage(&p.fs_slug) || crate::pc::is_pc_folder(&p.fs_slug)));
+    // Les recomps sont rangées dans leur vraie console (souvent sans émulateur pour le
+    // Deck) : regroupées dans une console à part, en tête.
+    let recomps = deck_recomps(state).len();
+    let mut list = vec![json!({ "id": RECOMPS, "slug": "recomps", "fsSlug": "recomps", "name": "Recomps", "romCount": recomps, "iconUrls": [], "hasEmulator": false })];
+    list.extend(platforms.iter().map(|p| json!(p)));
+    Ok(json!({ "consoles": list }))
+}
+
+/// Console virtuelle des recomps (`jeux -1`).
+const RECOMPS: i64 = -1;
+
+/// Jeux dont la recomp a une build pour le Deck.
+fn deck_recomps(state: &AppState) -> Vec<i64> {
+    let me = target();
+    let mut ids: Vec<i64> = state
+        .catalog()
+        .recomps
+        .iter()
+        .filter(|r| r.archives(me).1.is_some())
+        .flat_map(|r| r.games.iter().filter_map(|g| g.rom_id))
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
 }
 
 async fn games_page(state: &AppState, console: i64, offset: usize) -> AppResult<Value> {
     let client = state.client()?;
     refresh_catalog(state).await;
+    if console == RECOMPS {
+        let mut games = library::list_games_by_ids(&client, &deck_recomps(state), target()).await;
+        games.sort_by_key(|g| g.name.to_lowercase());
+        return Ok(json!({ "games": summaries(state, games), "more": false, "offset": 0 }));
+    }
     let (games, more) = library::list_games_page(&client, &[console], target(), offset, PAGE).await?;
     Ok(json!({ "games": summaries(state, games), "more": more, "offset": offset }))
 }
@@ -490,7 +549,28 @@ async fn play(state: &AppState, id: i64) -> AppResult<Value> {
     let started = crate::play::start(state, id, choice, None, false, &pads).await?;
     emit(json!({ "type": "started", "data": { "romId": id, "saveChoice": format!("{choice:?}") } }));
     let crate::play::Started { running, started, shader_job, .. } = started;
+    let _ = GAME_STOP.set(running.stop_flag());
     let (learned, crashed) = tokio::task::spawn_blocking(move || running.wait_outcome(|| {})).await.unwrap_or((None, false));
     let finished = crate::play::finish(state, id, started, learned, shader_job).await;
     Ok(json!({ "finished": finished, "crashed": crashed }))
+}
+
+/// Envoie les sauvegardes changées depuis le dernier échange (partie interrompue
+/// par Steam avant l'envoi…) et le temps de jeu en attente. Appelé par NieRDeck
+/// à la fermeture d'un jeu.
+async fn sync(state: &AppState, only: Option<i64>) -> AppResult<Value> {
+    let client = state.client()?;
+    let since = std::time::SystemTime::now() - std::time::Duration::from_secs(6 * 3600);
+    let mut out = Vec::new();
+    for st in state::list_installed(&state.config_dir) {
+        if only.is_some_and(|id| id != st.rom_id) || st.saves.dir.is_none() || st.saves.off {
+            continue;
+        }
+        // Jeu en cours (son `jouer` tient le verrou) : il enverra lui-même.
+        let Ok(_lock) = lock(state, st.rom_id) else { continue };
+        let (save, error) = crate::save_sync::after_play(state, Some(client.clone()), st.rom_id, since).await;
+        out.push(json!({ "romId": st.rom_id, "save": save, "error": error }));
+    }
+    let pending = crate::romm::playtime::flush(&client, &state.config_dir).await.unwrap_or_else(|_| crate::romm::playtime::pending_count(&state.config_dir));
+    Ok(json!({ "games": out, "pendingSessions": pending }))
 }
