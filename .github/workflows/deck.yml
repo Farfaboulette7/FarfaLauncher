@@ -22,11 +22,12 @@ jobs:
           workspaces: src-tauri -> target
           key: deck
 
-      # SDL (manettes) compilé en statique : libudev pour trouver les manettes.
+      # SDL (manettes) compilé en statique : libudev pour trouver les manettes ; sa
+      # compilation Linux exige aussi X11 ou Wayland (mêmes paquets que l'AppImage).
       - name: Dépendances système
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake pkg-config libudev-dev
+          sudo apt-get install -y cmake pkg-config libudev-dev libdbus-1-dev libxss-dev libxkbcommon-dev libwayland-dev libegl1-mesa-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev libxtst-dev libasound2-dev libpulse-dev libdrm-dev libgbm-dev
 
       - name: Compiler
         working-directory: src-tauri
