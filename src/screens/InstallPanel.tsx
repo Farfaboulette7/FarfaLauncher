@@ -35,10 +35,18 @@ const PHASE_LABELS: Record<InstallPhase, string> = {
   download: "Téléchargement",
   verify: "Vérification…",
   backup: "Sauvegarde des saves…",
-  extract: "Extraction",
+  extract: "Extraction du jeu",
+  data: "Extraction des données du jeu",
+  place: "Rangement des fichiers…",
   installer: "Installation",
   client: "Téléchargement du client",
   build: "Construction du jeu",
+  check: "Vérification de votre copie du jeu",
+  copy: "Copie du jeu",
+  generate: "Traduction du code du jeu",
+  compile: "Compilation du jeu",
+  warm: "Premier démarrage du jeu",
+  cleanup: "Nettoyage",
   shaders: "Préparation des shaders",
   finalize: "Finalisation…",
 };
@@ -737,6 +745,53 @@ export function InstallFacts({ game: base, target, installs }: { game: Game; tar
   );
 }
 
+/** Phases dont `done`/`total` sont des octets. */
+const BYTE_PHASES: InstallPhase[] = ["download", "proton", "client", "extract", "data"];
+
+/** Explication affichée sous la barre : ce qui se passe, et combien de temps ça prend. */
+const PHASE_HINTS: Partial<Record<InstallPhase, string>> = {
+  extract: "Les fichiers du jeu sont décompressés dans son dossier.",
+  data: "Les données tirées de votre copie du jeu sont posées à côté de lui : des dizaines de milliers de fichiers, plusieurs minutes pour un gros jeu.",
+  build: "Le jeu est construit sur ce PC à partir de votre copie : 10 à 45 minutes selon le processeur.",
+  check: "Le launcher vérifie que c'est bien la version du jeu attendue par la recomp.",
+  copy: "Les fichiers du jeu sont mis en place pour la recomp.",
+  generate: "Le code du jeu est traduit en code pour PC : quelques minutes.",
+  compile: "Le code traduit est compilé sur votre PC : le processeur tourne à fond, c'est normal. Comptez de 10 à 30 minutes selon le processeur.",
+  shaders: "Les shaders du jeu sont préparés pour votre carte graphique, pour qu'il ne saccade pas en jouant. La barre peut rester immobile quelques minutes au début.",
+  warm: "Le jeu se lance une minute tout seul pour préparer votre carte graphique. Une fenêtre peut s'ouvrir : ne la fermez pas, elle se fermera d'elle-même.",
+  cleanup: "Les fichiers temporaires sont supprimés, presque fini.",
+  place: "Les fichiers extraits sont rangés dans le dossier du jeu. Ça peut prendre une minute pour un gros jeu.",
+  finalize: "Derniers réglages, presque fini.",
+};
+
+/** « 2 min 30 s », « 45 s », « 1 h 05 ». */
+function formatRemaining(s: number): string {
+  if (s < 60) return `${Math.max(1, Math.round(s))} s`;
+  if (s < 3600) {
+    const m = Math.floor(s / 60);
+    const sec = Math.round(s % 60);
+    return m < 10 && sec ? `${m} min ${sec} s` : `${Math.round(s / 60)} min`;
+  }
+  const h = Math.floor(s / 3600);
+  return `${h} h ${String(Math.round((s % 3600) / 60)).padStart(2, "0")}`;
+}
+
+/** Débit lissé (unités de `done` par seconde) de la phase en cours, et depuis quand elle dure (ms). */
+function useRate(phase: InstallPhase, done: number): { rate: number | null; elapsed: number } {
+  const ref = useRef<{ phase: InstallPhase; start: number; t: number; done: number; rate: number | null }>({ phase, start: 0, t: 0, done, rate: null });
+  const s = ref.current;
+  const now = performance.now();
+  if (s.phase !== phase || done < s.done) {
+    ref.current = { phase, start: now, t: now, done, rate: null };
+  } else if (now - s.t >= 1000) {
+    const inst = ((done - s.done) * 1000) / (now - s.t);
+    s.rate = s.rate === null ? inst : s.rate * 0.7 + inst * 0.3;
+    s.t = now;
+    s.done = done;
+  }
+  return { rate: ref.current.rate, elapsed: now - ref.current.start };
+}
+
 function ProgressView({
   phase,
   done,
@@ -753,32 +808,36 @@ function ProgressView({
   const installing = phase === "installer";
   // Installateur : estimation d'après la place prise, jamais 100 % avant la fin.
   const pct = total > 0 ? Math.min(installing ? 99 : 100, (done / total) * 100) : null;
-  const bytes = phase === "download" || phase === "proton" || phase === "client";
-  const detail = installing
-    ? done > 0
-      ? `${formatSize(done)} installés`
-      : ""
-    : bytes && total > 0
-      ? `${formatSize(done)} / ${formatSize(total)}`
-      : pct !== null
-        ? `${Math.round(pct)} %`
-        : "";
+  const bytes = BYTE_PHASES.includes(phase);
+  const { rate, elapsed } = useRate(phase, done);
+  // Pas d'estimation sur trop peu de mesures (début d'étape : « 9 h » qui retombe à 20 min).
+  const settled = elapsed >= 20000 && total > 0 && done / total >= 0.01;
+  const remaining = settled && rate && rate > 0 && total > done && !verifying ? (total - done) / rate : null;
+  const parts: string[] = [];
+  if (installing) {
+    if (done > 0) parts.push(`${formatSize(done)} installés`);
+  } else if (pct !== null) {
+    parts.push(pct < 10 ? `${pct.toLocaleString("fr-FR", { maximumFractionDigits: 1 })} %` : `${Math.floor(pct)} %`);
+    if (bytes) parts.push(`${formatSize(done)} / ${formatSize(total)}`);
+    if (bytes && rate && rate > 0 && !verifying && done < total) parts.push(`${formatSize(rate)}/s`);
+  }
+  const hint = PHASE_HINTS[phase];
   return (
     <div className="gd-progress">
       <div className="gd-progress-label">
         <span>
           {PHASE_LABELS[phase]}
-          {verifying && <span className="n-hint"> · vérification</span>}
+          {verifying && <span className="n-hint"> · vérification du fichier reçu</span>}
         </span>
-        <span>{detail}</span>
+        <span>{parts.join(" · ")}</span>
       </div>
       <div className="gd-progress-bar" role="progressbar" aria-valuenow={pct ?? undefined} aria-valuemin={0} aria-valuemax={100}>
         <div className={pct === null ? "is-indeterminate" : undefined} style={pct === null ? undefined : { width: `${pct}%` }} />
       </div>
+      {remaining !== null && remaining >= 5 && <p className="n-hint">Encore environ {formatRemaining(remaining)}.</p>}
       {installing && <p className="n-hint">Installation en cours, elle ne peut plus être annulée.</p>}
-      {phase === "build" && <p className="n-hint">Le jeu est construit sur ce PC à partir de votre copie : 10 à 45 minutes selon le processeur.</p>}
-      {phase === "shaders" && <p className="n-hint">Le jeu est compilé ; ses shaders sont préparés pour votre carte graphique, pour qu'il ne saccade pas en jouant.</p>}
-      {phase !== "finalize" && !installing && (
+      {hint && <p className="n-hint">{hint}</p>}
+      {phase !== "finalize" && phase !== "data" && phase !== "place" && !installing && (
         <button className="n-link" onClick={onCancel}>
           Annuler
         </button>

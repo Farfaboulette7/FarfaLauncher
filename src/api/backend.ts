@@ -344,9 +344,17 @@ export type InstallPhase =
   | "verify"
   | "backup"
   | "extract"
+  | "data"
+  | "place"
   | "installer"
   | "client"
   | "build"
+  | "check"
+  | "copy"
+  | "generate"
+  | "compile"
+  | "warm"
+  | "cleanup"
   | "shaders"
   | "finalize";
 

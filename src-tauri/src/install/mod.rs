@@ -41,7 +41,7 @@ const BACKUPS_KEPT: usize = 5;
 #[serde(rename_all = "camelCase")]
 pub struct Progress {
     pub rom_id: i64,
-    /// `prepare` | `download` | `backup` | `extract` | `finalize`
+    /// `prepare` | `download` | `backup` | `extract` | `data` | `finalize`…
     pub phase: &'static str,
     pub done: u64,
     pub total: u64,
@@ -306,6 +306,7 @@ impl InstallJob {
                         cb(Progress { rom_id, phase: "extract", done, total, verifying: false });
                     }
                 })?;
+                cb(Progress { rom_id, phase: "place", done: 0, total: 0, verifying: false });
                 let root = extract::content_root(&s)?;
                 let n = extract::merge_into(&root, &gd)?;
                 let _ = std::fs::remove_dir_all(&s);
@@ -359,7 +360,14 @@ impl InstallJob {
             return Err(AppError::NoExecutable);
         }
         let kept = match runtime {
-            _ if builder.is_some() => builder.clone(),
+            // Le jeu déjà livré (mkw-recomp : mkw.exe, préparé ensuite) : les données vont à
+            // côté de lui. Pas encore construit (Hookshot) : à côté de l'outil.
+            _ if builder.is_some() => self
+                .catalog
+                .recomp_exe(rom_id)
+                .and_then(|hint| runtimes::pick_exe(&candidates, hint, None))
+                .filter(|e| Some(e) != builder.as_ref())
+                .or_else(|| builder.clone()),
             Some(r) => runtimes::pick_exe(&candidates, &r.exe, game.server_version.as_deref()).or_else(|| {
                 tracing::warn!("exécutable {} absent des candidats", r.exe);
                 candidates.first().cloned()
@@ -380,7 +388,11 @@ impl InstallJob {
                 return Ok(InstallOutcome::NeedsChoice { game: st });
             }
         };
-        let mut st = finalize(&self.config_dir, st, &chosen, &game).await?;
+        let cb = self.on_progress.clone();
+        let mut st = finalize_with(&self.config_dir, st, &chosen, &game, move |phase, done, total| {
+            cb(Progress { rom_id, phase, done, total, verifying: false })
+        })
+        .await?;
         // La ROM est maintenant à côté de la recomp : la copie de l'émulateur est retirée.
         remove_reused(&reused);
         if let Some(builder) = builder {
@@ -391,7 +403,8 @@ impl InstallJob {
 
     /// Construit le jeu avec l'outil de la recomp, puis prend le jeu construit pour exécutable.
     async fn build_game(&self, rom_id: i64, mut st: InstalledGame, builder: &str, args: &[String]) -> AppResult<InstalledGame> {
-        let rom = st.roms.first().map(|r| st.game_dir.join(rel_to_path(r))).ok_or(AppError::NotAvailable)?;
+        // Copie du jeu posée à côté ; données extraites (exefs/romfs) : le dossier du jeu.
+        let rom = st.roms.first().map(|r| st.game_dir.join(rel_to_path(r))).unwrap_or_else(|| st.game_dir.clone());
         let args = prepare::expand(args, &rom, &st.game_dir);
         self.emit(rom_id, "build", 0, 1000);
         let (dir, program, cancel, cb) = (st.game_dir.clone(), builder.to_string(), self.cancel.clone(), self.on_progress.clone());
@@ -472,7 +485,20 @@ pub(crate) fn remove_reused(reused: &[(PathBuf, String)]) {
 }
 
 /// Termine l'installation avec l'exécutable choisi : ROMs, droits, état, nettoyage.
-pub async fn finalize(config_dir: &Path, mut st: InstalledGame, executable: &str, game: &Game) -> AppResult<InstalledGame> {
+pub async fn finalize(config_dir: &Path, st: InstalledGame, executable: &str, game: &Game) -> AppResult<InstalledGame> {
+    finalize_with(config_dir, st, executable, game, |_, _, _| {}).await
+}
+
+/// `finalize`, avec la progression de l'extraction des données du jeu (`*.extract.zip` :
+/// romfs de milliers de fichiers, souvent plusieurs Go) : `on_data(phase, fait, total)`,
+/// `data` en octets puis `place` (fichiers rangés dans le dossier du jeu, sans total).
+pub async fn finalize_with(
+    config_dir: &Path,
+    mut st: InstalledGame,
+    executable: &str,
+    game: &Game,
+    on_data: impl Fn(&'static str, u64, u64) + Send + 'static,
+) -> AppResult<InstalledGame> {
     let game_dir = st.game_dir.clone();
     let exe_rel = rel_to_path(executable);
     if !game_dir.join(&exe_rel).exists() {
@@ -510,7 +536,14 @@ pub async fn finalize(config_dir: &Path, mut st: InstalledGame, executable: &str
                 // Données en milliers de fichiers (romfs…) : extraites à côté de l'exécutable.
                 let dir_rel = dest_rel.parent().map(Path::to_path_buf).unwrap_or_default();
                 let staging = gd.join(INTERNAL_DIR).join("staging-rom");
-                extract::extract(&staged, ArchiveKind::Zip, &staging, &CancellationToken::new(), |_, _| {})?;
+                let mut last = Instant::now() - Duration::from_secs(1);
+                extract::extract(&staged, ArchiveKind::Zip, &staging, &CancellationToken::new(), |done, total| {
+                    if last.elapsed() >= Duration::from_millis(200) || done == total {
+                        last = Instant::now();
+                        on_data("data", done, total);
+                    }
+                })?;
+                on_data("place", 0, 0);
                 let top: Vec<String> = std::fs::read_dir(&staging)
                     .map_err(|e| disk_error("lecture de l'archive extraite", e))?
                     .filter_map(Result::ok)

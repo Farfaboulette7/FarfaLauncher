@@ -36,13 +36,32 @@ pub fn expand(args: &[String], rom: &Path, game_dir: &Path) -> Vec<String> {
 
 /// Ligne `progress 0.420 Compiling` → 0.42. Aussi `@@progress 0.420`, la progression de
 /// l'étape en cours (Hookshot 2.1 : la préparation des shaders après la compilation).
+/// Aussi `progress 500 205660` (fait, total : préparation de mkw-recomp).
 pub fn parse_progress(line: &str) -> Option<f64> {
     let rest = line.strip_prefix("progress ").or_else(|| line.strip_prefix("@@progress "))?;
-    rest.split_whitespace().next()?.parse::<f64>().ok().map(|f| f.clamp(0.0, 1.0))
+    let mut words = rest.split_whitespace();
+    let first = words.next()?;
+    if let (Ok(done), Some(Ok(total))) = (first.parse::<u64>(), words.next().map(str::parse::<u64>)) {
+        return (total > 0).then(|| (done as f64 / total as f64).clamp(0.0, 1.0));
+    }
+    first.parse::<f64>().ok().map(|f| f.clamp(0.0, 1.0))
 }
 
 /// Ligne `@@stage shaders Preparing shaders` → la phase affichée (`shaders`, sinon `build`).
+/// Ligne `step compile` (préparation de mkw-recomp) → la phase de cette étape.
 pub fn parse_stage(line: &str) -> Option<&'static str> {
+    if let Some(step) = line.strip_prefix("step ") {
+        return Some(match step.trim() {
+            "check" => "check",
+            "exefs" | "romfs" => "copy",
+            "generate" => "generate",
+            "compile" => "compile",
+            "shaders" => "shaders",
+            "warm" => "warm",
+            "cleanup" => "cleanup",
+            _ => "build",
+        });
+    }
     let stage = line.strip_prefix("@@stage ")?.split_whitespace().next()?;
     Some(if stage.eq_ignore_ascii_case("shaders") { "shaders" } else { "build" })
 }
@@ -149,6 +168,12 @@ mod tests {
         assert_eq!(parse_stage("@@stage shaders Preparing shaders"), Some("shaders"));
         assert_eq!(parse_stage("@@stage link Linking"), Some("build"));
         assert_eq!(parse_stage("progress 0.950 Compiling"), None);
+        // mkw-recomp : « step <étape> » et « progress <fait> <total> ».
+        assert_eq!(parse_stage("step generate"), Some("generate"));
+        assert_eq!(parse_stage("step romfs"), Some("copy"));
+        assert_eq!(parse_progress("progress 500 2000"), Some(0.25));
+        assert_eq!(parse_progress("progress 3 0"), None);
+        assert_eq!(parse_progress("progress 0.425 Compiling the game"), Some(0.425));
         let args = expand(&["--game".into(), "{rom}".into(), "--out".into(), "{gamedir}/jeu".into()], Path::new("/j/oot.nup"), Path::new("/j"));
         assert_eq!(args, ["--game", "/j/oot.nup", "--out", "/j/jeu"]);
     }

@@ -56,7 +56,8 @@ pub fn uncompressed_size(archive: &Path, kind: ArchiveKind) -> AppResult<u64> {
 }
 
 /// Décompresse `archive` dans `staging` (vidé au préalable).
-/// `progress(fait, total)` compte les entrées traitées.
+/// `progress(fait, total)` compte les octets : décompressés pour un zip, lus dans
+/// l'archive pour un tar.gz.
 pub fn extract(
     archive: &Path,
     kind: ArchiveKind,
@@ -168,7 +169,9 @@ fn skip_entry(rel: &Path) -> bool {
 
 fn extract_zip(archive: &Path, staging: &Path, cancel: &CancellationToken, progress: &mut impl FnMut(u64, u64)) -> AppResult<()> {
     let mut zip = open_zip(archive)?;
-    let total = zip.len() as u64;
+    let total: u64 = (0..zip.len()).filter_map(|i| zip.by_index_raw(i).ok().map(|e| e.size())).sum::<u64>().max(1);
+    let mut done = 0u64;
+    let mut buf = vec![0u8; 1 << 20];
     for i in 0..zip.len() {
         if cancel.is_cancelled() {
             return Err(AppError::Cancelled);
@@ -197,10 +200,22 @@ fn extract_zip(archive: &Path, staging: &Path, cancel: &CancellationToken, progr
                 fs::create_dir_all(parent).map_err(|e| disk_error("création d'un dossier", e))?;
             }
             let mut w = fs::File::create(&out).map_err(|e| disk_error("écriture d'un fichier", e))?;
-            io::copy(&mut entry, &mut w).map_err(|e| match e.kind() {
-                io::ErrorKind::InvalidData => log_err(AppError::Extract, "décompression", e),
-                _ => disk_error("écriture d'un fichier", e),
-            })?;
+            // Copie par blocs : la progression avance aussi pendant un gros fichier.
+            loop {
+                let n = io::Read::read(&mut entry, &mut buf).map_err(|e| match e.kind() {
+                    io::ErrorKind::InvalidData => log_err(AppError::Extract, "décompression", e),
+                    _ => log_err(AppError::Extract, "lecture du zip", e),
+                })?;
+                if n == 0 {
+                    break;
+                }
+                io::Write::write_all(&mut w, &buf[..n]).map_err(|e| disk_error("écriture d'un fichier", e))?;
+                done += n as u64;
+                progress(done.min(total), total);
+                if cancel.is_cancelled() {
+                    return Err(AppError::Cancelled);
+                }
+            }
             #[cfg(unix)]
             if let Some(m) = mode {
                 use std::os::unix::fs::PermissionsExt;
@@ -209,16 +224,19 @@ fn extract_zip(archive: &Path, staging: &Path, cancel: &CancellationToken, progr
             #[cfg(not(unix))]
             let _ = mode;
         }
-        progress(i as u64 + 1, total);
+        progress(done.min(total), total);
     }
+    progress(total, total);
     Ok(())
 }
 
 fn extract_tar_gz(archive: &Path, staging: &Path, cancel: &CancellationToken, progress: &mut impl FnMut(u64, u64)) -> AppResult<()> {
     let f = fs::File::open(archive).map_err(|e| log_err(AppError::Disk, "ouverture de l'archive", e))?;
-    let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(io::BufReader::new(f)));
+    let total = f.metadata().map(|m| m.len()).unwrap_or(0).max(1);
+    let read = std::rc::Rc::new(std::cell::Cell::new(0u64));
+    let counting = CountingReader { inner: f, read: read.clone() };
+    let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(io::BufReader::new(counting)));
     tar.set_preserve_permissions(true);
-    let mut done = 0u64;
     for entry in tar.entries().map_err(|e| log_err(AppError::Extract, "lecture du tar.gz", e))? {
         if cancel.is_cancelled() {
             return Err(AppError::Cancelled);
@@ -230,10 +248,24 @@ fn extract_tar_gz(archive: &Path, staging: &Path, cancel: &CancellationToken, pr
         }
         // `unpack_in` refuse les chemins qui sortent du dossier cible.
         entry.unpack_in(staging).map_err(|e| disk_error("extraction du tar.gz", e))?;
-        done += 1;
-        progress(done, 0);
+        progress(read.get().min(total), total);
     }
+    progress(total, total);
     Ok(())
+}
+
+/// Compte les octets lus dans l'archive compressée (progression d'un tar.gz).
+struct CountingReader {
+    inner: fs::File,
+    read: std::rc::Rc<std::cell::Cell<u64>>,
+}
+
+impl io::Read for CountingReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.read.set(self.read.get() + n as u64);
+        Ok(n)
+    }
 }
 
 #[cfg(unix)]
