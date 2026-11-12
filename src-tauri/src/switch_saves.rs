@@ -94,11 +94,7 @@ pub fn fill(catalog: &Catalog, config_dir: &Path, st: &mut InstalledGame, since:
     let rom_dir = shared.rom_dir.clone().unwrap_or_default();
     let roms: Vec<PathBuf> = st.roms.iter().map(|r| rom_dir.join(crate::install::rel_to_path(r))).collect();
     let root = exe_dir.join(crate::install::rel_to_path(rule.split(PROFILE).next().unwrap_or_default()));
-    let title = crate::shaders::known_title(config_dir, &emulator.id, st.rom_id)
-        .or_else(|| crate::shaders::title_from_names(roms.iter().filter_map(|p| p.file_name()?.to_str())))
-        .or_else(|| roms.iter().filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("nsp"))).find_map(|p| crate::shaders::title_from_nsp(p)))
-        .map(|t| t.to_ascii_uppercase())
-        .or_else(|| since.and_then(|s| learned_title(&root, s)));
+    let title = title_of(config_dir, &emulator.id, st.rom_id, &roms).or_else(|| since.and_then(|s| learned_title(&root, s)));
     let Some(title) = title else { return false };
     let Some((dir, pats)) = resolve(rule, &patterns, &exe_dir, &title) else { return false };
     tracing::info!("sauvegardes Switch de « {} » : {} {:?}", st.name, dir.display(), pats);
@@ -115,6 +111,26 @@ pub fn fill(catalog: &Catalog, config_dir: &Path, st: &mut InstalledGame, since:
         tracing::error!("dossier des sauvegardes Switch non mémorisé: {}", e.code());
     }
     true
+}
+
+/// ID de titre (majuscules) d'un jeu Switch : mémorisé, dans le nom des fichiers, dans le
+/// ticket d'un NSP ou l'en-tête d'un NUP.
+fn title_of(config_dir: &Path, emulator: &str, rom_id: i64, roms: &[PathBuf]) -> Option<String> {
+    let has_ext = |p: &PathBuf, ext: &str| p.extension().is_some_and(|e| e.eq_ignore_ascii_case(ext));
+    crate::shaders::known_title(config_dir, emulator, rom_id)
+        .or_else(|| crate::shaders::title_from_names(roms.iter().filter_map(|p| p.file_name()?.to_str())))
+        .or_else(|| roms.iter().filter(|p| has_ext(p, "nsp")).find_map(|p| crate::shaders::title_from_nsp(p)))
+        .or_else(|| roms.iter().filter(|p| has_ext(p, "nup")).find_map(|p| crate::shaders::title_from_nup(p)))
+        .map(|t| t.to_ascii_uppercase())
+}
+
+/// ID de titre d'un jeu Switch installé sous émulateur, s'il est connu sans y avoir joué.
+pub fn title_id(catalog: &Catalog, config_dir: &Path, st: &InstalledGame) -> Option<String> {
+    let emulator = catalog.emulator_for_install(st)?;
+    emulator.consoles.iter().find(|c| *c == "switch" || *c == "switch-2")?;
+    let rom_dir = st.shared.as_ref()?.rom_dir.clone().unwrap_or_default();
+    let roms: Vec<PathBuf> = st.roms.iter().map(|r| rom_dir.join(crate::install::rel_to_path(r))).collect();
+    title_of(config_dir, &emulator.id, st.rom_id, &roms)
 }
 
 /// Tous les jeux Switch et Switch 2 installés sous émulateur : dossier complété s'il manque.

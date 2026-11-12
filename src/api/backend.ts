@@ -392,6 +392,44 @@ export interface SystemInfo {
   gamesSize: number;
   cacheSize: number;
   logsSize: number;
+  /** Carte graphique lue par le système (null : inconnue, l'interface lit alors WebGL). */
+  gpu: GpuInfo | null;
+  /** Niveau pour l'émulation, qui choisit les réglages optimisés. */
+  level: "faible" | "moyen" | "fort";
+}
+
+/** Réglages optimisés d'un jeu installé, pour ce PC. */
+export interface Optimizations {
+  enabled: boolean;
+  level: "faible" | "moyen" | "fort";
+  applied: { label: string; key: string; value: string }[];
+}
+
+/** Rapport de bug envoyé par ce joueur, avec la réponse après analyse. */
+export interface MyReport {
+  id: string;
+  rom: number | null;
+  game: string | null;
+  /** Envoi (secondes Unix). */
+  at: number | null;
+  status: string;
+  description: string | null;
+  /** Réponse écrite après analyse, pour le joueur. */
+  reponse: string | null;
+  /** Ce qui a été changé pour corriger. */
+  modifications: string[];
+  /** Version du launcher qui apporte la correction. */
+  corrigeDans: string | null;
+  /** Dernière nouvelle (secondes Unix). */
+  updatedAt: number;
+}
+
+export interface GpuInfo {
+  name: string;
+  vendor: string;
+  /** Mémoire vidéo dédiée (unifiée sur Mac), octets ; 0 si inconnue. */
+  vram: number;
+  driver: string | null;
 }
 
 export type InstallOutcome = { status: "installed"; game: InstalledGame } | { status: "needsChoice"; game: InstalledGame };
@@ -414,6 +452,8 @@ export interface GameStopped {
   saveError: AppError | null;
   /** État du jeu, quand le jeu démarré par son launcher vient d'être relevé. */
   game: InstalledGame | null;
+  /** Le jeu semble avoir planté : on propose d'envoyer un rapport. */
+  crashed: boolean;
 }
 
 export interface SaveSync {
@@ -526,6 +566,13 @@ export const backend = {
   setPreferLauncher: (romId: number, prefer: boolean) => invoke<InstalledGame>("set_prefer_launcher", { romId, prefer }),
   systemInfo: () => invoke<SystemInfo>("system_info"),
   serverPing: () => invoke<number>("server_ping"),
+  optimizations: (romId: number) => invoke<Optimizations>("optimizations", { romId }),
+  setOptimized: (romId: number, enabled: boolean) => invoke<void>("set_optimized", { romId, enabled }),
+  reportFiles: (romId: number) => invoke<string[]>("report_files", { romId }),
+  sendReport: (romId: number, description: string, afterCrash: boolean) => invoke<string>("send_report", { romId, description, afterCrash }),
+  myReports: () => invoke<MyReport[]>("my_reports"),
+  reportsSeen: () => invoke<Record<string, number>>("reports_seen"),
+  markReportsSeen: (seen: Record<string, number>) => invoke<void>("mark_reports_seen", { seen }),
   consoleGames: (platformIds: number[], offset: number) => invoke<GamesPage>("console_games", { platformIds, offset }),
   searchGames: (term: string) => invoke<Game[]>("search_games", { term }),
   recentGames: () => invoke<Game[]>("recent_games"),

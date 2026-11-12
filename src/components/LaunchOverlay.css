@@ -88,3 +88,11 @@
   0% { left: -30%; }
   100% { left: 100%; }
 }
+
+/* Astuce affichée pendant le lancement. */
+.launch-tip {
+  margin-top: 16px;
+  font-size: var(--fs-sm);
+  opacity: 0.75;
+  animation: launch-in 300ms ease-out 600ms both;
+}

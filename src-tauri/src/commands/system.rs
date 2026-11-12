@@ -31,6 +31,10 @@ pub struct SystemInfo {
     pub games_size: u64,
     pub cache_size: u64,
     pub logs_size: u64,
+    /// Carte graphique lue par le système (nom, mémoire vidéo, pilote).
+    pub gpu: Option<crate::hardware::Gpu>,
+    /// Niveau pour l'émulation : `faible`, `moyen` ou `fort`.
+    pub level: &'static str,
 }
 
 #[derive(Serialize)]
@@ -93,6 +97,8 @@ pub async fn system_info(state: State<'_, AppState>) -> AppResult<SystemInfo> {
             games_size: games.iter().map(|g| dir_size(g)).sum(),
             cache_size: dir_size(Path::new(&cache_dir)),
             logs_size: dir_size(Path::new(&log_dir)),
+            gpu: crate::hardware::get().gpu.clone(),
+            level: crate::hardware::get().level,
         }
     })
     .await
@@ -106,4 +112,41 @@ pub async fn server_ping(state: State<'_, AppState>) -> AppResult<u64> {
     let started = Instant::now();
     client.send(client.get("api/heartbeat")).await?;
     Ok(started.elapsed().as_millis() as u64)
+}
+
+/// Réglages optimisés d'un jeu installé : activés ou non, et ce qui est posé sur ce PC.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Optimizations {
+    pub enabled: bool,
+    pub level: &'static str,
+    pub applied: Vec<crate::optimize::Applied>,
+}
+
+#[tauri::command]
+pub fn optimizations(state: State<'_, AppState>, rom_id: i64) -> AppResult<Optimizations> {
+    let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
+    let catalog = state.catalog();
+    let rules = catalog.optimize_for_install(&st);
+    let hw = crate::hardware::get();
+    let title = crate::switch_saves::title_id(&catalog, &state.config_dir, &st);
+    let game = crate::optimize::GameRef { rom_id, title: title.as_deref() };
+    Ok(Optimizations {
+        enabled: !state.settings().optimize_off.contains(&rom_id),
+        level: hw.level,
+        applied: crate::optimize::summary(&rules, hw, &game),
+    })
+}
+
+/// Coupe ou réactive les réglages optimisés d'un jeu (posés au prochain lancement).
+#[tauri::command]
+pub fn set_optimized(state: State<'_, AppState>, rom_id: i64, enabled: bool) -> AppResult<()> {
+    state.update_settings(|s| {
+        s.optimize_off.retain(|id| *id != rom_id);
+        if !enabled {
+            s.optimize_off.push(rom_id);
+        }
+    })?;
+    tracing::info!("réglages optimisés du jeu {rom_id} : {}", if enabled { "activés" } else { "coupés" });
+    Ok(())
 }

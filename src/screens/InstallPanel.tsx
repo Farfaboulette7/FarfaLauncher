@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import {
   backend,
   CodChoice,
+  errorMessage,
   CodModeInfo,
   downloadSize,
   emulatorDownloadSize,
@@ -22,11 +23,13 @@ import {
   isAppError,
   SaveChoice,
   SharedShaders,
+  Optimizations,
   Target,
   TARGET_LABELS,
 } from "../api/backend";
 import { InstallsState } from "../hooks/useInstalls";
 import { Dialog } from "../components/Dialog";
+import { REPORT_SENT_EVENT } from "../components/ReportsInbox";
 import { LaunchOverlay } from "../components/LaunchOverlay";
 
 const PHASE_LABELS: Record<InstallPhase, string> = {
@@ -67,7 +70,10 @@ export function InstallPanel({ game: base, target, installs, onError }: Props) {
   const progress = installs.progress.get(game.id);
   const error = installs.errors.get(game.id);
   const [message, setMessage] = useState<string | null>(null);
-  const [dialog, setDialog] = useState<"exe" | "uninstall" | "proton" | "cod" | null>(null);
+  const [dialog, setDialog] = useState<"exe" | "uninstall" | "proton" | "cod" | "report" | null>(null);
+  /** Rapport proposé juste après un plantage (le jeu s'est fermé tout seul). */
+  const [reportAfterCrash, setReportAfterCrash] = useState(false);
+  const [reportSent, setReportSent] = useState<string | null>(null);
   /** Version de Proton choisie avant l'installation (`null` : la recommandée). */
   const [protonChoice, setProtonChoice] = useState<string | null>(null);
   /** Mode du Call of Duty pour la partie en cours de lancement. */
@@ -402,6 +408,21 @@ export function InstallPanel({ game: base, target, installs, onError }: Props) {
         {error && <p className="n-alert">{error.message}</p>}
         {message && <p className="n-alert">{message}</p>}
         {saveNotice && <p className="n-notice">{saveNotice}</p>}
+        {last?.crashed && !reportSent && runningSince === undefined && inst && (
+          <p className="n-notice">
+            Le jeu s'est arrêté brusquement.{" "}
+            <button
+              className="n-link"
+              onClick={() => {
+                setReportAfterCrash(true);
+                setDialog("report");
+              }}
+            >
+              Signaler le problème
+            </button>
+          </p>
+        )}
+        {reportSent && <p className="n-notice">{reportSent}</p>}
 
         {inst && !progress && runningSince === undefined && !busy && !launching && (
           <div className="gd-inst-actions">
@@ -443,6 +464,15 @@ export function InstallPanel({ game: base, target, installs, onError }: Props) {
                 {inst.shared ? "Déplacer la recomp…" : "Déplacer le jeu…"}
               </button>
             )}
+            <button
+              className="n-link"
+              onClick={() => {
+                setReportAfterCrash(false);
+                setDialog("report");
+              }}
+            >
+              Signaler un problème
+            </button>
             <button className="n-link" onClick={() => setDialog("uninstall")}>
               Désinstaller
             </button>
@@ -515,6 +545,18 @@ export function InstallPanel({ game: base, target, installs, onError }: Props) {
           serverModified={saveAsk.serverModified}
           onClose={() => setSaveAsk(null)}
           onChoose={launch}
+        />
+      )}
+      {dialog === "report" && inst && (
+        <ReportDialog
+          romId={game.id}
+          name={game.name}
+          afterCrash={reportAfterCrash}
+          onClose={() => setDialog(null)}
+          onSent={() => {
+            setDialog(null);
+            setReportSent("Rapport envoyé, merci ! Suivez sa réponse avec l'icône des messages, en haut de la bibliothèque.");
+          }}
         />
       )}
       {dialog === "uninstall" && inst && (
@@ -719,6 +761,7 @@ export function InstallFacts({ game: base, target, installs }: { game: Game; tar
           </dd>
         </>
       )}
+      {inst?.executable && <OptimizedFacts romId={base.id} running={installs.running.has(base.id)} />}
       <dt>Plateformes</dt>
       <dd>
         <ul className="gd-platforms">
@@ -791,6 +834,48 @@ function useRate(phase: InstallPhase, done: number): { rate: number | null; elap
   }
   return { rate: ref.current.rate, elapsed: now - ref.current.start };
 }
+
+/** Réglages optimisés pour ce PC : ce que le launcher pose au lancement, et l'interrupteur. */
+function OptimizedFacts({ romId, running }: { romId: number; running: boolean }) {
+  const [info, setInfo] = useState<Optimizations | null>(null);
+  useEffect(() => {
+    let live = true;
+    backend
+      .optimizations(romId)
+      .then((o) => live && setInfo(o))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [romId]);
+  if (!info || info.applied.length === 0) return null;
+  async function toggle(enabled: boolean) {
+    setInfo((i) => (i ? { ...i, enabled } : i));
+    await backend.setOptimized(romId, enabled).catch(() => setInfo((i) => (i ? { ...i, enabled: !enabled } : i)));
+  }
+  return (
+    <>
+      <dt>Réglages optimisés</dt>
+      <dd>
+        <label className="n-check">
+          <input type="checkbox" checked={info.enabled} disabled={running} onChange={(e) => toggle(e.target.checked)} />
+          Adaptés à ce PC (niveau {LEVEL_NAMES[info.level]})
+        </label>
+        {info.enabled ? (
+          <ul className="gd-optimized">
+            {info.applied.map((a) => (
+              <li key={a.key}>{a.label}</li>
+            ))}
+          </ul>
+        ) : (
+          <p className="n-hint">Coupés : vos propres réglages de l'émulateur sont gardés.</p>
+        )}
+      </dd>
+    </>
+  );
+}
+
+const LEVEL_NAMES: Record<Optimizations["level"], string> = { faible: "modeste", moyen: "moyen", fort: "puissant" };
 
 function ProgressView({
   phase,
@@ -1033,6 +1118,86 @@ function CodModeDialog({
           compte, en solo ou en réseau local, avec des bots.
         </p>
       )}
+    </Dialog>
+  );
+}
+
+/** Rapport de bug : description écrite par le joueur, et liste des fichiers joints. */
+function ReportDialog({
+  romId,
+  name,
+  afterCrash,
+  onClose,
+  onSent,
+}: {
+  romId: number;
+  name: string;
+  afterCrash: boolean;
+  onClose: () => void;
+  onSent: () => void;
+}) {
+  const [text, setText] = useState("");
+  const [files, setFiles] = useState<string[] | null>(null);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    backend
+      .reportFiles(romId)
+      .then(setFiles)
+      .catch(() => setFiles([]));
+  }, [romId]);
+  async function send() {
+    setSending(true);
+    setError(null);
+    try {
+      await backend.sendReport(romId, text, afterCrash);
+      window.dispatchEvent(new Event(REPORT_SENT_EVENT));
+      onSent();
+    } catch (e) {
+      setError(errorMessage(e));
+      setSending(false);
+    }
+  }
+  return (
+    <Dialog
+      title="Signaler un problème"
+      onClose={sending ? () => {} : onClose}
+      actions={
+        <>
+          <button className="n-btn" onClick={onClose} disabled={sending}>
+            Annuler
+          </button>
+          <button className="n-btn" onClick={send} disabled={sending || text.trim().length < 5}>
+            {sending ? "Envoi…" : "Envoyer"}
+          </button>
+        </>
+      }
+    >
+      <p>
+        Qu'est-ce qui ne va pas avec <strong>{name}</strong> ?
+      </p>
+      <textarea
+        className="n-input report-text"
+        rows={5}
+        autoFocus
+        value={text}
+        maxLength={4000}
+        placeholder="Par exemple : le décor ne s'affiche plus, seul Yoshi est visible, depuis le niveau 2. Ça marchait hier."
+        onChange={(e) => setText(e.target.value)}
+      />
+      <p className="n-hint">Décrivez ce que vous voyez, quand ça arrive, et si ça marchait avant. Les fichiers ci-dessous sont joints automatiquement (votre nom de compte et votre dossier personnel en sont retirés).</p>
+      {files === null ? (
+        <p className="n-hint">
+          <span className="n-spinner" /> Recherche des journaux…
+        </p>
+      ) : (
+        <ul className="report-files">
+          {files.map((f) => (
+            <li key={f}>{f}</li>
+          ))}
+        </ul>
+      )}
+      {error && <p className="n-alert">{error}</p>}
     </Dialog>
   );
 }

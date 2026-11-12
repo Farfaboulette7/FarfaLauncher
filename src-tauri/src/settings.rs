@@ -24,6 +24,10 @@ pub struct Settings {
     pub device_id: String,
     /// Fenêtre en plein écran au démarrage.
     pub fullscreen: bool,
+    /// Jeux (romId) dont le joueur a coupé les réglages optimisés.
+    pub optimize_off: Vec<i64>,
+    /// Rapports de bug déjà lus : identifiant → date de la dernière nouvelle vue (`updatedAt`).
+    pub reports_seen: std::collections::BTreeMap<String, u64>,
 }
 
 impl Default for Settings {
@@ -35,6 +39,8 @@ impl Default for Settings {
             manager_url: None,
             device_id: uuid::Uuid::new_v4().to_string(),
             fullscreen: true,
+            optimize_off: Vec::new(),
+            reports_seen: Default::default(),
         }
     }
 }

@@ -50,7 +50,8 @@ sdl3-sys = { version = "0.7", features = ["build-from-source-static"] }
 
 [target."cfg(windows)".dependencies]
 # DirectInput : identifiants des manettes pour puNES (controllers.rs).
-windows = { version = "0.62", features = ["Win32_Devices_HumanInterfaceDevice", "Win32_System_LibraryLoader"] }
+# DXGI : carte graphique et mémoire vidéo (hardware.rs).
+windows = { version = "0.62", features = ["Win32_Devices_HumanInterfaceDevice", "Win32_System_LibraryLoader", "Win32_Graphics_Dxgi"] }
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_JobObjects", "Win32_System_Com", "Win32_Security", "Win32_System_Threading", "Win32_System_Registry", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [profile.release]

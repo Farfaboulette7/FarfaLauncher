@@ -5,7 +5,9 @@ import { backend, errorMessage, formatSize, SystemInfo } from "../api/backend";
 export function PcPanel({ version, serverUrl }: { version: string; serverUrl: string | null }) {
   const [info, setInfo] = useState<SystemInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [gpu] = useState(readGpu);
+  const [webglGpu] = useState(readGpu);
+  // Carte lue par le système (avec sa mémoire) ; WebGL en secours.
+  const gpu = info?.gpu ? `${info.gpu.name}${info.gpu.vram ? ` · ${formatSize(info.gpu.vram)}` : ""}` : webglGpu;
   const screenInfo = useScreenInfo();
   const pads = useGamepads();
   const [ping, setPing] = useState<number | "…" | null>(null);
@@ -40,7 +42,8 @@ export function PcPanel({ version, serverUrl }: { version: string; serverUrl: st
       `FaRFa project ${version}`,
       info && `Système : ${info.os}${info.kernel ? ` (noyau ${info.kernel})` : ""}`,
       info && `Processeur : ${info.cpu ?? "inconnu"} · ${coresLabel(info)}`,
-      `Carte graphique : ${gpu ?? "inconnue"}`,
+      `Carte graphique : ${gpu ?? "inconnue"}${info?.gpu?.driver ? ` (pilote ${info.gpu.driver})` : ""}`,
+      info && `Niveau pour l'émulation : ${info.level}`,
       info && `Mémoire : ${formatSize(info.memoryTotal)}`,
       screenInfo && `Écran : ${screenInfo.width} × ${screenInfo.height}${screenInfo.hz ? ` · ${screenInfo.hz} Hz` : ""}`,
       ...(info?.disks.map((d) => `Disque ${d.mount} : ${formatSize(d.available)} libres sur ${formatSize(d.total)}`) ?? []),
@@ -85,7 +88,19 @@ export function PcPanel({ version, serverUrl }: { version: string; serverUrl: st
             </>
           )}
           <dt>Carte graphique</dt>
-          <dd>{gpu ?? "inconnue"}</dd>
+          <dd>
+            {gpu ?? "inconnue"}
+            {info?.gpu?.driver && <span className="n-hint settings-pc-sub">pilote {info.gpu.driver}</span>}
+          </dd>
+          {info && (
+            <>
+              <dt>Niveau pour l'émulation</dt>
+              <dd>
+                {LEVEL_LABELS[info.level]}
+                <span className="n-hint settings-pc-sub">règle les émulateurs au mieux pour ce PC</span>
+              </dd>
+            </>
+          )}
           {info && (
             <>
               <dt>Mémoire vive</dt>
@@ -206,6 +221,12 @@ function formatUptime(s: number): string {
 }
 
 /** Nom de la carte graphique d'après WebGL (« ANGLE (NVIDIA, NVIDIA GeForce …) »). */
+const LEVEL_LABELS: Record<SystemInfo["level"], string> = {
+  faible: "Modeste",
+  moyen: "Moyen",
+  fort: "Puissant",
+};
+
 function readGpu(): string | null {
   try {
     const gl = document.createElement("canvas").getContext("webgl");

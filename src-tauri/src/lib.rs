@@ -6,13 +6,16 @@ mod dialogs;
 mod error;
 mod external;
 mod gamepad;
+mod hardware;
 mod ingame;
 mod install;
 mod language;
 mod launch;
 mod logging;
 mod manager;
+mod optimize;
 mod pc;
+mod report;
 mod platform;
 mod romm;
 mod runtimes;
@@ -75,6 +78,13 @@ pub fn run() {
             commands::open_url,
             commands::system::system_info,
             commands::system::server_ping,
+            commands::system::optimizations,
+            commands::system::set_optimized,
+            commands::report::report_files,
+            commands::report::send_report,
+            commands::report::my_reports,
+            commands::report::reports_seen,
+            commands::report::mark_reports_seen,
             commands::log_frontend,
             commands::window::is_fullscreen,
             commands::window::set_fullscreen,

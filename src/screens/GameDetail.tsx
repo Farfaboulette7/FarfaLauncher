@@ -7,13 +7,15 @@ import { useCachedImage } from "../hooks/useCachedImage";
 import { BoxArt } from "../components/BoxArt";
 import { Marquee } from "../components/Marquee";
 import { FullscreenButton } from "../components/FullscreenButton";
+import { ReportsInbox } from "../components/ReportsInbox";
+import { noteLines } from "../notes";
 import { useReveal } from "../reveal";
 import "./GameDetail.css";
 
 // pdf.js est lourd : chargé seulement à l'ouverture d'un livret.
 const PdfViewer = lazy(() => import("../components/PdfViewer").then((m) => ({ default: m.PdfViewer })));
 
-type Tab = "infos" | "medias" | "livret" | "controles";
+type Tab = "infos" | "nouveautes" | "medias" | "livret" | "controles";
 
 interface Props {
   game: Game;
@@ -30,6 +32,19 @@ interface Props {
 
 export function GameDetail({ game, platform, target, installs, favorite, onToggleFavorite, favoriteError, onBack, onError }: Props) {
   const [tab, setTab] = useState<Tab>("infos");
+  // Nouveautés de la recomp ou de l'émulateur : l'onglet n'apparaît que s'il y en a.
+  const [changelog, setChangelog] = useState<Changelog | null>(null);
+  useEffect(() => {
+    let alive = true;
+    setChangelog(null);
+    backend
+      .gameChangelog(game.id, game.console)
+      .then((c) => alive && setChangelog(c))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [game.id, game.console]);
   const [coverKind, setCoverKind] = useState<"box" | "flat" | null>(null);
   const [zoom, setZoom] = useState(false);
   const root = useRef<HTMLDivElement>(null);
@@ -52,6 +67,7 @@ export function GameDetail({ game, platform, target, installs, favorite, onToggl
 
   const tabs: { id: Tab; label: string; count?: number }[] = [
     { id: "infos", label: "Informations" },
+    ...(changelog ? [{ id: "nouveautes" as const, label: "Nouveautés" }] : []),
     { id: "medias", label: "Médias", count: game.screenshotUrls.length },
     { id: "livret", label: "Livret", count: game.manuals.length },
     { id: "controles", label: "Contrôles" },
@@ -69,6 +85,7 @@ export function GameDetail({ game, platform, target, installs, favorite, onToggl
             {platform && <p className="n-subtitle gd-platform">{game.variant ? `${platform.name} · ${game.variant}` : platform.name}</p>}
           </div>
           <div className="gd-header-actions">
+            <ReportsInbox offline={false} />
             <FullscreenButton />
             <button
               className="n-btn gd-fav"
@@ -128,6 +145,7 @@ export function GameDetail({ game, platform, target, installs, favorite, onToggl
             style={{ "--appear-delay": contentDelay.current } as CSSProperties}
           >
             {tab === "infos" && <InfoTab game={game} target={target} installs={installs} onError={onError} />}
+            {tab === "nouveautes" && changelog && <ChangelogSection log={changelog} />}
             {tab === "medias" && <MediaTab game={game} />}
             {tab === "livret" && <ManualTab game={game} onError={onError} />}
             {tab === "controles" && <ControlsTab game={game} installs={installs} onError={onError} />}
@@ -211,56 +229,14 @@ function InfoTab({ game, target, installs, onError }: { game: Game; target: Targ
           </dl>
         </section>
       </div>
-      <ChangelogSection game={game} />
     </div>
   );
 }
 
-/** Notes de version GitHub (Markdown) en lignes simples : titres, puces, texte sans balises. */
-function noteLines(md: string): { kind: "title" | "item" | "text"; text: string }[] {
-  const clean = (s: string) =>
-    s
-      .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
-      .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
-      .replace(/<[^>]+>/g, "")
-      .replace(/(\*\*|__|`)/g, "")
-      // Émojis : le moteur web de l'AppImage se fige en les dessinant sous Linux.
-      .replace(/[\p{Extended_Pictographic}\u{1F3FB}-\u{1F3FF}\u{FE0F}\u{200D}\u{20E3}]/gu, "")
-      .trim();
-  return md
-    .split(/\r?\n/)
-    .map((line) => {
-      const title = /^\s*#{1,6}\s+(.*)$/.exec(line);
-      if (title) return { kind: "title" as const, text: clean(title[1]) };
-      const item = /^\s*(?:[-*+]|\d+\.)\s+(.*)$/.exec(line);
-      if (item) return { kind: "item" as const, text: clean(item[1]) };
-      return { kind: "text" as const, text: clean(line) };
-    })
-    .filter((l) => l.text !== "" && !/^[-=*_]{3,}$/.test(l.text));
-}
-
-/** Nombre de lignes montrées avant « Tout afficher ». */
-const CHANGELOG_PREVIEW = 14;
-
-/** Dernières nouveautés de la recomp ou de l'émulateur qui fait tourner le jeu. */
-function ChangelogSection({ game }: { game: Game }) {
-  const [log, setLog] = useState<Changelog | null>(null);
-  const [all, setAll] = useState(false);
-  useEffect(() => {
-    let alive = true;
-    setLog(null);
-    setAll(false);
-    backend
-      .gameChangelog(game.id, game.console)
-      .then((c) => alive && setLog(c))
-      .catch(() => undefined);
-    return () => {
-      alive = false;
-    };
-  }, [game.id, game.console]);
-  if (!log) return null;
+/** Onglet Nouveautés : notes de la dernière version de la recomp ou de l'émulateur du jeu. */
+function ChangelogSection({ log }: { log: Changelog }) {
   const lines = noteLines(log.notes);
-  const shown = all ? lines : lines.slice(0, CHANGELOG_PREVIEW);
+  const shown = lines;
   const date = log.date ? new Date(log.date).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" }) : null;
   return (
     <section className="gd-changelog">
@@ -289,11 +265,6 @@ function ChangelogSection({ game }: { game: Game }) {
             ),
           )}
         </div>
-      )}
-      {lines.length > CHANGELOG_PREVIEW && (
-        <button className="n-link" onClick={() => setAll((a) => !a)}>
-          {all ? "Réduire" : `Tout afficher (${lines.length - CHANGELOG_PREVIEW} lignes de plus)`}
-        </button>
       )}
     </section>
   );

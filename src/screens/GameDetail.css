@@ -295,11 +295,19 @@
 .gd-facts-cols {
   display: flex;
   flex-wrap: wrap;
-  gap: 20px clamp(28px, 4vw, 72px);
+  gap: 36px clamp(32px, 5vw, 88px);
   margin-top: 22px;
 }
-.gd-facts-cols > section { flex: 1 1 280px; min-width: 0; max-width: 560px; }
-.gd-facts-cols .gd-facts--wide { margin: 0; padding: 0 12px; font-size: var(--fs-sm); gap: 8px 28px; }
+/* Assez large pour que les valeurs ne s'empilent pas mot par mot ; sinon les sections passent l'une sous l'autre. */
+.gd-facts-cols > section { flex: 1 1 380px; min-width: 0; max-width: 680px; display: flex; flex-direction: column; gap: 14px; }
+.gd-facts-cols .gd-facts--wide {
+  margin: 0;
+  padding: 0 12px;
+  font-size: var(--fs-sm);
+  grid-template-columns: minmax(120px, max-content) 1fr;
+  gap: 14px 28px;
+  line-height: 1.45;
+}
 .gd-install-dest { overflow-wrap: anywhere; }
 
 /* ---------- Contrôles ---------- */
@@ -375,7 +383,7 @@
 .ctl-capture p { margin: 0; }
 
 /* Informations : nouveautés de la recomp ou de l'émulateur. */
-.gd-changelog { margin-top: 28px; display: flex; flex-direction: column; gap: 10px; max-width: 1140px; }
+.gd-changelog { margin-top: 22px; display: flex; flex-direction: column; gap: 10px; max-width: 1140px; }
 .gd-changelog > .n-hint { margin: 0 12px; }
 .gd-changelog-notes { margin: 0 12px; display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-sm); line-height: 1.5; overflow-wrap: anywhere; }
 .gd-changelog-notes p { margin: 0; }
@@ -383,3 +391,16 @@
 .gd-changelog-item { position: relative; padding-left: 18px; }
 .gd-changelog-item::before { content: ""; position: absolute; left: 4px; top: 0.6em; width: 6px; height: 6px; background: var(--nier-low); }
 .gd-changelog > .n-link { align-self: flex-start; margin-left: 12px; }
+
+/* Réglages optimisés posés au lancement (onglet Infos). */
+.gd-optimized {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 0.92em;
+  opacity: 0.85;
+}
+.gd-optimized li + li { margin-top: 2px; }
+
+/* Rapport de bug. */
+.report-text { width: 100%; resize: vertical; min-height: 96px; font-family: inherit; }
+.report-files { margin: 4px 0 0; padding-left: 18px; font-size: var(--fs-xs); opacity: 0.8; max-height: 140px; overflow: auto; }

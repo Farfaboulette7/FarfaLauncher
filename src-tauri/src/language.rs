@@ -233,7 +233,7 @@ pub(crate) fn set_ini(text: &str, key: &str, value: &str) -> String {
 }
 
 /// Une ligne « clé valeur » par réglage (sm64coopdx).
-fn set_kv(text: &str, key: &str, value: &str) -> String {
+pub(crate) fn set_kv(text: &str, key: &str, value: &str) -> String {
     let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
     match lines.iter_mut().find(|l| l.split_whitespace().next() == Some(key)) {
         Some(line) => *line = format!("{key} {value}"),
@@ -243,7 +243,7 @@ fn set_kv(text: &str, key: &str, value: &str) -> String {
 }
 
 /// `a/b` : objets imbriqués ; une clé à point (`game.language`) reste une seule clé.
-fn set_json(text: &str, key: &str, value: &str) -> Result<String, String> {
+pub(crate) fn set_json(text: &str, key: &str, value: &str) -> Result<String, String> {
     let mut doc: serde_json::Value = if text.trim().is_empty() {
         serde_json::json!({})
     } else {
@@ -263,7 +263,7 @@ fn set_json(text: &str, key: &str, value: &str) -> Result<String, String> {
     serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())
 }
 
-fn join_lines(lines: Vec<String>, original: &str) -> String {
+pub(crate) fn join_lines(lines: Vec<String>, original: &str) -> String {
     let newline = if original.contains("\r\n") { "\r\n" } else { "\n" };
     let mut out = lines.join(newline);
     out.push_str(newline);

@@ -35,6 +35,7 @@ import { beginAudio } from "../audioGuard";
 import "./Library.css";
 import "./Hack.css";
 import { FullscreenButton } from "../components/FullscreenButton";
+import { ReportsInbox } from "../components/ReportsInbox";
 
 type Tab = "recent" | "library" | "favorites";
 /** Filtre de la bibliothèque, des favoris et de la recherche. */
@@ -591,6 +592,7 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
               Mettre à jour ({update.version})
             </button>
           )}
+          <ReportsInbox offline={session.offline} />
           <button
             className="n-btn"
             onClick={() => {

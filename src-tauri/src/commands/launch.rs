@@ -34,6 +34,8 @@ struct GameStopped {
     save_error: Option<AppError>,
     /// État du jeu, quand le jeu démarré par son launcher vient d'être relevé.
     game: Option<state::InstalledGame>,
+    /// Le jeu semble avoir planté : l'interface propose d'envoyer un rapport.
+    crashed: bool,
 }
 
 /// Mode choisi pour un Call of Duty.
@@ -176,6 +178,13 @@ pub async fn play_game(
                 }
             }
         }
+        // Réglages optimisés pour ce PC (FarfaRomManager), sauf si le joueur les a coupés.
+        let rules = state.catalog().optimize_for_install(&st);
+        if !rules.is_empty() && !state.settings().optimize_off.contains(&st.rom_id) {
+            let title = crate::switch_saves::title_id(&state.catalog(), &state.config_dir, &st);
+            let game = crate::optimize::GameRef { rom_id: st.rom_id, title: title.as_deref() };
+            env.extend(crate::optimize::apply(&rules, crate::hardware::get(), &game, &exe_dir));
+        }
         // Citron et Eden : shaders déjà vus par les autres joueurs, reçus du serveur.
         shader_job = shaders_job(&state, &st, &exe_dir);
         if let Some(job) = &shader_job {
@@ -205,14 +214,13 @@ pub async fn play_game(
 
     tauri::async_runtime::spawn(async move {
         let shown = app.clone();
-        let learned = tauri::async_runtime::spawn_blocking(move || {
-            running.wait(move || {
+        let (learned, crashed) = tauri::async_runtime::spawn_blocking(move || {
+            running.wait_outcome(move || {
                 let _ = shown.emit("game-window", rom_id);
             })
         })
         .await
-        .ok()
-        .flatten();
+        .unwrap_or((None, false));
         let ended = OffsetDateTime::now_utc();
         ended_flag.store(true, std::sync::atomic::Ordering::Relaxed);
         let state = app.state::<AppState>();
@@ -250,7 +258,7 @@ pub async fn play_game(
         }
         // Dossier des sauvegardes peut-être trouvé à la sortie du jeu : état à jour.
         let game = game.or_else(|| state::find(&state.config_dir, rom_id));
-        let _ = app.emit("game-stopped", GameStopped { rom_id, duration_ms: session.duration_ms, recorded, pending, save, save_error, game });
+        let _ = app.emit("game-stopped", GameStopped { rom_id, duration_ms: session.duration_ms, recorded, pending, save, save_error, game, crashed });
     });
     Ok(())
 }

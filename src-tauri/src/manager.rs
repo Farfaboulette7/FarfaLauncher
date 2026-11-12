@@ -19,6 +19,17 @@ use crate::state::AppState;
 const SUBDOMAIN: &str = "manager";
 const CACHE_FILE: &str = "catalog.json";
 
+/// Fichiers à joindre aux rapports de bug (`journaux:` du gestionnaire) : chemin relatif au
+/// dossier de l'émulateur ou de la recomp, ou commençant par `{exedir}`, `{appdata}`…, avec
+/// `*` dans le dernier segment.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogPattern {
+    #[serde(default)]
+    pub system: Option<String>,
+    pub pattern: String,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Catalog {
@@ -41,6 +52,12 @@ pub struct CatalogRecomp {
     pub games: Vec<CatalogRecompGame>,
     /// Comment la mettre en français.
     pub language: Vec<crate::language::LanguageRule>,
+    /// Réglages optimisés selon le PC (optimize.rs).
+    #[serde(default)]
+    pub optimize: Vec<crate::optimize::OptimizeRule>,
+    /// Journaux à joindre aux rapports de bug (report.rs).
+    #[serde(default)]
+    pub logs: Vec<LogPattern>,
     /// Format d'attribution des manettes aux joueurs (controllers.rs).
     #[serde(default)]
     pub controllers: Option<String>,
@@ -136,6 +153,12 @@ pub struct Emulator {
     /// Comment le mettre en français.
     #[serde(default)]
     pub language: Vec<crate::language::LanguageRule>,
+    /// Réglages optimisés selon le PC (optimize.rs).
+    #[serde(default)]
+    pub optimize: Vec<crate::optimize::OptimizeRule>,
+    /// Journaux à joindre aux rapports de bug (report.rs).
+    #[serde(default)]
+    pub logs: Vec<LogPattern>,
     /// Format d'attribution des manettes aux joueurs (controllers.rs).
     #[serde(default)]
     pub controllers: Option<String>,
@@ -423,6 +446,22 @@ impl Catalog {
         }
     }
 
+    /// Réglages optimisés du programme qui lance ce jeu (émulateur ou recomp).
+    pub fn optimize_for_install(&self, st: &crate::install::state::InstalledGame) -> Vec<crate::optimize::OptimizeRule> {
+        match &st.shared {
+            Some(s) if s.is_emulator() => self.emulator_for_install(st).map(|e| e.optimize.clone()).unwrap_or_default(),
+            _ => self.recomp_for_install(st).map(|r| r.optimize.clone()).unwrap_or_default(),
+        }
+    }
+
+    /// Journaux à joindre à un rapport de bug pour ce jeu installé.
+    pub fn logs_for_install(&self, st: &crate::install::state::InstalledGame) -> Vec<LogPattern> {
+        match &st.shared {
+            Some(s) if s.is_emulator() => self.emulator_for_install(st).map(|e| e.logs.clone()).unwrap_or_default(),
+            _ => self.recomp_for_install(st).map(|r| r.logs.clone()).unwrap_or_default(),
+        }
+    }
+
     /// Émulateur qui lance ce jeu installé.
     pub fn emulator_for_install(&self, st: &crate::install::state::InstalledGame) -> Option<&Emulator> {
         let s = st.shared.as_ref().filter(|s| s.is_emulator())?;
@@ -644,6 +683,8 @@ mod tests {
             config: vec![],
             config_missing: vec![],
             language: vec![],
+            optimize: vec![],
+            logs: vec![],
             controllers: None,
             dialogs: vec![],
             packs: vec![],

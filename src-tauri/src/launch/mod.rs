@@ -239,7 +239,13 @@ impl RunningGame {
     /// dans `spawn_blocking`). Renvoie le jeu démarré par un launcher, s'il y en a eu un.
     /// `on_window` : appelé une fois, quand une fenêtre du jeu apparaît (Windows ;
     /// ailleurs, jamais).
-    pub fn wait(mut self, mut on_window: impl FnMut()) -> Option<DirectLaunch> {
+    pub fn wait(self, on_window: impl FnMut()) -> Option<DirectLaunch> {
+        self.wait_outcome(on_window).0
+    }
+
+    /// Comme `wait`, et dit si le jeu semble avoir planté : fermé tout seul en moins de
+    /// 15 s, ou arrêté par une erreur grave (exception Windows, signal SIGSEGV…).
+    pub fn wait_outcome(mut self, mut on_window: impl FnMut()) -> (Option<DirectLaunch>, bool) {
         // Surveillance rapprochée tant que la fenêtre du jeu n'est pas là.
         let mut window_seen = !cfg!(windows);
         let mut close_asked: Option<Instant> = None;
@@ -284,14 +290,20 @@ impl RunningGame {
         }
         let status = self.child.try_wait().ok().flatten();
         tracing::info!("jeu fermé (pid {}, {})", self.child.id(), status.map(|s| s.to_string()).unwrap_or_else(|| "état inconnu".into()));
-        if self.started.elapsed() < QUICK_EXIT {
+        let quick = self.started.elapsed() < QUICK_EXIT;
+        if quick {
             self.log_output_tail();
+        }
+        // Fermé à la demande du launcher : pas un plantage.
+        let crashed = close_asked.is_none() && (quick || status.is_some_and(is_crash));
+        if crashed {
+            tracing::warn!("le jeu semble avoir planté (rapport de bug proposé)");
         }
         let learned = self.watcher.as_ref().and_then(direct::Watcher::learned);
         if let Some(d) = &learned {
             tracing::info!("jeu démarré par le launcher: {} {:?}", d.exe, d.args);
         }
-        learned
+        (learned, crashed)
     }
 
     /// Demande au jeu de se fermer : ses fenêtres reçoivent WM_CLOSE (Windows),
@@ -666,6 +678,20 @@ mod tests {
         assert_eq!(var.1, format!("{}\\x", direct::GAME_DIR_VAR));
         assert!(learned.env.iter().all(|(k, _)| k != "PATH"), "{:?}", learned.env);
         let _ = std::fs::remove_dir_all(&game_dir);
+    }
+}
+
+/// Arrêt sur erreur grave : exception Windows (code 0xC0000000 et plus), ou signal de
+/// plantage sous Linux et macOS.
+fn is_crash(status: std::process::ExitStatus) -> bool {
+    #[cfg(windows)]
+    {
+        status.code().is_some_and(|c| c as u32 >= 0xC000_0000)
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        status.signal().is_some_and(|s| [4, 6, 7, 8, 11].contains(&s))
     }
 }
 

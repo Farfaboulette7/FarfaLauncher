@@ -126,6 +126,23 @@ pub fn title_from_nsp(path: &Path) -> Option<String> {
     names.split('\0').filter(|n| n.ends_with(".tik")).find_map(|n| n.get(..16).and_then(base_title))
 }
 
+/// ID du premier paquet d'un conteneur NUP (jeux Switch 2 décryptés) : superbloc
+/// `NUP`, table des matières à `toc_offset`, paquets à +0x30 (title_id en tête).
+pub fn title_from_nup(path: &Path) -> Option<String> {
+    use std::io::{Seek, SeekFrom};
+    let mut f = std::fs::File::open(path).ok()?;
+    let mut sb = [0u8; 0x80];
+    f.read_exact(&mut sb).ok()?;
+    if &sb[..4] != b"NUP" {
+        return None;
+    }
+    let toc = u64::from_le_bytes(sb[8..16].try_into().ok()?);
+    f.seek(SeekFrom::Start(toc + 0x30)).ok()?;
+    let mut id = [0u8; 8];
+    f.read_exact(&mut id).ok()?;
+    base_title(&format!("{:016x}", u64::from_le_bytes(id)))
+}
+
 /// Dossier de shaders écrit pendant la partie : le jeu qui vient de tourner.
 fn learned_title(root: &Path, cache: &str, since: SystemTime) -> Option<String> {
     std::fs::read_dir(root)

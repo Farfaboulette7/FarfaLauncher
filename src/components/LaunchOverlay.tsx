@@ -67,6 +67,7 @@ export function LaunchOverlay({ romId, name, step, started, onDone }: Props) {
           <div className="launch-bar">
             <span />
           </div>
+          <div className="launch-tip">Astuce : maintenez Start + Select une seconde pour ouvrir le menu et quitter le jeu.</div>
           {slow && <div className="launch-hint">Le jeu met du temps à s'afficher… Cliquez pour masquer ce message.</div>}
         </div>
       </div>

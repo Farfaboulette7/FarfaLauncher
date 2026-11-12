@@ -1,0 +1,28 @@
+/* Icône des rapports de bug (barre du haut) et leur liste. */
+.inbox-btn { position: relative; display: inline-flex; align-items: center; justify-content: center; padding-left: 10px; padding-right: 10px; }
+.inbox-count { position: absolute; top: -7px; right: -7px; min-width: 18px; text-align: center; }
+
+.inbox-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.inbox-item { padding: 10px 12px; border: var(--nier-line) solid var(--nier-low); }
+.inbox-item.is-unread { border-color: var(--nier-alert); }
+.inbox-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.inbox-status { font-size: var(--fs-xs); padding: 1px 6px; border: var(--nier-line) solid currentColor; }
+.inbox-status.is-wait { opacity: 0.7; }
+.inbox-status.is-done { background: var(--nier-low); color: var(--nier-high); border-color: var(--nier-low); }
+.inbox-date { font-size: var(--fs-xs); margin-top: 2px; }
+.inbox-desc { margin: 6px 0 0; font-style: italic; opacity: 0.85; }
+.inbox-answer { margin-top: 8px; padding-left: 10px; border-left: 3px solid var(--nier-low); }
+.inbox-answer p { margin: 0 0 4px; }
+.inbox-changes { margin: 4px 0; padding-left: 18px; font-size: 0.95em; }
+/* Bouton-icône : sans le carré des boutons à texte. */
+.inbox-btn::before { display: none; }
+.inbox-section { display: flex; flex-direction: column; gap: 10px; }
+.inbox-section + .inbox-section { margin-top: 22px; }
+.inbox-section .n-section-title { margin: 0; }
+.inbox-notes { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-sm); line-height: 1.45; }
+.inbox-notes p { margin: 0; }
+.inbox-notes-title { margin-top: 6px !important; font-weight: 600; }
+.inbox-notes-item { position: relative; padding-left: 16px; }
+.inbox-notes-item::before { content: ""; position: absolute; left: 3px; top: 0.6em; width: 6px; height: 6px; background: var(--nier-low); }
+.inbox-older summary { cursor: pointer; font-weight: 600; }
+.inbox-older[open] summary { margin-bottom: 4px; }
