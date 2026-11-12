@@ -551,6 +551,28 @@ pub async fn refresh(state: &AppState) {
                 tracing::warn!("catalogue non mis en cache: {e}");
             }
             tracing::info!("catalogue : {} recomp(s), {} émulateur(s)", catalog.recomps.len(), catalog.emulators.len());
+            // Jeux Switch installés sous émulateur : chacun doit savoir où sont ses sauvegardes,
+            // y compris ceux installés avant que la règle existe.
+            let mut found = crate::switch_saves::fill_all(&catalog, &state.config_dir);
+            // ID introuvable sur ce PC (XCI sans ID dans son nom) : celui qu'un autre joueur a
+            // déjà appris, d'après les shaders partagés du jeu.
+            for mut st in crate::install::state::list_installed(&state.config_dir) {
+                if !crate::switch_saves::waiting(&catalog, &st) {
+                    continue;
+                }
+                let Some(emu) = catalog.emulator_for_install(&st).map(|e| e.id.clone()) else { continue };
+                let Ok(info) = client.get_json::<serde_json::Value>(&format!("api/shaders/rom/{}", st.rom_id)).await else { continue };
+                let title = info.as_object().into_iter().flat_map(|m| m.values()).find_map(|v| v.get("titleId")?.as_str().map(str::to_string));
+                if let Some(title) = title {
+                    crate::shaders::remember_title(&state.config_dir, &emu, st.rom_id, &title);
+                    if crate::switch_saves::fill(&catalog, &state.config_dir, &mut st, None) {
+                        found += 1;
+                    }
+                }
+            }
+            if found > 0 {
+                tracing::info!("sauvegardes Switch : dossier trouvé pour {found} jeu(x) au démarrage");
+            }
             *state.catalog.lock().unwrap() = catalog;
         }
         Err(e) => tracing::warn!("FarfaRomManager indisponible ({}), catalogue précédent gardé", e.code()),

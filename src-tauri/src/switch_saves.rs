@@ -117,6 +117,20 @@ pub fn fill(catalog: &Catalog, config_dir: &Path, st: &mut InstalledGame, since:
     true
 }
 
+/// Tous les jeux Switch et Switch 2 installés sous émulateur : dossier complété s'il manque.
+/// Renvoie le nombre de jeux complétés.
+pub fn fill_all(catalog: &Catalog, config_dir: &Path) -> usize {
+    let mut found = 0;
+    for mut st in state::list_installed(config_dir) {
+        if fill(catalog, config_dir, &mut st, None) {
+            found += 1;
+        } else if waiting(catalog, &st) {
+            tracing::info!("sauvegardes Switch de « {} » : dossier pas encore créé par l'émulateur, appris à la prochaine partie", st.name);
+        }
+    }
+    found
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -55,7 +55,12 @@ impl LanguageRule {
 /// Variables d'environnement à donner au jeu, et fichiers posés si ce n'est pas déjà fait.
 pub fn prepare(game_dir: &Path, exe_dir: &Path, rules: &[LanguageRule]) -> Vec<(String, String)> {
     let rules: Vec<&LanguageRule> = rules.iter().filter(|r| r.for_this_system()).collect();
-    let env = rules.iter().filter(|r| r.format == "env").map(|r| (r.key.clone(), r.value.clone())).collect();
+    // `{exedir}` dans une variable : le dossier de l'exécutable (Savage Wind sous Linux y garde ses données).
+    let env = rules
+        .iter()
+        .filter(|r| r.format == "env")
+        .map(|r| (r.key.clone(), r.value.replace("{exedir}", &exe_dir.to_string_lossy())))
+        .collect();
     let files: Vec<&LanguageRule> = rules.into_iter().filter(|r| r.format != "env").collect();
     if files.is_empty() {
         return env;

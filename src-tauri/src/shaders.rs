@@ -22,6 +22,38 @@ const CACHE: &str = "vulkan.bin";
 const MEMO: &str = "shaders.json";
 const MAGIC: &[u8] = b"yuzucach";
 const TIMEOUT: Duration = Duration::from_secs(120);
+const MAX_UPLOAD: usize = 256 << 20;
+
+/// Fichiers voisins du cache, jamais partagés : pipelines propres à la carte graphique, liste
+/// des shaders utilisés, sauvegardes de l'émulateur.
+fn is_cache_name(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    n.starts_with("vulkan") && n.ends_with(".bin") && !["_used", "pipelines", "static"].iter().any(|k| n.contains(k))
+}
+
+/// Dossier des shaders de l'émulateur et nom de son cache, relevés sur le disque :
+/// `user/shader/<jeu>/vulkan.bin` (Citron, Eden), `user/cache/shader/<jeu>/…` (Switch 2).
+/// `None` : l'émulateur partage déjà ses shaders lui-même (Lichii et lichii-sync), ou son
+/// cache n'a encore jamais été écrit (son nom est alors inconnu).
+pub fn locate(exe_dir: &Path) -> Option<(PathBuf, String)> {
+    let classic = exe_dir.join("user").join("shader");
+    let switch2 = exe_dir.join("user").join("cache").join("shader");
+    let is_switch2 = switch2.is_dir();
+    let root = if is_switch2 { switch2 } else { classic };
+    let files: Vec<String> = std::fs::read_dir(&root)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .filter(|e| e.path().is_dir())
+        .flat_map(|e| std::fs::read_dir(e.path()).into_iter().flatten().filter_map(Result::ok))
+        .map(|f| f.file_name().to_string_lossy().into_owned())
+        .collect();
+    if files.iter().any(|f| f.starts_with("lichii-cache")) {
+        return None;
+    }
+    let name = files.into_iter().filter(|f| is_cache_name(f)).max_by_key(|f| f == CACHE).or_else(|| (!is_switch2).then(|| CACHE.to_string()))?;
+    Some((root, name))
+}
 
 /// Dernier échange avec le serveur pour un jeu et un émulateur.
 #[derive(Default, Clone, Serialize, Deserialize)]
@@ -44,8 +76,10 @@ pub struct Job {
     pub manager: RommClient,
     pub emulator: String,
     pub rom_id: i64,
-    /// `user/shader` de l'émulateur.
+    /// `user/shader` de l'émulateur (`user/cache/shader` chez les émulateurs Switch 2).
     pub shader_root: PathBuf,
+    /// Nom du cache dans le dossier d'un jeu (`vulkan.bin`, `vulkan-frizti.fork-v54.bin`…).
+    pub cache_name: String,
     pub config_dir: PathBuf,
     /// Fichiers du jeu (pour y lire son ID).
     pub roms: Vec<PathBuf>,
@@ -93,13 +127,13 @@ pub fn title_from_nsp(path: &Path) -> Option<String> {
 }
 
 /// Dossier de shaders écrit pendant la partie : le jeu qui vient de tourner.
-fn learned_title(root: &Path, since: SystemTime) -> Option<String> {
+fn learned_title(root: &Path, cache: &str, since: SystemTime) -> Option<String> {
     std::fs::read_dir(root)
         .ok()?
         .filter_map(Result::ok)
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().to_ascii_lowercase();
-            let modified = e.path().join(CACHE).metadata().and_then(|m| m.modified()).ok()?;
+            let modified = e.path().join(cache).metadata().and_then(|m| m.modified()).ok()?;
             (base_title(&name) == Some(name.clone()) && modified >= since).then_some((modified, name))
         })
         .max()
@@ -110,6 +144,16 @@ fn learned_title(root: &Path, since: SystemTime) -> Option<String> {
 pub fn known_title(config_dir: &Path, emulator: &str, rom_id: i64) -> Option<String> {
     let all: BTreeMap<String, Memo> = std::fs::read_to_string(config_dir.join(MEMO)).ok().and_then(|t| serde_json::from_str(&t).ok())?;
     all.get(&format!("{emulator}:{rom_id}"))?.title.clone()
+}
+
+/// Retient l'ID d'un jeu appris ailleurs (serveur) pour cet émulateur.
+pub fn remember_title(config_dir: &Path, emulator: &str, rom_id: i64, title: &str) {
+    let path = config_dir.join(MEMO);
+    let mut all: BTreeMap<String, Memo> = std::fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+    all.entry(format!("{emulator}:{rom_id}")).or_default().title = Some(title.to_ascii_lowercase());
+    if let Ok(text) = serde_json::to_string(&all) {
+        let _ = std::fs::write(&path, text);
+    }
 }
 
 fn cache_version(data: &[u8]) -> Option<u32> {
@@ -164,13 +208,18 @@ impl Job {
     }
 
     fn cache_path(&self, title: &str) -> PathBuf {
-        self.shader_root.join(title).join(CACHE)
+        self.shader_root.join(title).join(&self.cache_name)
     }
 
     /// Envoie le fichier local s'il a changé depuis le dernier échange. `false` : envoi raté.
     async fn upload(&self, title: &str, memo: &mut Memo) -> bool {
         let Ok(data) = std::fs::read(self.cache_path(title)) else { return true };
         if cache_version(&data).is_none() {
+            return true;
+        }
+        // Cache démesuré (ancien format de certains émulateurs, plusieurs Go) : pas envoyé.
+        if data.len() > MAX_UPLOAD {
+            tracing::info!("shaders {} {title} : cache de {} Mo, trop gros pour être partagé", self.emulator, data.len() >> 20);
             return true;
         }
         let sha = sha1_hex(&data);
@@ -258,7 +307,7 @@ impl Job {
     /// Après la partie : les shaders vus pendant la partie partent sur le serveur.
     pub async fn after(&self, started: SystemTime) {
         let mut memo = self.memo();
-        let Some(title) = self.title(&memo).or_else(|| learned_title(&self.shader_root, started)) else { return };
+        let Some(title) = self.title(&memo).or_else(|| learned_title(&self.shader_root, &self.cache_name, started)) else { return };
         memo.title = Some(title.clone());
         self.upload(&title, &mut memo).await;
         self.save_memo(&memo);
@@ -294,9 +343,35 @@ mod tests {
         std::fs::create_dir_all(dir.join("shader/0100ba4026e94000")).unwrap();
         std::fs::write(dir.join("shader/0100ba4026e94000/vulkan.bin"), b"yuzucach").unwrap();
         std::fs::create_dir_all(dir.join("shader/nvidia")).unwrap();
-        assert_eq!(learned_title(&dir.join("shader"), before).as_deref(), Some("0100ba4026e94000"));
-        assert_eq!(learned_title(&dir.join("shader"), SystemTime::now() + Duration::from_secs(60)), None);
+        assert_eq!(learned_title(&dir.join("shader"), CACHE, before).as_deref(), Some("0100ba4026e94000"));
+        assert_eq!(learned_title(&dir.join("shader"), CACHE, SystemTime::now() + Duration::from_secs(60)), None);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn cache_of_each_emulator() {
+        let base = std::env::temp_dir().join(format!("farfa-shaderloc-{}", uuid::Uuid::new_v4()));
+        let put = |emu: &str, rel: &str| {
+            let p = base.join(emu).join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, b"yuzucach").unwrap();
+        };
+        // Citron, Eden : user/shader, vulkan.bin même avant la première partie.
+        std::fs::create_dir_all(base.join("citron")).unwrap();
+        assert_eq!(locate(&base.join("citron")), Some((base.join("citron/user/shader"), "vulkan.bin".into())));
+        // Églantine.
+        put("eglantine", "user/cache/shader/040074a01bf12000/vulkan.bin");
+        put("eglantine", "user/cache/shader/vulkan_static_pipelines.bin");
+        assert_eq!(locate(&base.join("eglantine")), Some((base.join("eglantine/user/cache/shader"), "vulkan.bin".into())));
+        // Fritchii : son propre nom, sans la liste des shaders utilisés.
+        put("fritchii", "user/cache/shader/0400486024dec000/vulkan_used-frizti.fork-v54.bin");
+        put("fritchii", "user/cache/shader/0400486024dec000/vulkan-frizti.fork-v54.bin");
+        assert_eq!(locate(&base.join("fritchii")).map(|l| l.1), Some("vulkan-frizti.fork-v54.bin".into()));
+        // Lichii partage déjà les siens (lichii-sync).
+        put("lichii", "user/cache/shader/040074a01bf12000/lichii-cache.v2.bin");
+        put("lichii", "user/cache/shader/0400486024dec000/vulkan.fork-v54.bin");
+        assert_eq!(locate(&base.join("lichii")), None);
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
@@ -327,7 +402,7 @@ mod e2e {
         let job = |who: &str| {
             let dir = base.join(who);
             std::fs::create_dir_all(dir.join("config")).unwrap();
-            Job { manager: client.clone(), emulator: "citron".into(), rom_id: rom, shader_root: dir.join("shader"), config_dir: dir.join("config"), roms: vec![PathBuf::from(format!("Jeu [{title}][v0].nsp"))] }
+            Job { manager: client.clone(), emulator: "citron".into(), rom_id: rom, shader_root: dir.join("shader"), cache_name: CACHE.into(), config_dir: dir.join("config"), roms: vec![PathBuf::from(format!("Jeu [{title}][v0].nsp"))] }
         };
         let a = job("a");
         std::fs::create_dir_all(a.shader_root.join(&title)).unwrap();

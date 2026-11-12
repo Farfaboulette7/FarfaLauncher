@@ -34,14 +34,22 @@ pub fn expand(args: &[String], rom: &Path, game_dir: &Path) -> Vec<String> {
     args.iter().map(|a| a.replace("{rom}", &rom.to_string_lossy()).replace("{gamedir}", &game_dir.to_string_lossy())).collect()
 }
 
-/// Ligne `progress 0.420 Compiling` → 0.42.
+/// Ligne `progress 0.420 Compiling` → 0.42. Aussi `@@progress 0.420`, la progression de
+/// l'étape en cours (Hookshot 2.1 : la préparation des shaders après la compilation).
 pub fn parse_progress(line: &str) -> Option<f64> {
-    let rest = line.strip_prefix("progress ")?;
+    let rest = line.strip_prefix("progress ").or_else(|| line.strip_prefix("@@progress "))?;
     rest.split_whitespace().next()?.parse::<f64>().ok().map(|f| f.clamp(0.0, 1.0))
 }
 
-/// Lance la construction et attend sa fin. `on_progress` reçoit 0..1000.
-pub fn run(game_dir: &Path, program: &str, args: &[String], cancel: &CancellationToken, on_progress: impl Fn(u64) + Send + Sync + 'static) -> AppResult<()> {
+/// Ligne `@@stage shaders Preparing shaders` → la phase affichée (`shaders`, sinon `build`).
+pub fn parse_stage(line: &str) -> Option<&'static str> {
+    let stage = line.strip_prefix("@@stage ")?.split_whitespace().next()?;
+    Some(if stage.eq_ignore_ascii_case("shaders") { "shaders" } else { "build" })
+}
+
+/// Lance la construction et attend sa fin. `on_progress` reçoit la phase (`build` puis
+/// éventuellement `shaders`) et sa progression 0..1000.
+pub fn run(game_dir: &Path, program: &str, args: &[String], cancel: &CancellationToken, on_progress: impl Fn(&'static str, u64) + Send + Sync + 'static) -> AppResult<()> {
     let exe: PathBuf = game_dir.join(rel_to_path(program));
     make_executable(&exe);
     let dir = exe.parent().unwrap_or(game_dir).to_path_buf();
@@ -62,9 +70,13 @@ pub fn run(game_dir: &Path, program: &str, args: &[String], cancel: &Cancellatio
     let out = child.stdout.take().map(|o| {
         let error = error.clone();
         std::thread::spawn(move || {
+            let mut phase = "build";
             for line in BufReader::new(o).lines().map_while(Result::ok) {
-                if let Some(f) = parse_progress(&line) {
-                    on_progress((f * 1000.0) as u64);
+                if let Some(p) = parse_stage(&line) {
+                    phase = p;
+                    on_progress(phase, 0);
+                } else if let Some(f) = parse_progress(&line) {
+                    on_progress(phase, (f * 1000.0) as u64);
                 } else if let Some(e) = line.strip_prefix("error ") {
                     *error.lock().unwrap() = Some(e.to_string());
                 }
@@ -132,6 +144,11 @@ mod tests {
         assert_eq!(parse_progress("progress 0.425 Compiling the game"), Some(0.425));
         assert_eq!(parse_progress("progress 1.000 Done"), Some(1.0));
         assert_eq!(parse_progress("Warning: hard drive"), None);
+        assert_eq!(parse_progress("@@progress 0.715"), Some(0.715));
+        assert_eq!(parse_progress("@@file code_018.c 70.6 new"), None);
+        assert_eq!(parse_stage("@@stage shaders Preparing shaders"), Some("shaders"));
+        assert_eq!(parse_stage("@@stage link Linking"), Some("build"));
+        assert_eq!(parse_stage("progress 0.950 Compiling"), None);
         let args = expand(&["--game".into(), "{rom}".into(), "--out".into(), "{gamedir}/jeu".into()], Path::new("/j/oot.nup"), Path::new("/j"));
         assert_eq!(args, ["--game", "/j/oot.nup", "--out", "/j/jeu"]);
     }

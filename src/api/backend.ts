@@ -347,6 +347,7 @@ export type InstallPhase =
   | "installer"
   | "client"
   | "build"
+  | "shaders"
   | "finalize";
 
 export interface InstallProgress {

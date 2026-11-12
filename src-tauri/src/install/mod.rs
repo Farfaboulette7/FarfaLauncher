@@ -395,7 +395,7 @@ impl InstallJob {
         let args = prepare::expand(args, &rom, &st.game_dir);
         self.emit(rom_id, "build", 0, 1000);
         let (dir, program, cancel, cb) = (st.game_dir.clone(), builder.to_string(), self.cancel.clone(), self.on_progress.clone());
-        blocking(move || prepare::run(&dir, &program, &args, &cancel, move |done| cb(Progress { rom_id, phase: "build", done, total: 1000, verifying: false }))).await?;
+        blocking(move || prepare::run(&dir, &program, &args, &cancel, move |phase, done| cb(Progress { rom_id, phase, done, total: 1000, verifying: false }))).await?;
         self.emit(rom_id, "finalize", 0, 0);
         let gd = st.game_dir.clone();
         let target = self.target;

@@ -257,14 +257,16 @@ pub async fn play_game(
 
 /// Partage des shaders pour un jeu Switch lancé par Citron ou Eden.
 fn shaders_job(state: &AppState, st: &state::InstalledGame, exe_dir: &std::path::Path) -> Option<crate::shaders::Job> {
-    let emulator = state.catalog().emulator_for_install(st).filter(|e| e.consoles.iter().any(|c| c == "switch"))?.id.clone();
+    let emulator = state.catalog().emulator_for_install(st).filter(|e| e.consoles.iter().any(|c| c == "switch" || c == "switch-2"))?.id.clone();
+    let (shader_root, cache_name) = crate::shaders::locate(exe_dir)?;
     let base = crate::manager::base_url(&state.settings())?;
     let rom_dir = st.shared.as_ref()?.rom_dir.clone()?;
     Some(crate::shaders::Job {
         manager: state.client().ok()?.with_base(&base),
         emulator,
         rom_id: st.rom_id,
-        shader_root: exe_dir.join("user").join("shader"),
+        shader_root,
+        cache_name,
         config_dir: state.config_dir.clone(),
         roms: st.roms.iter().map(|r| rom_dir.join(rel_to_path(r))).collect(),
     })

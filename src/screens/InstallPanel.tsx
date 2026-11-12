@@ -39,6 +39,7 @@ const PHASE_LABELS: Record<InstallPhase, string> = {
   installer: "Installation",
   client: "Téléchargement du client",
   build: "Construction du jeu",
+  shaders: "Préparation des shaders",
   finalize: "Finalisation…",
 };
 
@@ -590,18 +591,27 @@ export function InstallFacts({ game: base, target, installs }: { game: Game; tar
   const withEmulator = isEmulatorInstall(inst) || (!inst && !game.recomp);
   const emulatorSystems = withEmulator ? (game.emulator?.systems ?? []) : [];
   const [shaders, setShaders] = useState<Record<string, SharedShaders>>({});
+  const playing = installs.running.has(base.id);
   useEffect(() => {
+    if (!withEmulator) {
+      setShaders({});
+      return;
+    }
+    if (playing) return;
     let live = true;
-    setShaders({});
-    if (!withEmulator) return;
-    backend
-      .shaderInfo(base.id)
-      .then((s) => live && setShaders(s))
-      .catch(() => {});
+    const load = () =>
+      backend
+        .shaderInfo(base.id)
+        .then((s) => live && setShaders(s))
+        .catch(() => {});
+    load();
+    // Partie qui vient de finir : les shaders partent sur le serveur juste après.
+    const again = [15000, 60000].map((ms) => window.setTimeout(load, ms));
     return () => {
       live = false;
+      again.forEach((t) => window.clearTimeout(t));
     };
-  }, [base.id, withEmulator]);
+  }, [base.id, withEmulator, playing]);
   const shaderLines = Object.entries(shaders).map(([emu, s]) => {
     const name = game.emulators?.find((e) => e.id === emu)?.name ?? emu;
     const last = s.sessions[s.sessions.length - 1]?.added ?? 0;
@@ -767,6 +777,7 @@ function ProgressView({
       </div>
       {installing && <p className="n-hint">Installation en cours, elle ne peut plus être annulée.</p>}
       {phase === "build" && <p className="n-hint">Le jeu est construit sur ce PC à partir de votre copie : 10 à 45 minutes selon le processeur.</p>}
+      {phase === "shaders" && <p className="n-hint">Le jeu est compilé ; ses shaders sont préparés pour votre carte graphique, pour qu'il ne saccade pas en jouant.</p>}
       {phase !== "finalize" && !installing && (
         <button className="n-link" onClick={onCancel}>
           Annuler
