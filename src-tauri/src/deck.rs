@@ -246,6 +246,13 @@ async fn run(args: Vec<String>) -> AppResult<Value> {
             Ok(json!({ "romId": id }))
         }
         "jouer" => play(&open_state(), rom_id(rest.first())?).await,
+        // Interne : veilleur lancé par `jouer`.
+        "apres" => {
+            let pid = rest.first().and_then(|a| a.parse().ok()).ok_or(AppError::Internal)?;
+            let id = rom_id(rest.get(1))?;
+            let started = rest.get(2).and_then(|a| a.parse().ok()).ok_or(AppError::Internal)?;
+            after_game(&open_state(), pid, id, started).await
+        }
         "synchroniser" => sync(&open_state(), rest.first().and_then(|a| a.parse().ok())).await,
         _ => {
             eprintln!("{USAGE}");
@@ -550,9 +557,66 @@ async fn play(state: &AppState, id: i64) -> AppResult<Value> {
     emit(json!({ "type": "started", "data": { "romId": id, "saveChoice": format!("{choice:?}") } }));
     let crate::play::Started { running, started, shader_job, .. } = started;
     let _ = GAME_STOP.set(running.stop_flag());
+    spawn_watcher(id, started.unix_timestamp());
     let (learned, crashed) = tokio::task::spawn_blocking(move || running.wait_outcome(|| {})).await.unwrap_or((None, false));
     let finished = crate::play::finish(state, id, started, learned, shader_job).await;
+    // Fin de partie traitée ici : le veilleur n'a plus que la synchronisation à vérifier.
+    let _ = std::fs::write(session_marker(state, id, started.unix_timestamp()), b"");
     Ok(json!({ "finished": finished, "crashed": crashed }))
+}
+
+/// Partie dont `jouer` a terminé lui-même le traitement (temps de jeu enregistré).
+fn session_marker(state: &AppState, id: i64, started: i64) -> PathBuf {
+    let dir = state.config_dir.join("sessions");
+    let _ = std::fs::create_dir_all(&dir);
+    dir.join(format!("{id}-{started}.done"))
+}
+
+/// En mode Jeu, « Quitter le jeu » de Steam arrête ce programme peu après le jeu,
+/// parfois avant l'envoi de la sauvegarde. Un veilleur lancé hors de Steam
+/// (service utilisateur systemd) attend sa fin, puis finit le travail : temps de
+/// jeu et sauvegarde.
+fn spawn_watcher(id: i64, started: i64) {
+    #[cfg(target_os = "linux")]
+    {
+        let Ok(exe) = std::env::current_exe() else { return };
+        let mut cmd = std::process::Command::new("systemd-run");
+        cmd.args(["--user", "--quiet", "--collect", "--unit", &format!("farfalauncherdeck-{id}-{started}")]);
+        if let Some(dir) = std::env::var_os("FARFALAUNCHERDECK_CONFIG") {
+            cmd.arg(format!("--setenv=FARFALAUNCHERDECK_CONFIG={}", dir.to_string_lossy()));
+        }
+        cmd.arg("--").arg(exe).args(["apres", &std::process::id().to_string(), &id.to_string(), &started.to_string()]);
+        cmd.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+        match cmd.status() {
+            Ok(s) if s.success() => tracing::info!("veilleur de fin de partie lancé"),
+            other => tracing::warn!("veilleur de fin de partie non lancé: {other:?}"),
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = (id, started);
+}
+
+/// Veilleur : attend la fin du programme `pid` (la partie), puis enregistre le
+/// temps de jeu s'il ne l'a pas fait et envoie la sauvegarde.
+async fn after_game(state: &AppState, pid: u32, id: i64, started: i64) -> AppResult<Value> {
+    let proc_dir = PathBuf::from(format!("/proc/{pid}"));
+    let limit = std::time::Instant::now() + std::time::Duration::from_secs(24 * 3600);
+    while proc_dir.exists() && std::time::Instant::now() < limit {
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+    let marker = session_marker(state, id, started);
+    if marker.exists() {
+        let _ = std::fs::remove_file(&marker);
+    } else if let Ok(start) = time::OffsetDateTime::from_unix_timestamp(started) {
+        let end = time::OffsetDateTime::now_utc();
+        tracing::info!("partie arrêtée avant sa fin normale : temps de jeu et sauvegarde repris par le veilleur");
+        if (end - start).whole_seconds() >= crate::play::MIN_SESSION_SECS {
+            if let Err(e) = crate::romm::playtime::enqueue(&state.config_dir, crate::romm::playtime::PendingSession::new(id, start, end)) {
+                tracing::error!("session de jeu non enregistrée localement: {}", e.code());
+            }
+        }
+    }
+    sync(state, Some(id)).await
 }
 
 /// Envoie les sauvegardes changées depuis le dernier échange (partie interrompue
