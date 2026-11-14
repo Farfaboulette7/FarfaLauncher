@@ -35,6 +35,30 @@ pub struct LogPattern {
 pub struct Catalog {
     pub recomps: Vec<CatalogRecomp>,
     pub emulators: Vec<Emulator>,
+    /// Recomp choisie par le joueur pour un jeu qui en a plusieurs (réglages), pas au catalogue.
+    #[serde(skip)]
+    pub choices: std::collections::BTreeMap<i64, String>,
+}
+
+/// Une recomp proposée pour un jeu, au choix quand il en a plusieurs.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RecompOffer {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    /// Build pour ce système.
+    pub available: bool,
+    /// « Conseillé » : le petit message de la fiche.
+    pub advice: Option<String>,
+}
+
+/// Émulateur conseillé pour une console, avec son message.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsoleAdvice {
+    pub console: String,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -65,6 +89,9 @@ pub struct CatalogRecomp {
     /// des fichiers de son entrée RomM.
     #[serde(default)]
     pub game_files: Vec<ManagerFile>,
+    /// Version conseillée pour ses jeux quand ils ont plusieurs recomps ou émulateurs.
+    #[serde(default)]
+    pub advice: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -168,6 +195,9 @@ pub struct Emulator {
     /// Archives posées dans le dossier de l'émulateur pour un jeu (mods, mise à jour, sauvegarde…).
     #[serde(default)]
     pub packs: Vec<EmulatorPack>,
+    /// Consoles pour lesquelles il est l'émulateur conseillé, avec le message.
+    #[serde(default)]
+    pub advice: Vec<ConsoleAdvice>,
 }
 
 /// Archive de FarfaRomManager extraite dans le dossier de l'émulateur (`dest`, relatif à
@@ -186,6 +216,11 @@ pub struct EmulatorPack {
 }
 
 impl Emulator {
+    /// Message de conseil de cet émulateur pour une console.
+    pub fn advice_for(&self, console: &str) -> Option<String> {
+        self.advice.iter().find(|a| a.console == console).map(|a| a.text.clone())
+    }
+
     /// Archives de ce jeu.
     pub fn packs_for(&self, rom_id: i64) -> impl Iterator<Item = &EmulatorPack> {
         self.packs.iter().filter(move |p| p.rom_id.is_none_or(|r| r == rom_id))
@@ -352,6 +387,9 @@ pub struct EmulatorOffer {
     /// Taille des archives de ce jeu (mods, mise à jour…).
     #[serde(default)]
     pub packs_size: u64,
+    /// Émulateur conseillé pour cette console : le petit message de sa fiche.
+    #[serde(default)]
+    pub advice: Option<String>,
 }
 
 /// Identifiant d'un émulateur dans les installations : les ID RomM sont positifs.
@@ -386,19 +424,49 @@ impl Emulator {
 
 impl Catalog {
     /// Émulateur d'une console : celui qui a une build pour ce système d'abord.
+    /// Émulateur proposé d'abord : le conseillé pour la console s'il a une build pour ce système,
+    /// sinon le premier qui en a une, sinon le premier.
     pub fn emulator_for_console(&self, console: &str, target: Target) -> Option<&Emulator> {
         let mut pour_la_console = self.emulators.iter().filter(|e| e.consoles.iter().any(|c| c == console));
         let premier = pour_la_console.clone().next();
-        pour_la_console.find(|e| e.file_for(target).is_some()).or(premier)
+        let conseille = pour_la_console.clone().find(|e| e.advice_for(console).is_some() && e.file_for(target).is_some());
+        conseille.or_else(|| pour_la_console.find(|e| e.file_for(target).is_some())).or(premier)
     }
 
     pub fn offer(&self, console: &str, target: Target) -> Option<EmulatorOffer> {
-        Some(Self::offer_of(self.emulator_for_console(console, target)?, target))
+        let e = self.emulator_for_console(console, target)?;
+        Some(EmulatorOffer { advice: e.advice_for(console), ..Self::offer_of(e, target) })
     }
 
     /// Tous les émulateurs d'une console, dans l'ordre du catalogue (le premier est proposé d'abord).
     pub fn offers(&self, console: &str, target: Target) -> Vec<EmulatorOffer> {
-        self.emulators.iter().filter(|e| e.consoles.iter().any(|c| c == console)).map(|e| Self::offer_of(e, target)).collect()
+        self.emulators
+            .iter()
+            .filter(|e| e.consoles.iter().any(|c| c == console))
+            .map(|e| EmulatorOffer { advice: e.advice_for(console), ..Self::offer_of(e, target) })
+            .collect()
+    }
+
+    /// Recomps d'un jeu, dans l'ordre du catalogue.
+    pub fn recomps_for_rom(&self, rom_id: i64) -> Vec<&CatalogRecomp> {
+        self.recomps.iter().filter(|r| r.games.iter().any(|g| g.rom_id == Some(rom_id))).collect()
+    }
+
+    /// Recomps proposées pour un jeu (au moins deux : le joueur choisit).
+    pub fn recomp_offers(&self, rom_id: i64, target: Target) -> Vec<RecompOffer> {
+        let all = self.recomps_for_rom(rom_id);
+        if all.len() < 2 {
+            return Vec::new();
+        }
+        all.into_iter()
+            .map(|r| RecompOffer {
+                id: r.id.clone(),
+                name: r.name.clone(),
+                version: r.version.nom.clone(),
+                available: r.is_shared() || r.archives(target).1.is_some(),
+                advice: r.advice.clone(),
+            })
+            .collect()
     }
 
     pub fn emulator(&self, id: &str) -> Option<&Emulator> {
@@ -420,6 +488,7 @@ impl Catalog {
             config_missing: e.config_missing.clone(),
             game_version_key: e.version.cle.clone(),
             packs_size: 0,
+            advice: None,
         }
     }
 
@@ -538,8 +607,11 @@ impl Catalog {
         Some(Changelog { kind, name: name.clone(), version: v.nom.clone(), date: v.date.clone(), url: v.url.clone(), notes: v.notes.clone() })
     }
 
+    /// Recomp d'un jeu : celle choisie par le joueur, sinon la conseillée, sinon la première.
     pub fn recomp_for_rom(&self, rom_id: i64) -> Option<&CatalogRecomp> {
-        self.recomps.iter().find(|r| r.games.iter().any(|g| g.rom_id == Some(rom_id)))
+        let all = self.recomps_for_rom(rom_id);
+        let chosen = self.choices.get(&rom_id).and_then(|id| all.iter().find(|r| &r.id == id));
+        chosen.or_else(|| all.iter().find(|r| r.advice.is_some())).or(all.first()).copied()
     }
 
     /// Jeux passés de leur fiche `portage-*` à leur vraie console : (ancien ID, nouvel ID).
@@ -600,7 +672,7 @@ pub async fn refresh(state: &AppState) {
                     continue;
                 }
                 let Some(emu) = catalog.emulator_for_install(&st).map(|e| e.id.clone()) else { continue };
-                let Ok(info) = client.get_json::<serde_json::Value>(&format!("api/shaders/rom/{}", st.rom_id)).await else { continue };
+                let Ok(info) = client.get_json::<serde_json::Value>(&format!("api/shaders/rom/{}?systeme={}", st.rom_id, crate::language::current_system())).await else { continue };
                 let title = info.as_object().into_iter().flat_map(|m| m.values()).find_map(|v| v.get("titleId")?.as_str().map(str::to_string));
                 if let Some(title) = title {
                     crate::shaders::remember_title(&state.config_dir, &emu, st.rom_id, &title);
@@ -670,6 +742,41 @@ mod tests {
         assert!(r.archives(Target::MacArm).1.is_none());
     }
 
+    #[test]
+    fn recomp_choice_then_advice_then_first() {
+        let text = r#"{"recomps":[
+          {"id":"hookshot","name":"Hookshot","repo":"r","version":{"cle":"a","nom":"2.1"},"games":[{"romId":7}],"files":[{"name":"h_Windows.zip","size":1,"sha1":"a","system":"Windows"}]},
+          {"id":"longshot","name":"Longshot","repo":"r","version":{"cle":"b","nom":"v3.0.0-rc.3"},"games":[{"romId":7}],"advice":"Suite de Hookshot","files":[]},
+          {"id":"seule","name":"Seule","repo":"r","version":{"cle":"c","nom":"1"},"games":[{"romId":8}]}],"emulators":[]}"#;
+        let mut c: Catalog = serde_json::from_str(text).unwrap();
+        assert_eq!(c.recomp_for_rom(7).unwrap().id, "longshot"); // conseillée
+        c.choices.insert(7, "hookshot".into());
+        assert_eq!(c.recomp_for_rom(7).unwrap().id, "hookshot"); // choisie
+        c.choices.insert(7, "disparue".into());
+        assert_eq!(c.recomp_for_rom(7).unwrap().id, "longshot"); // choix qui n'existe plus
+        let offers = c.recomp_offers(7, Target::Windows);
+        assert_eq!(offers.iter().map(|o| (o.id.as_str(), o.available, o.advice.is_some())).collect::<Vec<_>>(),
+                   vec![("hookshot", true, false), ("longshot", false, true)]);
+        assert!(c.recomp_offers(8, Target::Windows).is_empty()); // une seule : pas de choix
+        assert_eq!(c.recomp_for_rom(8).unwrap().id, "seule");
+    }
+
+    #[test]
+    fn advised_emulator_comes_first() {
+        let mut a = emu("a", &["switch-2"], &["Windows"]);
+        let mut b = emu("b", &["switch-2"], &["Windows"]);
+        let c0 = Catalog { emulators: vec![a.clone(), b.clone()], ..Default::default() };
+        assert_eq!(c0.offer("switch-2", Target::Windows).unwrap().id, "a");
+        b.advice = vec![ConsoleAdvice { console: "switch-2".into(), text: "Le plus rapide".into() }];
+        a.advice = vec![ConsoleAdvice { console: "switch".into(), text: "autre console".into() }];
+        let c = Catalog { emulators: vec![a, b], ..Default::default() };
+        let o = c.offer("switch-2", Target::Windows).unwrap();
+        assert_eq!((o.id.as_str(), o.advice.as_deref()), ("b", Some("Le plus rapide")));
+        assert_eq!(c.offers("switch-2", Target::Windows).iter().map(|o| o.advice.is_some()).collect::<Vec<_>>(), vec![false, true]);
+        // Conseillé sans build pour ce système : le premier qui en a une.
+        assert_eq!(c.offer("switch-2", Target::MacArm).unwrap().id, "a");
+    }
+
     fn emu(id: &str, consoles: &[&str], systems: &[&str]) -> Emulator {
         Emulator {
             id: id.into(),
@@ -688,6 +795,7 @@ mod tests {
             controllers: None,
             dialogs: vec![],
             packs: vec![],
+            advice: vec![],
         }
     }
 
@@ -790,7 +898,7 @@ mod tests {
 
     #[test]
     fn offers_the_emulator_of_a_console() {
-        let c = Catalog { recomps: vec![], emulators: vec![emu("mgba", &["gba"], &["Linux", "Windows"]), emu("mac", &["ngc"], &["macOS_ARM"]), emu("a", &["psp"], &["macOS_ARM"]), emu("b", &["psp"], &["Windows"])] };
+        let c = Catalog { recomps: vec![], emulators: vec![emu("mgba", &["gba"], &["Linux", "Windows"]), emu("mac", &["ngc"], &["macOS_ARM"]), emu("a", &["psp"], &["macOS_ARM"]), emu("b", &["psp"], &["Windows"])], ..Default::default() };
         let o = c.offer("gba", Target::Windows).unwrap();
         assert!(o.available);
         assert_eq!(o.size, 5);

@@ -66,6 +66,10 @@ export function InstallPanel({ game: base, target, installs, onError }: Props) {
   const inst = installs.installed.get(base.id);
   /** Émulateur choisi avant l'installation (`null` : le premier proposé). */
   const [emulatorChoice, setEmulatorChoice] = useState<string | null>(null);
+  /** Recomp choisie avant l'installation, quand le jeu en a plusieurs (`null` : celle proposée). */
+  const [recompChoice, setRecompChoice] = useState<string | null>(null);
+  const recompId = recompChoice ?? base.recompId ?? null;
+  const recompOffer = base.recomps?.find((r) => r.id === recompId) ?? null;
   const game = withEffectiveEmulator(base, inst, emulatorChoice);
   const progress = installs.progress.get(game.id);
   const error = installs.errors.get(game.id);
@@ -326,12 +330,15 @@ export function InstallPanel({ game: base, target, installs, onError }: Props) {
           </>
         ) : isAvailable(game) ? (
           <>
+            <RecompPicker game={base} current={recompId} onPick={setRecompChoice} />
             <button
               className="n-btn n-btn--primary n-btn--block"
-              onClick={() => installs.start(game.id, installDir ?? undefined, game.pc?.proton ? protonChoice : null)}
+              disabled={recompOffer ? !recompOffer.available : false}
+              onClick={() => installs.start(game.id, installDir ?? undefined, game.pc?.proton ? protonChoice : null, false, null, recompId)}
             >
-              {emulatorReady(game) ? "Installer la recomp" : "Installer"}
+              {(base.recomps?.length ?? 0) > 1 && recompOffer ? `Installer ${recompOffer.name}` : emulatorReady(game) ? "Installer la recomp" : "Installer"}
             </button>
+            {recompOffer?.advice && (base.recomps?.length ?? 0) < 2 && emulatorReady(game) && <Advice text={recompOffer.advice} />}
             {game.pc?.proton && (
               <p className="n-hint">
                 Jeu Windows lancé avec Proton : {protonChoice ?? "version recommandée"}{" "}
@@ -344,7 +351,8 @@ export function InstallPanel({ game: base, target, installs, onError }: Props) {
               <p className="n-hint">L'installateur GOG demandera l'autorisation de Windows.</p>
             )}
             <p className="n-hint gd-install-dest" title={installDir ?? installs.installRoot ?? undefined}>
-              {formatSize(downloadSize(game, runtimeReady))}
+              {/* Taille connue pour la recomp proposée seulement : une autre a ses propres fichiers. */}
+              {recompChoice && recompChoice !== base.recompId ? recompOffer?.version : formatSize(downloadSize(game, runtimeReady))}
               {runtimeInst?.executable
                 ? ` · ${game.runtime?.name} est déjà installé`
                 : (installDir ?? installs.installRoot) && ` · dans ${installDir ?? installs.installRoot}`}
@@ -582,6 +590,48 @@ export function InstallPanel({ game: base, target, installs, onError }: Props) {
   );
 }
 
+/** « Conseillé » : une petite étiquette et le message de la fiche, rien de plus. */
+function Advice({ text }: { text: string }) {
+  return (
+    <p className="n-hint gd-advice-line">
+      <span className="gd-advice">Conseillé</span> {text}
+    </p>
+  );
+}
+
+/** Choix de la recomp quand le jeu en a plusieurs. */
+function RecompPicker({ game, current, onPick }: { game: Game; current: string | null; onPick: (id: string) => void }) {
+  const all = game.recomps ?? [];
+  if (all.length < 2) return null;
+  const advised = all.find((r) => r.advice);
+  return (
+    <div className="gd-emulators">
+      <p className="n-hint">Recomp</p>
+      <div className="gd-emulators-list" role="radiogroup" aria-label="Recomp">
+        {all.map((r) => {
+          const on = r.id === current;
+          return (
+            <button
+              key={r.id}
+              role="radio"
+              aria-checked={on}
+              className={`n-btn gd-emulator${on ? " is-on" : ""}`}
+              disabled={!r.available}
+              title={r.available ? `${r.name} ${r.version}` : "Pas de version pour ce système"}
+              onClick={() => !on && onPick(r.id)}
+            >
+              {r.name}
+              {r.advice && <span className="gd-advice">Conseillé</span>}
+              {!r.available && <span className="gd-emulator-off"> (indisponible)</span>}
+            </button>
+          );
+        })}
+      </div>
+      {advised?.advice && <p className="n-hint gd-advice-line">{advised.advice}</p>}
+    </div>
+  );
+}
+
 /** Choix de l'émulateur quand la console en a plusieurs. */
 function EmulatorPicker({
   game,
@@ -616,11 +666,13 @@ function EmulatorPicker({
               onClick={() => !on && onPick(e)}
             >
               {e.name}
+              {e.advice && <span className="gd-advice">Conseillé</span>}
               {!usable && <span className="gd-emulator-off"> (indisponible)</span>}
             </button>
           );
         })}
       </div>
+      {all.find((e) => e.advice)?.advice && <p className="n-hint gd-advice-line">{all.find((e) => e.advice)?.advice}</p>}
       {hint && <p className="n-hint">{hint}</p>}
     </div>
   );

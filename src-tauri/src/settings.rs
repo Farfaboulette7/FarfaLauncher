@@ -28,6 +28,8 @@ pub struct Settings {
     pub optimize_off: Vec<i64>,
     /// Rapports de bug déjà lus : identifiant → date de la dernière nouvelle vue (`updatedAt`).
     pub reports_seen: std::collections::BTreeMap<String, u64>,
+    /// Recomp choisie (identifiant du catalogue) pour les jeux qui en ont plusieurs : romId → recomp.
+    pub recomp_choice: std::collections::BTreeMap<i64, String>,
 }
 
 impl Default for Settings {
@@ -41,6 +43,7 @@ impl Default for Settings {
             fullscreen: true,
             optimize_off: Vec::new(),
             reports_seen: Default::default(),
+            recomp_choice: Default::default(),
         }
     }
 }

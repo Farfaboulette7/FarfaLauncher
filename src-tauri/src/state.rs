@@ -53,7 +53,8 @@ pub struct AppState {
 impl AppState {
     pub fn new(config_dir: PathBuf, log_dir: PathBuf, cache_dir: PathBuf, default_install_root: PathBuf) -> Self {
         let settings = settings::load(&config_dir);
-        let catalog = crate::manager::Catalog::load_cached(&config_dir);
+        let mut catalog = crate::manager::Catalog::load_cached(&config_dir);
+        catalog.choices = settings.recomp_choice.clone();
         let manifest = crate::runtimes::Manifest::load_cached(&config_dir).with_catalog(&catalog);
         // Persiste immédiatement le device_id généré au premier lancement.
         if let Err(e) = settings::save(&config_dir, &settings) {
@@ -96,8 +97,11 @@ impl AppState {
         self.manifest.lock().unwrap().clone()
     }
 
+    /// Catalogue du gestionnaire, avec les recomps choisies par le joueur.
     pub fn catalog(&self) -> crate::manager::Catalog {
-        self.catalog.lock().unwrap().clone()
+        let mut catalog = self.catalog.lock().unwrap().clone();
+        catalog.choices = self.settings.lock().unwrap().recomp_choice.clone();
+        catalog
     }
 
     /// Refuse si un jeu qui partage l'installation de `rom_id` tourne ou s'installe.

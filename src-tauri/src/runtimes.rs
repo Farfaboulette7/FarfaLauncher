@@ -294,6 +294,20 @@ pub fn annotate(game: &mut Game, catalog: &Catalog, recomps: &HashSet<i64>, me: 
     let id = game.id;
     game.emulator = console.as_deref().and_then(|c| catalog.offer(c, me)).map(|o| Catalog::for_game(o, catalog, id));
     game.emulators = console.as_deref().map(|c| catalog.offers(c, me)).unwrap_or_default().into_iter().map(|o| Catalog::for_game(o, catalog, id)).collect();
+    game.recomps = catalog.recomp_offers(id, me);
+    game.recomp_id = catalog.recomp_for_rom(id).map(|r| r.id.clone());
+    // Une seule recomp : son conseil vaut face aux émulateurs.
+    if game.recomps.is_empty() {
+        if let Some(r) = catalog.recomp_for_rom(id).filter(|r| r.advice.is_some()) {
+            game.recomps = vec![crate::manager::RecompOffer {
+                id: r.id.clone(),
+                name: r.name.clone(),
+                version: r.version.nom.clone(),
+                available: true,
+                advice: r.advice.clone(),
+            }];
+        }
+    }
 }
 
 /// Détails d'un jeu : ses propres fichiers, plus ceux de son runtime s'il en a un.

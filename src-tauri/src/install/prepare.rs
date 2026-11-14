@@ -38,6 +38,11 @@ pub fn expand(args: &[String], rom: &Path, game_dir: &Path) -> Vec<String> {
 /// l'étape en cours (Hookshot 2.1 : la préparation des shaders après la compilation).
 /// Aussi `progress 500 205660` (fait, total : préparation de mkw-recomp).
 pub fn parse_progress(line: &str) -> Option<f64> {
+    if let Some(ev) = json_event(line, "progress") {
+        let done = ev.get("done").and_then(serde_json::Value::as_f64)?;
+        let total = ev.get("total").and_then(serde_json::Value::as_f64)?;
+        return (total > 0.0).then(|| (done / total).clamp(0.0, 1.0));
+    }
     let rest = line.strip_prefix("progress ").or_else(|| line.strip_prefix("@@progress "))?;
     let mut words = rest.split_whitespace();
     let first = words.next()?;
@@ -50,20 +55,49 @@ pub fn parse_progress(line: &str) -> Option<f64> {
 /// Ligne `@@stage shaders Preparing shaders` → la phase affichée (`shaders`, sinon `build`).
 /// Ligne `step compile` (préparation de mkw-recomp) → la phase de cette étape.
 pub fn parse_stage(line: &str) -> Option<&'static str> {
+    // Évènement JSON d'une étape qui commence (UltraTears, installateur de DK Bananza).
+    if let Some(ev) = json_event(line, "step") {
+        let state = ev.get("state").or_else(|| ev.get("status")).and_then(serde_json::Value::as_str).unwrap_or("run");
+        if !matches!(state, "run" | "running" | "start" | "started") {
+            return None;
+        }
+        let id = ev.get("id").or_else(|| ev.get("step")).and_then(serde_json::Value::as_str)?;
+        return Some(stage_of(id));
+    }
     if let Some(step) = line.strip_prefix("step ") {
-        return Some(match step.trim() {
-            "check" => "check",
-            "exefs" | "romfs" => "copy",
-            "generate" => "generate",
-            "compile" => "compile",
-            "shaders" => "shaders",
-            "warm" => "warm",
-            "cleanup" => "cleanup",
-            _ => "build",
-        });
+        return Some(stage_of(step.trim()));
     }
     let stage = line.strip_prefix("@@stage ")?.split_whitespace().next()?;
     Some(if stage.eq_ignore_ascii_case("shaders") { "shaders" } else { "build" })
+}
+
+/// Ligne JSON `{"ev": "<kind>", …}` (ou `"type"`) d'un outil de préparation.
+fn json_event(line: &str, kind: &str) -> Option<serde_json::Value> {
+    let line = line.trim();
+    if !line.starts_with('{') {
+        return None;
+    }
+    let ev: serde_json::Value = serde_json::from_str(line).ok()?;
+    let k = ev.get("ev").or_else(|| ev.get("type")).and_then(serde_json::Value::as_str)?;
+    (k == kind).then_some(ev)
+}
+
+/// Phase affichée pour le nom d'étape d'un outil de préparation.
+fn stage_of(id: &str) -> &'static str {
+    let id = id.to_ascii_lowercase();
+    // Étapes préfixées par le jeu (`dkb_data`, `dkb_shaders` : installateur de DK Bananza).
+    let id = id.split_once('_').filter(|(jeu, _)| jeu.len() <= 4).map(|(_, s)| s.to_string()).unwrap_or(id);
+    match id.as_str() {
+        "check" | "preflight" | "hash" => "check",
+        "romfs" | "exefs" | "data" | "extract" | "stage" | "copy" => "copy",
+        "lift" | "generate" | "gen" => "generate",
+        "compile" | "build" | "link" => "compile",
+        "shaders" | "translate" | "xlate" => "shaders",
+        "graphics" | "warm" | "textures" | "pipelines" => "warm",
+        "finish" | "cleanup" | "language" | "selftest" | "verify" => "cleanup",
+        "translator" => "check",
+        _ => "build",
+    }
 }
 
 /// Lance la construction et attend sa fin. `on_progress` reçoit la phase (`build` puis
@@ -166,6 +200,17 @@ mod tests {
         assert_eq!(parse_progress("@@progress 0.715"), Some(0.715));
         assert_eq!(parse_progress("@@file code_018.c 70.6 new"), None);
         assert_eq!(parse_stage("@@stage shaders Preparing shaders"), Some("shaders"));
+        // UltraTears (--json) et l'installateur de DK Bananza
+        assert_eq!(parse_progress(r#"{"ev": "progress", "label": "lift", "done": 25, "total": 100, "eta": 3}"#), Some(0.25));
+        assert_eq!(parse_progress(r#"{"type": "progress", "step": "build", "done": 3, "total": 4, "unit": "files"}"#), Some(0.75));
+        assert_eq!(parse_progress(r#"{"ev": "progress", "done": 1}"#), None);
+        assert_eq!(parse_stage(r#"{"ev": "step", "id": "lift", "state": "run"}"#), Some("generate"));
+        assert_eq!(parse_stage(r#"{"ev": "step", "id": "lift", "state": "done", "secs": 4}"#), None);
+        assert_eq!(parse_stage(r#"{"type": "step", "step": "shaders", "status": "started"}"#), Some("shaders"));
+        assert_eq!(parse_stage(r#"{"ev": "plan", "steps": []}"#), None);
+        assert_eq!(parse_stage("step romfs"), Some("copy"));
+        assert_eq!(parse_stage(r#"{"type": "step", "t": 12.81, "step": "dkb_data", "state": "started"}"#), Some("copy"));
+        assert_eq!(parse_stage(r#"{"type": "step", "step": "dkb_shaders", "state": "started"}"#), Some("shaders"));
         assert_eq!(parse_stage("@@stage link Linking"), Some("build"));
         assert_eq!(parse_stage("progress 0.950 Compiling"), None);
         // mkw-recomp : « step <étape> » et « progress <fait> <total> ».

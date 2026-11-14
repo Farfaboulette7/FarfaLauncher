@@ -217,6 +217,19 @@ export interface EmulatorOffer {
   gameVersionKey?: string;
   /** Taille des archives de ce jeu. */
   packsSize?: number;
+  /** Émulateur conseillé pour cette console : le petit message de sa fiche. */
+  advice?: string | null;
+}
+
+/** Une recomp proposée pour un jeu qui en a plusieurs. */
+export interface RecompOffer {
+  id: string;
+  name: string;
+  version: string;
+  /** Build pour ce système. */
+  available: boolean;
+  /** « Conseillé » : le petit message de sa fiche. */
+  advice: string | null;
 }
 
 export interface GamesPage {
@@ -267,6 +280,10 @@ export interface Game {
   emulator: EmulatorOffer | null;
   /** Tous les émulateurs de sa console, au choix (dans l'ordre où ils sont proposés). */
   emulators: EmulatorOffer[];
+  /** Ses recomps quand il en a plusieurs (ou la seule, quand elle est conseillée). */
+  recomps?: RecompOffer[];
+  /** Recomp proposée : celle choisie, sinon la conseillée, sinon la première. */
+  recompId?: string | null;
   versionFile: RemoteFile | null;
   serverVersion: string | null;
   /** Contenu complet de VERSION.txt (comparé pour les mises à jour). */
@@ -549,8 +566,8 @@ export const backend = {
   favoriteSet: (romId: number, favorite: boolean) => invoke<number[]>("favorite_set", { romId, favorite }),
   installInfo: () => invoke<InstallInfo>("install_info"),
   /** `dest` : dossier où créer celui du jeu (sinon le dossier des jeux des paramètres). */
-  installGame: (romId: number, dest?: string, proton?: string | null, withEmulator = false, emulator?: string | null) =>
-    invoke<void>("install_game", { romId, dest: dest ?? null, proton: proton ?? null, withEmulator, emulator: emulator ?? null }),
+  installGame: (romId: number, dest?: string, proton?: string | null, withEmulator = false, emulator?: string | null, recomp?: string | null) =>
+    invoke<void>("install_game", { romId, dest: dest ?? null, proton: proton ?? null, withEmulator, emulator: emulator ?? null, recomp: recomp ?? null }),
   cancelInstall: (romId: number) => invoke<void>("cancel_install", { romId }),
   executableCandidates: (romId: number) => invoke<string[]>("executable_candidates", { romId }),
   chooseExecutable: (romId: number, executable: string) => invoke<InstalledGame>("choose_executable", { romId, executable }),

@@ -102,6 +102,17 @@ pub fn linux_locale(cmd: &mut std::process::Command) {
     let _ = cmd;
 }
 
+/// `{exedir}` dans une valeur : le dossier de l'exécutable (le dossier du jeu à donner au launcher
+/// d'une recomp). En JSON, le chemin est échappé pour rester dans sa chaîne.
+fn expand_value(value: &str, format: &str, exe_dir: &Path) -> String {
+    if !value.contains("{exedir}") {
+        return value.to_string();
+    }
+    let dir = exe_dir.to_string_lossy();
+    let dir = if format == "json" { serde_json::to_string(dir.as_ref()).unwrap_or_default().trim_matches('"').to_string() } else { dir.into_owned() };
+    value.replace("{exedir}", &dir)
+}
+
 fn apply(rule: &LanguageRule, exe_dir: &Path) -> Result<PathBuf, String> {
     let file = rule.file.as_deref().ok_or("fichier manquant")?;
     let path = expand(file, exe_dir).ok_or("dossier introuvable")?;
@@ -110,10 +121,11 @@ fn apply(rule: &LanguageRule, exe_dir: &Path) -> Result<PathBuf, String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(e) => return Err(e.to_string()),
     };
+    let value = expand_value(&rule.value, &rule.format, exe_dir);
     let new = match rule.format.as_str() {
-        "ini" => set_ini(&old, &rule.key, &rule.value),
-        "kv" => set_kv(&old, &rule.key, &rule.value),
-        "json" => set_json(&old, &rule.key, &rule.value)?,
+        "ini" => set_ini(&old, &rule.key, &value),
+        "kv" => set_kv(&old, &rule.key, &value),
+        "json" => set_json(&old, &rule.key, &value)?,
         other => return Err(format!("format inconnu : {other}")),
     };
     if let Some(parent) = path.parent() {
@@ -310,6 +322,10 @@ mod tests {
         let exe = Path::new("jeu");
         assert_eq!(expand("{exedir}/larecomp.ini", exe), Some(exe.join("larecomp.ini")));
         assert_eq!(expand("{exedir}/../x", exe), None);
+        let d = Path::new(r"C:\Jeux\Pokopia");
+        assert_eq!(expand_value(r#""{exedir}""#, "json", d), r#""C:\\Jeux\\Pokopia""#);
+        assert_eq!(expand_value("{exedir}/x", "ini", d), r"C:\Jeux\Pokopia/x");
+        assert_eq!(expand_value("fr", "json", d), "fr");
         assert_eq!(expand("{inconnu}/x", exe), None);
         assert_eq!(expand("/etc/x", exe), None);
     }

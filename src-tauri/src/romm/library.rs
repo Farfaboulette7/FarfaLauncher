@@ -238,6 +238,12 @@ pub struct Game {
     /// Tous les émulateurs de sa console, au choix (le premier est `emulator` quand il a une build).
     #[serde(default)]
     pub emulators: Vec<crate::manager::EmulatorOffer>,
+    /// Ses recomps quand il en a plusieurs, au choix.
+    #[serde(default)]
+    pub recomps: Vec<crate::manager::RecompOffer>,
+    /// Recomp proposée (choisie par le joueur, sinon conseillée, sinon la première).
+    #[serde(default)]
+    pub recomp_id: Option<String>,
     pub version_file: Option<RemoteFile>,
     /// Contenu de VERSION.txt côté serveur.
     pub server_version: Option<String>,
@@ -440,6 +446,8 @@ impl Game {
             recomp: true,
             emulator: None,
             emulators: Vec::new(),
+            recomps: Vec::new(),
+            recomp_id: None,
             version_file: None,
             server_version: None,
             server_version_raw: None,
@@ -746,6 +754,8 @@ fn to_game(r: RawRom, base: &str, me: Target, details_loaded: bool) -> Game {
         recomp: portage,
         emulator: None,
         emulators: Vec::new(),
+        recomps: Vec::new(),
+        recomp_id: None,
         version_file,
         server_version: None,
         server_version_raw: None,

@@ -34,7 +34,7 @@ pub fn open_save_folder(app: tauri::AppHandle, state: State<'_, AppState>, rom_i
 pub async fn shader_info(state: State<'_, AppState>, rom_id: i64) -> AppResult<serde_json::Value> {
     let Some(base) = crate::manager::base_url(&state.settings()) else { return Ok(serde_json::json!({})) };
     let manager = state.client()?.with_base(&base);
-    match manager.get_json::<serde_json::Value>(&format!("api/shaders/rom/{rom_id}")).await {
+    match manager.get_json::<serde_json::Value>(&format!("api/shaders/rom/{rom_id}?systeme={}", crate::language::current_system())).await {
         Ok(v) => Ok(v),
         // Gestionnaire sans les shaders (pas encore à jour) ou injoignable : rien à montrer.
         Err(_) => Ok(serde_json::json!({})),

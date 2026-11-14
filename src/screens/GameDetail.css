@@ -114,6 +114,20 @@
 .gd-actions .gd-emulator { font-size: var(--fs-xs); padding: 4px 12px; }
 .gd-emulator.is-on { background: var(--nier-low); color: var(--nier-high); }
 .gd-emulator-off { opacity: 0.7; }
+/* « Conseillé » : une petite étiquette, pas plus. */
+.gd-advice {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid currentColor;
+  font-size: 0.72em;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: 1px;
+  opacity: 0.85;
+}
+.gd-advice-line { margin: 4px 0 0; }
+.gd-advice-line > .gd-advice { margin-left: 0; margin-right: 4px; }
 /* Hauteur fixe : les boutons qui apparaissent ou disparaissent (installation,
    jeu lancé, mise à jour…) ne doivent pas redimensionner la boîte au-dessus. */
 .gd-actions-body { height: clamp(210px, 32vh, 270px); overflow-y: auto; }

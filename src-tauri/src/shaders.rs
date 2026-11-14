@@ -6,6 +6,9 @@
 //! (le serveur réunit les shaders de tout le monde) et reçoit avant la partie la réunion de ceux
 //! des autres. `vulkan_pipelines.bin`, propre à la carte graphique, n'est jamais touché.
 //!
+//! Un dépôt par système (Windows, Linux, Mac) : un cache fait sur Mac faisait planter l'émulateur
+//! sous Windows (novembre 2026). Un cache local reçu du dépôt commun d'avant est jeté une fois.
+//!
 //! Rien ici n'empêche de jouer : une erreur est notée dans le journal et la partie continue.
 
 use std::collections::BTreeMap;
@@ -63,6 +66,14 @@ struct Memo {
     local: Option<String>,
     /// SHA-1 de l'archive du serveur reçue la dernière fois.
     server: Option<String>,
+    /// Système du dépôt de ces échanges ; absent : le dépôt commun à tous les systèmes d'avant.
+    #[serde(default)]
+    system: Option<String>,
+}
+
+/// Système de ce PC, pour le dépôt de shaders qui lui est propre.
+fn system() -> &'static str {
+    crate::language::current_system()
 }
 
 #[derive(Deserialize)]
@@ -244,7 +255,7 @@ impl Job {
             return true;
         }
         let Ok(body) = zip_one(&data) else { return false };
-        let path = format!("api/shaders/{}/{title}?rom={}", self.emulator, self.rom_id);
+        let path = format!("api/shaders/{}/{title}?rom={}&systeme={}", self.emulator, self.rom_id, system());
         match self.manager.send(self.manager.put_bytes(&path, body).timeout(TIMEOUT)).await {
             Ok(resp) => {
                 let added = resp.json::<serde_json::Value>().await.ok().and_then(|v| v.get("added")?.as_u64()).unwrap_or(0);
@@ -262,7 +273,7 @@ impl Job {
     /// Reçoit la réunion du serveur si elle a changé depuis la dernière fois.
     async fn download(&self, title: &str, memo: &mut Memo) {
         let path = format!("api/shaders/{}/{title}", self.emulator);
-        let info: ServerInfo = match self.manager.send(self.manager.get(&path)).await {
+        let info: ServerInfo = match self.manager.send(self.manager.get(&format!("{path}?systeme={}", system()))).await {
             Ok(resp) => match resp.json().await {
                 Ok(i) => i,
                 Err(_) => return,
@@ -281,7 +292,7 @@ impl Job {
                 return;
             }
         }
-        let zip = match self.manager.send(self.manager.get_stream(&format!("{path}/content")).timeout(TIMEOUT)).await {
+        let zip = match self.manager.send(self.manager.get_stream(&format!("{path}/content?systeme={}", system())).timeout(TIMEOUT)).await {
             Ok(resp) => match resp.bytes().await {
                 Ok(b) => b,
                 Err(_) => return,
@@ -309,11 +320,33 @@ impl Job {
         memo.server = Some(info.sha1);
     }
 
+    /// Cache local reçu du dépôt commun d'avant (peut-être fait sur un autre système) : jeté une
+    /// fois, l'émulateur refait ses shaders. Ensuite, seul le dépôt de ce système sert.
+    fn leave_common_deposit(&self, title: &str, memo: &mut Memo) {
+        if memo.system.as_deref() == Some(system()) {
+            return;
+        }
+        if memo.server.is_some() {
+            match std::fs::remove_file(self.cache_path(title)) {
+                Ok(()) => tracing::info!("shaders {} {title} : cache reçu du dépôt commun jeté (un dépôt par système désormais)", self.emulator),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => {
+                    tracing::warn!("shaders {} {title} : ancien cache commun non retiré ({e})", self.emulator);
+                    return;
+                }
+            }
+        }
+        memo.local = None;
+        memo.server = None;
+        memo.system = Some(system().to_string());
+    }
+
     /// Avant la partie : d'abord ce qui n'a pas été envoyé, puis la réunion du serveur.
     pub async fn before(&self) {
         let mut memo = self.memo();
         let Some(title) = self.title(&memo) else { return };
         memo.title = Some(title.clone());
+        self.leave_common_deposit(&title, &mut memo);
         // Le fichier local n'est remplacé que si ses shaders sont déjà sur le serveur.
         if self.upload(&title, &mut memo).await {
             self.download(&title, &mut memo).await;
@@ -326,6 +359,13 @@ impl Job {
         let mut memo = self.memo();
         let Some(title) = self.title(&memo).or_else(|| learned_title(&self.shader_root, &self.cache_name, started)) else { return };
         memo.title = Some(title.clone());
+        // Un cache du dépôt commun n'est pas envoyé dans celui de ce système.
+        if memo.system.as_deref() != Some(system()) {
+            if memo.server.is_some() {
+                return;
+            }
+            memo.system = Some(system().to_string());
+        }
         self.upload(&title, &mut memo).await;
         self.save_memo(&memo);
     }

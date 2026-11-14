@@ -56,7 +56,24 @@ pub fn install_game(
     proton: Option<String>,
     with_emulator: Option<bool>,
     emulator: Option<String>,
+    recomp: Option<String>,
 ) -> AppResult<()> {
+    // Jeu à plusieurs recomps : celle choisie (sinon celle proposée) reste la sienne, même si le
+    // conseil du catalogue change plus tard.
+    if with_emulator != Some(true) {
+        let catalog = state.catalog();
+        let choices = catalog.recomps_for_rom(rom_id);
+        let wanted = recomp.filter(|id| choices.iter().any(|r| &r.id == id)).or_else(|| (choices.len() > 1).then(|| catalog.recomp_for_rom(rom_id).map(|r| r.id.clone())).flatten());
+        if let Some(id) = wanted {
+            if state.settings().recomp_choice.get(&rom_id) != Some(&id) {
+                tracing::info!("recomp choisie pour le jeu {rom_id} : {id}");
+                state.update_settings(|s| {
+                    s.recomp_choice.insert(rom_id, id);
+                })?;
+                crate::runtimes::combine(&state);
+            }
+        }
+    }
     let install_root = match dest.map(PathBuf::from) {
         Some(d) if d.is_absolute() => d,
         Some(_) => return Err(AppError::Internal),
