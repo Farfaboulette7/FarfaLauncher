@@ -128,6 +128,10 @@ pub async fn start(state: &AppState, rom_id: i64, save_choice: SaveChoice, cod: 
             let dir = exe_dir.clone();
             let _ = tokio::task::spawn_blocking(move || launch::before::run_all(&before, &dir)).await;
         }
+        // Recomp qui écrit à un endroit fixe (boiii : %LOCALAPPDATA%oiii) : relié au dossier du jeu.
+        if let Some(r) = state.catalog().recomp_for_install(&st).filter(|r| !r.links.is_empty()) {
+            crate::links::apply(&r.links, &exe_dir);
+        }
         // Manette de chaque joueur, posée avant que le jeu ne prenne les manettes.
         if let Some(format) = state.catalog().controllers_for_install(&st) {
             if let Err(e) = crate::controllers::apply(&format, &st.players, pads, &exe_dir) {

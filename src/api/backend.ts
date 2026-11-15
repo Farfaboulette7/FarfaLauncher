@@ -373,6 +373,7 @@ export type InstallPhase =
   | "warm"
   | "cleanup"
   | "shaders"
+  | "cache"
   | "finalize";
 
 export interface InstallProgress {

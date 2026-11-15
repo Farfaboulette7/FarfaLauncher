@@ -51,6 +51,7 @@ const PHASE_LABELS: Record<InstallPhase, string> = {
   warm: "Premier démarrage du jeu",
   cleanup: "Nettoyage",
   shaders: "Préparation des shaders",
+  cache: "Préparation des données du jeu",
   finalize: "Finalisation…",
 };
 
@@ -723,6 +724,26 @@ export function InstallFacts({ game: base, target, installs }: { game: Game; tar
     const players = s.players.length > 1 ? ` · ${s.players.length} joueurs` : "";
     return `${name} : ${s.count.toLocaleString("fr-FR")}${players} · +${last} à la dernière partie${almost ? " (presque complet)" : ""}`;
   });
+  // Sources : le dépôt de ce qui fait (ou fera) tourner le jeu, et sa page sur RomM.
+  const [rommUrl, setRommUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    backend
+      .sessionStatus()
+      .then((s) => live && setRommUrl(s.serverUrl))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
+  const source = withEmulator
+    ? game.emulator?.repo
+      ? { name: game.emulator.name, url: game.emulator.repo }
+      : null
+    : game.runtime?.repo
+      ? { name: game.runtime.name, url: game.runtime.repo }
+      : null;
+  const rommPage = rommUrl ? `${rommUrl.replace(/\/+$/, "")}/rom/${base.id}` : null;
   return (
     <>
       {game.runtime && !withEmulator && (
@@ -814,6 +835,24 @@ export function InstallFacts({ game: base, target, installs }: { game: Game; tar
         </>
       )}
       {inst?.executable && <OptimizedFacts romId={base.id} running={installs.running.has(base.id)} />}
+      {(source || rommPage) && (
+        <>
+          <dt>Sources</dt>
+          <dd className="gd-sources">
+            {source && (
+              <button className="n-link" title={source.url} onClick={() => backend.openUrl(source.url)}>
+                {repoLabel(source.url)} de {source.name}
+              </button>
+            )}
+            {source && rommPage && " · "}
+            {rommPage && (
+              <button className="n-link" title={rommPage} onClick={() => backend.openUrl(rommPage)}>
+                Page RomM
+              </button>
+            )}
+          </dd>
+        </>
+      )}
       <dt>Plateformes</dt>
       <dd>
         <ul className="gd-platforms">
@@ -840,6 +879,27 @@ export function InstallFacts({ game: base, target, installs }: { game: Game; tar
   );
 }
 
+/** Taille toujours avec une décimale (« 1,0 Go », « 12,3 Mo ») : sa largeur ne varie pas d'un instant à l'autre. */
+function fixedSize(bytes: number): string {
+  const units = ["o", "Ko", "Mo", "Go", "To"];
+  let v = Math.max(0, bytes);
+  let i = 0;
+  while (v >= 1000 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v.toLocaleString("fr-FR", { minimumFractionDigits: i === 0 ? 0 : 1, maximumFractionDigits: i === 0 ? 0 : 1 })} ${units[i]}`;
+}
+
+/** « GitHub » pour un dépôt GitHub, sinon « Code source » (forge Forgejo de Longshot…). */
+function repoLabel(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "") === "github.com" ? "GitHub" : "Code source";
+  } catch {
+    return "Code source";
+  }
+}
+
 /** Phases dont `done`/`total` sont des octets. */
 const BYTE_PHASES: InstallPhase[] = ["download", "proton", "client", "extract", "data"];
 
@@ -855,6 +915,7 @@ const PHASE_HINTS: Partial<Record<InstallPhase, string>> = {
   shaders: "Les shaders du jeu sont préparés pour votre carte graphique, pour qu'il ne saccade pas en jouant. La barre peut rester immobile quelques minutes au début.",
   warm: "Le jeu se lance une minute tout seul pour préparer votre carte graphique. Une fenêtre peut s'ouvrir : ne la fermez pas, elle se fermera d'elle-même.",
   cleanup: "Les fichiers temporaires sont supprimés, presque fini.",
+  cache: "Les données copiées depuis votre disque sont converties une fois pour le jeu : quelques minutes.",
   place: "Les fichiers extraits sont rangés dans le dossier du jeu. Ça peut prendre une minute pour un gros jeu.",
   finalize: "Derniers réglages, presque fini.",
 };
@@ -950,24 +1011,32 @@ function ProgressView({
   // Pas d'estimation sur trop peu de mesures (début d'étape : « 9 h » qui retombe à 20 min).
   const settled = elapsed >= 20000 && total > 0 && done / total >= 0.01;
   const remaining = settled && rate && rate > 0 && total > done && !verifying ? (total - done) / rate : null;
-  const parts: string[] = [];
-  if (installing) {
-    if (done > 0) parts.push(`${formatSize(done)} installés`);
-  } else if (pct !== null) {
-    parts.push(pct < 10 ? `${pct.toLocaleString("fr-FR", { maximumFractionDigits: 1 })} %` : `${Math.floor(pct)} %`);
-    if (bytes) parts.push(`${formatSize(done)} / ${formatSize(total)}`);
-    if (bytes && rate && rate > 0 && !verifying && done < total) parts.push(`${formatSize(rate)}/s`);
-  }
+  // Chiffres sur leur propre ligne, en colonnes de largeur fixe : ils changent sans faire sauter le texte.
+  const showRate = bytes && !installing && pct !== null && !verifying && done < total;
   const hint = PHASE_HINTS[phase];
   return (
     <div className="gd-progress">
       <div className="gd-progress-label">
-        <span>
-          {PHASE_LABELS[phase]}
-          {verifying && <span className="n-hint"> · vérification du fichier reçu</span>}
-        </span>
-        <span>{parts.join(" · ")}</span>
+        {PHASE_LABELS[phase]}
+        {verifying && <span className="n-hint"> · vérification du fichier reçu</span>}
       </div>
+      {(installing ? done > 0 : pct !== null) && (
+        <div className="gd-progress-stats">
+          {installing ? (
+            <span className="gd-stat-size">{fixedSize(done)} installés</span>
+          ) : (
+            <>
+              <span className="gd-stat-pct">{(pct ?? 0).toLocaleString("fr-FR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %</span>
+              {bytes && (
+                <span className="gd-stat-size">
+                  {fixedSize(done)} / {fixedSize(total)}
+                </span>
+              )}
+              {showRate && <span className="gd-stat-rate">{rate && rate > 0 ? `${fixedSize(rate)}/s` : "…"}</span>}
+            </>
+          )}
+        </div>
+      )}
       <div className="gd-progress-bar" role="progressbar" aria-valuenow={pct ?? undefined} aria-valuemin={0} aria-valuemax={100}>
         <div className={pct === null ? "is-indeterminate" : undefined} style={pct === null ? undefined : { width: `${pct}%` }} />
       </div>

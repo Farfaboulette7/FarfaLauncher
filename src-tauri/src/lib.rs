@@ -16,6 +16,7 @@ mod hardware;
 mod ingame;
 mod install;
 mod language;
+mod links;
 mod launch;
 mod logging;
 mod manager;

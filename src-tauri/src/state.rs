@@ -50,11 +50,18 @@ pub struct AppState {
     pub default_install_root: PathBuf,
 }
 
+/// Jeux installés sans recomp choisie : ils gardent celle de leur archive.
+fn keep_installed_recomps(catalog: &mut crate::manager::Catalog, config_dir: &std::path::Path) {
+    let installed = crate::install::state::list_installed(config_dir);
+    catalog.keep_installed_recomps(installed.iter().map(|g| (g.rom_id, g.archive_name.as_str())));
+}
+
 impl AppState {
     pub fn new(config_dir: PathBuf, log_dir: PathBuf, cache_dir: PathBuf, default_install_root: PathBuf) -> Self {
         let settings = settings::load(&config_dir);
         let mut catalog = crate::manager::Catalog::load_cached(&config_dir);
         catalog.choices = settings.recomp_choice.clone();
+        keep_installed_recomps(&mut catalog, &config_dir);
         let manifest = crate::runtimes::Manifest::load_cached(&config_dir).with_catalog(&catalog);
         // Persiste immédiatement le device_id généré au premier lancement.
         if let Err(e) = settings::save(&config_dir, &settings) {
@@ -101,6 +108,7 @@ impl AppState {
     pub fn catalog(&self) -> crate::manager::Catalog {
         let mut catalog = self.catalog.lock().unwrap().clone();
         catalog.choices = self.settings.lock().unwrap().recomp_choice.clone();
+        keep_installed_recomps(&mut catalog, &self.config_dir);
         catalog
     }
 

@@ -92,6 +92,9 @@ pub struct CatalogRecomp {
     /// Version conseillée pour ses jeux quand ils ont plusieurs recomps ou émulateurs.
     #[serde(default)]
     pub advice: Option<String>,
+    /// Dossiers hors du jeu reliés à un dossier du jeu (`lien:`).
+    #[serde(default)]
+    pub links: Vec<crate::links::Link>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -576,7 +579,7 @@ impl Catalog {
             .first()
             .map(|r| format!("{}{sep}{}", crate::launch::direct::GAME_DIR_VAR, r.replace('/', &sep)))
             .unwrap_or_default();
-        let expand = |t: &str| t.replace("{rom}", &rom);
+        let expand = |t: &str| t.replace("{rom}", &rom).replace("{gamedir}", crate::launch::direct::GAME_DIR_VAR);
         Some(crate::install::state::DirectLaunch {
             exe,
             args: recomp.launch.args.iter().map(|a| expand(a)).collect(),
@@ -588,6 +591,12 @@ impl Catalog {
     /// Construction du jeu après l'installation de sa recomp (`preparer:`).
     pub fn recomp_prepare(&self, rom_id: i64) -> &[String] {
         self.recomp_for_rom(rom_id).filter(|r| !r.is_shared()).map(|r| r.launch.prepare.as_slice()).unwrap_or(&[])
+    }
+
+    /// Variables de la recomp (`variable:`), passées aussi à son outil de préparation
+    /// (`HOOKSHOT_SETUP_BASE={gamedir}/…` : ses outils dans le dossier du jeu, pas dans AppData).
+    pub fn recomp_env(&self, rom_id: i64) -> &[(String, String)] {
+        self.recomp_for_rom(rom_id).filter(|r| !r.is_shared()).map(|r| r.launch.env.as_slice()).unwrap_or(&[])
     }
 
     /// Exécutable imposé par `exe:` pour une recomp à un seul jeu.
@@ -608,10 +617,38 @@ impl Catalog {
     }
 
     /// Recomp d'un jeu : celle choisie par le joueur, sinon la conseillée, sinon la première.
+    /// Jeu installé avant le choix des recomps (ou sans choix enregistré) : il garde la recomp
+    /// dont vient son archive (`<id>_<Système>.zip`), pas la conseillée. Sinon une mise à jour
+    /// passerait à une autre recomp, parfois sans build pour ce système (Longshot sous Linux).
+    pub fn keep_installed_recomps<'a>(&mut self, installed: impl IntoIterator<Item = (i64, &'a str)>) {
+        for (rom_id, archive) in installed {
+            if self.choices.contains_key(&rom_id) {
+                continue;
+            }
+            let all = self.recomps_for_rom(rom_id);
+            if all.len() < 2 {
+                continue;
+            }
+            if let Some(r) = all.iter().find(|r| archive.starts_with(&format!("{}_", r.id))) {
+                let id = r.id.clone();
+                self.choices.insert(rom_id, id);
+            }
+        }
+    }
+
     pub fn recomp_for_rom(&self, rom_id: i64) -> Option<&CatalogRecomp> {
         let all = self.recomps_for_rom(rom_id);
         let chosen = self.choices.get(&rom_id).and_then(|id| all.iter().find(|r| &r.id == id));
-        chosen.or_else(|| all.iter().find(|r| r.advice.is_some())).or(all.first()).copied()
+        // Sans choix : la conseillée, puis la première, parmi celles qui ont une build pour ce
+        // système (Longshot n'en a pas sous Linux : Hookshot y reste proposée).
+        let me = crate::platform::detect();
+        let here = |r: &&&CatalogRecomp| r.is_shared() || r.archives(me).1.is_some();
+        chosen
+            .or_else(|| all.iter().filter(here).find(|r| r.advice.is_some()))
+            .or_else(|| all.iter().find(here))
+            .or_else(|| all.iter().find(|r| r.advice.is_some()))
+            .or(all.first())
+            .copied()
     }
 
     /// Jeux passés de leur fiche `portage-*` à leur vraie console : (ancien ID, nouvel ID).
@@ -746,7 +783,7 @@ mod tests {
     fn recomp_choice_then_advice_then_first() {
         let text = r#"{"recomps":[
           {"id":"hookshot","name":"Hookshot","repo":"r","version":{"cle":"a","nom":"2.1"},"games":[{"romId":7}],"files":[{"name":"h_Windows.zip","size":1,"sha1":"a","system":"Windows"}]},
-          {"id":"longshot","name":"Longshot","repo":"r","version":{"cle":"b","nom":"v3.0.0-rc.3"},"games":[{"romId":7}],"advice":"Suite de Hookshot","files":[]},
+          {"id":"longshot","name":"Longshot","repo":"r","version":{"cle":"b","nom":"v3.0.0-rc.3"},"games":[{"romId":7}],"advice":"Suite de Hookshot","files":[{"name":"l_Windows.zip","size":1,"sha1":"b","system":"Windows"}]},
           {"id":"seule","name":"Seule","repo":"r","version":{"cle":"c","nom":"1"},"games":[{"romId":8}]}],"emulators":[]}"#;
         let mut c: Catalog = serde_json::from_str(text).unwrap();
         assert_eq!(c.recomp_for_rom(7).unwrap().id, "longshot"); // conseillée
@@ -756,9 +793,22 @@ mod tests {
         assert_eq!(c.recomp_for_rom(7).unwrap().id, "longshot"); // choix qui n'existe plus
         let offers = c.recomp_offers(7, Target::Windows);
         assert_eq!(offers.iter().map(|o| (o.id.as_str(), o.available, o.advice.is_some())).collect::<Vec<_>>(),
-                   vec![("hookshot", true, false), ("longshot", false, true)]);
+                   vec![("hookshot", true, false), ("longshot", true, true)]);
+        // Conseillée sans build pour ce système : celle qui en a une.
+        let sans: Catalog = serde_json::from_str(&text.replace(r#"[{"name":"l_Windows.zip","size":1,"sha1":"b","system":"Windows"}]"#, "[]")).unwrap();
+        assert_eq!(sans.recomp_for_rom(7).unwrap().id, "hookshot");
         assert!(c.recomp_offers(8, Target::Windows).is_empty()); // une seule : pas de choix
         assert_eq!(c.recomp_for_rom(8).unwrap().id, "seule");
+
+        // Installé avec Hookshot, sans choix enregistré : il reste sur Hookshot.
+        c.choices.clear();
+        c.keep_installed_recomps([(7, "hookshot_Linux.zip"), (8, "seule_Linux.zip")]);
+        assert_eq!(c.recomp_for_rom(7).unwrap().id, "hookshot");
+        assert!(!c.choices.contains_key(&8));
+        // Un choix du joueur passe avant.
+        c.choices.insert(7, "longshot".into());
+        c.keep_installed_recomps([(7, "hookshot_Linux.zip")]);
+        assert_eq!(c.recomp_for_rom(7).unwrap().id, "longshot");
     }
 
     #[test]
@@ -879,6 +929,16 @@ mod tests {
         // Sans argument : le programme s'ouvre comme avant.
         let plain: Catalog = serde_json::from_str(r#"{"recomps":[{"id":"m","repo":"r","games":[{"name":"M","romId":3406}]}],"emulators":[]}"#).unwrap();
         assert!(plain.recomp_launch(&st).is_none());
+        // {gamedir} dans les arguments et les variables (ReRAC : --data-dir {gamedir}/data).
+        let rerac: Catalog = serde_json::from_str(
+            r#"{"recomps":[{"id":"r","repo":"r","games":[{"name":"R","romId":3406}],
+              "launch":{"exe":"rerac","args":["--data-dir","{gamedir}/data"],"env":[["RC_SAVE_DIR","{gamedir}/memcard"]]}}],"emulators":[]}"#,
+        )
+        .unwrap();
+        let d = rerac.recomp_launch(&st).unwrap();
+        let var = crate::launch::direct::GAME_DIR_VAR;
+        assert_eq!(d.args, ["--data-dir".to_string(), format!("{var}/data")]);
+        assert_eq!(d.env, [("RC_SAVE_DIR".to_string(), format!("{var}/memcard"))]);
     }
 
     #[test]

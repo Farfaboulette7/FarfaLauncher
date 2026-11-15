@@ -252,7 +252,15 @@ impl InstallJob {
             tracing::info!("{} ROM(s) inchangée(s), non retéléchargée(s)", game.rom_files.len() - rom_fetch.len());
         }
         let rom_bytes: u64 = rom_fetch.iter().map(|f| f.size).sum();
-        let estimate = archive.file.size + rom_bytes * 2 + (archive.file.size as f64 * UNZIP_RATIO_ESTIMATE) as u64;
+        // Données en `*.extract.zip` : extraites une à une, chaque archive supprimée aussitôt.
+        // Il faut toutes les archives, plus la place de la plus grosse une fois extraite.
+        let (extract_bytes, largest_extract) = extract_space(&rom_fetch);
+        let other_rom_bytes = rom_bytes - extract_bytes;
+        let estimate = archive.file.size
+            + other_rom_bytes * 2
+            + extract_bytes
+            + largest_extract
+            + (archive.file.size as f64 * UNZIP_RATIO_ESTIMATE) as u64;
         ensure_space(&game_dir, estimate)?;
 
         // 2. Téléchargements : archive puis ROMs, progression en octets cumulés.
@@ -281,7 +289,7 @@ impl InstallJob {
             let p = archive_path.clone();
             blocking(move || extract::uncompressed_size(&p, kind)).await?
         };
-        ensure_space(&game_dir, unpacked + rom_bytes)?;
+        ensure_space(&game_dir, unpacked + other_rom_bytes + largest_extract)?;
 
         // 4. Mise à jour d'un jeu installé : sauvegarde des saves d'abord.
         if previous.is_some() {
@@ -354,7 +362,9 @@ impl InstallJob {
         // Recomp qui construit le jeu (Hookshot) : son outil d'abord, pour poser la copie du jeu
         // à côté ; le jeu construit devient ensuite l'exécutable.
         let prepare: Vec<String> = if runtime.is_none() { self.catalog.recomp_prepare(rom_id).to_vec() } else { Vec::new() };
-        let builder = prepare.first().and_then(|names| prepare::pick_program(&candidates, names));
+        let builder = prepare
+            .first()
+            .and_then(|names| prepare::pick_program(&candidates, names).or_else(|| prepare::find_program(&game_dir, names)));
         if !prepare.is_empty() && builder.is_none() {
             tracing::error!("outil de construction {} absent des candidats {candidates:?}", prepare[0]);
             return Err(AppError::NoExecutable);
@@ -406,9 +416,15 @@ impl InstallJob {
         // Copie du jeu posée à côté ; données extraites (exefs/romfs) : le dossier du jeu.
         let rom = st.roms.first().map(|r| st.game_dir.join(rel_to_path(r))).unwrap_or_else(|| st.game_dir.clone());
         let args = prepare::expand(args, &rom, &st.game_dir);
+        let env: Vec<(String, String)> = self
+            .catalog
+            .recomp_env(rom_id)
+            .iter()
+            .map(|(k, v)| (k.clone(), prepare::expand(std::slice::from_ref(v), &rom, &st.game_dir).remove(0)))
+            .collect();
         self.emit(rom_id, "build", 0, 1000);
         let (dir, program, cancel, cb) = (st.game_dir.clone(), builder.to_string(), self.cancel.clone(), self.on_progress.clone());
-        blocking(move || prepare::run(&dir, &program, &args, &cancel, move |phase, done| cb(Progress { rom_id, phase, done, total: 1000, verifying: false }))).await?;
+        blocking(move || prepare::run(&dir, &program, &args, &env, &cancel, move |phase, done| cb(Progress { rom_id, phase, done, total: 1000, verifying: false }))).await?;
         self.emit(rom_id, "finalize", 0, 0);
         let gd = st.game_dir.clone();
         let target = self.target;
@@ -839,6 +855,14 @@ fn remove_all_but_saves(root: &Path, dir: &Path) -> AppResult<bool> {
 /// Archive de `ROM/` à extraire à côté de l'exécutable plutôt qu'à copier
 /// telle quelle (ex. `exefs`/`romfs` d'un jeu Switch : des dizaines de milliers
 /// de fichiers, qui rendraient RomM très lent s'ils étaient posés un par un).
+/// Taille totale des `*.extract.zip` et de la plus grosse d'entre elles.
+fn extract_space(files: &[&RemoteFile]) -> (u64, u64) {
+    files
+        .iter()
+        .filter(|f| is_extract_archive(&f.file_name))
+        .fold((0, 0), |(sum, max), f| (sum + f.size, max.max(f.size)))
+}
+
 pub fn is_extract_archive(file_name: &str) -> bool {
     file_name.to_ascii_lowercase().ends_with(".extract.zip")
 }
@@ -1003,6 +1027,9 @@ mod tests {
         let f = RemoteFile { id: 1, file_name: "MHGU-data.extract.zip".into(), rel_path: "ROM/MHGU-data.extract.zip".into(), size: 10, sha1: None, md5: None, from_manager: false };
         let src = state::RomSource { rel_path: f.rel_path.clone(), size: 10, sha1: None, md5: None, placed: vec!["data".into()] };
         assert!(is_extract_archive(&f.file_name) && !is_extract_archive("game.zip"));
+        let part = |name: &str, size| RemoteFile { file_name: name.into(), size, ..f.clone() };
+        let (a, b, c) = (part("BO3-data-01.extract.zip", 10), part("BO3-data-02.extract.zip", 4), part("jeu.iso", 7));
+        assert_eq!(extract_space(&[&a, &b, &c]), (14, 10));
         assert!(unchanged_rom(std::slice::from_ref(&src), &f, &root).is_some());
         // Autre taille sur le serveur, ou dossier supprimé : à retélécharger.
         assert!(unchanged_rom(&[state::RomSource { size: 9, ..src.clone() }], &f, &root).is_none());

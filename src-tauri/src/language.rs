@@ -141,6 +141,7 @@ pub fn expand(file: &str, exe_dir: &Path) -> Option<PathBuf> {
     let base = match var {
         "exedir" => exe_dir.to_path_buf(),
         "appdata" => appdata()?,
+        "localappdata" => local_appdata()?,
         "config" => config_dir()?,
         "documents" => documents()?,
         _ => return None,
@@ -166,6 +167,15 @@ fn appdata() -> Option<PathBuf> {
         env_dir("HOME").map(|h| h.join("Library").join("Application Support"))
     } else {
         env_dir("XDG_DATA_HOME").or_else(|| env_dir("HOME").map(|h| h.join(".local/share")))
+    }
+}
+
+/// `%LOCALAPPDATA%`, sinon comme `{appdata}`.
+fn local_appdata() -> Option<PathBuf> {
+    if cfg!(windows) {
+        env_dir("LOCALAPPDATA")
+    } else {
+        appdata()
     }
 }
 

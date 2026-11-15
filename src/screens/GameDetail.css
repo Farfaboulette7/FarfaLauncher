@@ -268,11 +268,21 @@
 .gd-actions .gd-inst-actions .n-link { font-size: var(--fs-xs); }
 .gd-progress { display: flex; flex-direction: column; gap: 8px; }
 .gd-progress-label {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
   font-size: var(--fs-sm);
 }
+/* Chiffres de la progression : colonnes fixes et chiffres à chasse fixe, rien ne bouge ni ne passe à la ligne. */
+.gd-progress-stats {
+  display: flex;
+  gap: 14px;
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.gd-progress-stats > span { flex: none; text-align: right; }
+.gd-stat-pct { width: 7ch; }
+.gd-stat-size { width: 18ch; }
+.gd-stat-rate { width: 11ch; }
 .gd-progress-bar {
   height: 12px;
   background: var(--nier-high-mid);

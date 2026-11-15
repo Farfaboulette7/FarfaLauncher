@@ -29,6 +29,15 @@ pub fn pick_program(candidates: &[String], names: &str) -> Option<String> {
     })
 }
 
+/// Outil de préparation écarté de la détection des exécutables (`pkp-setup` : « setup » ressemble
+/// à un installateur) : cherché par son chemin exact dans le dossier du jeu, `.exe` compris.
+pub fn find_program(game_dir: &Path, names: &str) -> Option<String> {
+    names.split(',').map(str::trim).filter(|n| !n.is_empty() && !n.contains("..")).find_map(|n| {
+        let n = n.trim_matches('/');
+        [n.to_string(), format!("{n}.exe")].into_iter().find(|c| game_dir.join(rel_to_path(c)).is_file())
+    })
+}
+
 /// Arguments avec `{rom}` (la copie du jeu) et `{gamedir}` (le dossier du jeu).
 pub fn expand(args: &[String], rom: &Path, game_dir: &Path) -> Vec<String> {
     args.iter().map(|a| a.replace("{rom}", &rom.to_string_lossy()).replace("{gamedir}", &game_dir.to_string_lossy())).collect()
@@ -71,6 +80,16 @@ pub fn parse_stage(line: &str) -> Option<&'static str> {
     Some(if stage.eq_ignore_ascii_case("shaders") { "shaders" } else { "build" })
 }
 
+/// Étape portée par une ligne de progression JSON (`{"type":"progress","stage":"copy",…}` : extracteur de ReRAC).
+pub fn progress_stage(line: &str) -> Option<&'static str> {
+    json_event(line, "progress")?.get("stage").and_then(serde_json::Value::as_str).map(stage_of)
+}
+
+/// Message d'une ligne d'erreur JSON (`{"type":"error","code":40,"message":"…"}`).
+pub fn json_error(line: &str) -> Option<String> {
+    json_event(line, "error")?.get("message").and_then(serde_json::Value::as_str).map(str::to_string)
+}
+
 /// Ligne JSON `{"ev": "<kind>", …}` (ou `"type"`) d'un outil de préparation.
 fn json_event(line: &str, kind: &str) -> Option<serde_json::Value> {
     let line = line.trim();
@@ -88,13 +107,14 @@ fn stage_of(id: &str) -> &'static str {
     // Étapes préfixées par le jeu (`dkb_data`, `dkb_shaders` : installateur de DK Bananza).
     let id = id.split_once('_').filter(|(jeu, _)| jeu.len() <= 4).map(|(_, s)| s.to_string()).unwrap_or(id);
     match id.as_str() {
-        "check" | "preflight" | "hash" => "check",
+        "check" | "preflight" | "hash" | "identify" | "verify" => "check",
+        "prepare" | "cache" => "cache",
         "romfs" | "exefs" | "data" | "extract" | "stage" | "copy" => "copy",
         "lift" | "generate" | "gen" => "generate",
         "compile" | "build" | "link" => "compile",
         "shaders" | "translate" | "xlate" => "shaders",
         "graphics" | "warm" | "textures" | "pipelines" => "warm",
-        "finish" | "cleanup" | "language" | "selftest" | "verify" => "cleanup",
+        "finish" | "cleanup" | "language" | "selftest" => "cleanup",
         "translator" => "check",
         _ => "build",
     }
@@ -102,13 +122,13 @@ fn stage_of(id: &str) -> &'static str {
 
 /// Lance la construction et attend sa fin. `on_progress` reçoit la phase (`build` puis
 /// éventuellement `shaders`) et sa progression 0..1000.
-pub fn run(game_dir: &Path, program: &str, args: &[String], cancel: &CancellationToken, on_progress: impl Fn(&'static str, u64) + Send + Sync + 'static) -> AppResult<()> {
+pub fn run(game_dir: &Path, program: &str, args: &[String], env: &[(String, String)], cancel: &CancellationToken, on_progress: impl Fn(&'static str, u64) + Send + Sync + 'static) -> AppResult<()> {
     let exe: PathBuf = game_dir.join(rel_to_path(program));
     make_executable(&exe);
     let dir = exe.parent().unwrap_or(game_dir).to_path_buf();
     tracing::info!("construction du jeu : {} {args:?}", exe.display());
     let mut cmd = Command::new(&exe);
-    cmd.args(args).current_dir(&dir).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.args(args).envs(env.iter().map(|(k, v)| (k, v))).current_dir(&dir).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -129,8 +149,11 @@ pub fn run(game_dir: &Path, program: &str, args: &[String], cancel: &Cancellatio
                     phase = p;
                     on_progress(phase, 0);
                 } else if let Some(f) = parse_progress(&line) {
+                    if let Some(p) = progress_stage(&line).filter(|p| *p != phase) {
+                        phase = p;
+                    }
                     on_progress(phase, (f * 1000.0) as u64);
-                } else if let Some(e) = line.strip_prefix("error ") {
+                } else if let Some(e) = line.strip_prefix("error ").map(str::to_string).or_else(|| json_error(&line)) {
                     *error.lock().unwrap() = Some(e.to_string());
                 }
                 tracing::debug!("construction : {line}");
@@ -187,6 +210,33 @@ pub fn run(game_dir: &Path, program: &str, args: &[String], cancel: &Cancellatio
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rerac_extractor_lines() {
+        let copy = r#"{"type":"progress","stage":"copy","done":500,"total":1000,"file":"levels/00/x"}"#;
+        assert_eq!(parse_progress(copy), Some(0.5));
+        assert_eq!(progress_stage(copy), Some("copy"));
+        assert_eq!(progress_stage(r#"{"type":"progress","stage":"identify","done":1,"total":2}"#), Some("check"));
+        assert_eq!(progress_stage(r#"{"type":"progress","stage":"prepare","done":1,"total":2}"#), Some("cache"));
+        assert_eq!(parse_stage(copy), None);
+        assert_eq!(json_error(r#"{"type":"error","code":40,"message":"image abîmée"}"#).as_deref(), Some("image abîmée"));
+        assert_eq!(json_error(r#"{"type":"done","elapsed_ms":4}"#), None);
+    }
+
+    #[test]
+    fn program_found_by_path_when_filtered() {
+        let d = std::env::temp_dir().join(format!("farfa-prepare-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(d.join("outils")).unwrap();
+        std::fs::write(d.join("pkp-setup.exe"), b"x").unwrap();
+        std::fs::write(d.join("outils/prep"), b"x").unwrap();
+        // « setup » est écarté des exécutables : l'outil est pris à son chemin.
+        assert_eq!(pick_program(&["PokopiaLauncher.exe".to_string()], "pkp-setup"), None);
+        assert_eq!(find_program(&d, "pkp-setup").as_deref(), Some("pkp-setup.exe"));
+        assert_eq!(find_program(&d, "absent, outils/prep").as_deref(), Some("outils/prep"));
+        assert_eq!(find_program(&d, "../pkp-setup"), None);
+        assert_eq!(find_program(&d, "absent"), None);
+        let _ = std::fs::remove_dir_all(&d);
+    }
 
     #[test]
     fn program_progress_and_arguments() {

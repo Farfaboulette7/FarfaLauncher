@@ -465,6 +465,8 @@ impl Game {
         self.archives = archives;
         self.my_archive = mine;
         self.mods = recomp.mod_files();
+        // Jeu PC lancé par une recomp (Black Ops 3 et boiii) : installé comme une recomp.
+        self.pc = None;
         // Données tirées de la ROM (romfs d'un NSP…) : prises sur le gestionnaire, pas sur RomM.
         if !recomp.game_files.is_empty() {
             self.rom_files = recomp.game_files.iter().map(|f| RemoteFile { rel_path: format!("ROM/{}", f.name), ..f.remote() }).collect();

@@ -201,6 +201,10 @@ pub async fn uninstall_game(state: State<'_, AppState>, rom_id: i64, keep_saves:
     let _busy = state.mark_busy(rom_id)?;
     state.check_family_idle(rom_id)?;
     let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
+    // Recomp qui avait relié un dossier hors du jeu (boiii) : le lien part avec le jeu.
+    if let Some(r) = state.catalog().recomp_for_install(&st) {
+        crate::links::remove_into(&r.links, &st.game_dir);
+    }
     install::uninstall(&state.config_dir, st, keep_saves).await
 }
 
