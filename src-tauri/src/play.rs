@@ -43,12 +43,20 @@ struct PreparedPc {
     runner: Option<Runner>,
 }
 
-/// Nom du joueur en LAN : celui de la session de l'ordinateur.
-fn player_name() -> String {
+/// Pseudo du joueur dans les Call of Duty : son compte du launcher, sinon (hors
+/// ligne) celui de la session de l'ordinateur.
+async fn player_name(client: &crate::romm::client::RommClient) -> String {
+    let clean = |n: String| n.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_').take(15).collect::<String>();
+    if let Ok(me) = crate::romm::auth::me(client).await {
+        let n = clean(me.username);
+        if !n.is_empty() {
+            return n;
+        }
+    }
     ["USERNAME", "USER"]
         .iter()
         .find_map(|k| std::env::var(k).ok())
-        .map(|n| n.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_').take(15).collect::<String>())
+        .map(clean)
         .filter(|n| !n.is_empty())
         .unwrap_or_else(|| "Joueur".into())
 }
@@ -64,8 +72,9 @@ async fn prepare_pc(state: &AppState, st: &state::InstalledGame, cod: Option<Cod
         let choice = cod.ok_or(AppError::ModeRequired)?;
         let (client, catalog, base) = (state.client()?, state.catalog(), crate::manager::base_url(&state.settings()));
         let access = crate::pc::install::ManagerAccess { client: &client, base: base.as_deref(), catalog: &catalog };
+        let player = player_name(&client).await;
         let (exe, args, cwd) =
-            crate::pc::install::prepare_cod(game, choice.mode, choice.online, &st.game_dir, runner.as_ref(), &player_name(), &access).await?;
+            crate::pc::install::prepare_cod(game, choice.mode, choice.online, &st.game_dir, runner.as_ref(), &player, &access).await?;
         return Ok(Some(PreparedPc { exe, args, cwd, runner }));
     }
     let exe = st.executable.as_deref().ok_or(AppError::NoExecutable)?;

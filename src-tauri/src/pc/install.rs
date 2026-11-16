@@ -515,6 +515,11 @@ pub async fn prepare_cod(
         // Hors ligne : on joue avec le client en place.
         tracing::warn!("clients de {cod:?} non vérifiés: {}", e.code());
     }
+    if cod == CodGame::Bo3 {
+        if let Err(e) = set_boiii_name(game_dir, player) {
+            tracing::warn!("pseudo non écrit pour boiii: {}", e.code());
+        }
+    }
     match launch {
         cod::ModeLaunch::Exe { exe, args } => Ok((PathBuf::from(exe), args, None)),
         cod::ModeLaunch::Plutonium { game, path_key } => {
@@ -539,6 +544,33 @@ pub async fn prepare_cod(
             }
         }
     }
+}
+
+/// Pseudo du joueur du launcher pour boiii : `playerName` de
+/// `boiii_players/properties.json` (lu au démarrage, sinon boiii prend le nom du
+/// compte Windows, « steamuser » sous Proton). Les autres réglages restent.
+fn set_boiii_name(game_dir: &Path, player: &str) -> AppResult<()> {
+    // boiii ne garde que l'ASCII imprimable.
+    let name: String = player.chars().filter(|c| (' '..='~').contains(c)).collect();
+    let name = name.trim();
+    if name.is_empty() {
+        return Ok(());
+    }
+    let file = game_dir.join("boiii_players").join("properties.json");
+    let mut props = std::fs::read_to_string(&file)
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .filter(serde_json::Value::is_object)
+        .unwrap_or_else(|| serde_json::json!({}));
+    if props.get("playerName").and_then(|v| v.as_str()) == Some(name) {
+        return Ok(());
+    }
+    props["playerName"] = serde_json::Value::String(name.to_string());
+    std::fs::create_dir_all(file.parent().unwrap_or(game_dir)).map_err(|e| log_err(AppError::Disk, "dossier boiii_players", e))?;
+    let text = serde_json::to_string_pretty(&props).map_err(|_| AppError::Internal)?;
+    std::fs::write(&file, text).map_err(|e| log_err(AppError::Disk, "properties.json de boiii", e))?;
+    tracing::info!("pseudo « {name} » écrit pour boiii");
+    Ok(())
 }
 
 /// Met Plutonium à jour avec son installateur (`plutonium.exe`, posé dans le
@@ -618,5 +650,19 @@ mod tests {
         std::fs::create_dir_all(staging.join("Jeu")).unwrap();
         assert_eq!(chunk_root(&staging, Path::new("Jeu")), staging.join("Jeu"));
         std::fs::remove_dir_all(staging).unwrap();
+    }
+
+    #[test]
+    fn boiii_name_keeps_other_settings() {
+        let dir = std::env::temp_dir().join(format!("farfa-boiii-{}", uuid::Uuid::new_v4()));
+        let file = dir.join("boiii_players").join("properties.json");
+        set_boiii_name(&dir, "Farfa").unwrap();
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&std::fs::read_to_string(&file).unwrap()).unwrap()["playerName"], "Farfa");
+        std::fs::write(&file, r#"{"playerName":"steamuser","fov":90}"#).unwrap();
+        set_boiii_name(&dir, "Éloïse 7").unwrap(); // hors ASCII retiré, comme boiii
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(v["playerName"], "lose 7");
+        assert_eq!(v["fov"], 90);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
