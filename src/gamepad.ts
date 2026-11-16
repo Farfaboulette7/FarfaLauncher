@@ -1,6 +1,7 @@
 // Navigation à la manette : croix ou stick gauche pour déplacer le focus vers
 // l'élément le plus proche dans la direction, A pour valider, B pour revenir
-// (comme Échap), LB/RB pour changer d'onglet, stick droit pour défiler.
+// (comme Échap), LB/RB pour changer d'onglet, LT/RT pour sauter d'une page,
+// stick droit pour défiler, View (Select) pour le plein écran.
 // Manettes lues par le Rust (gamepad.rs, SDL).
 import { listen } from "@tauri-apps/api/event";
 import { backend, GAMEPAD_EVENT, PadEvent, PadInfo, PadLayout } from "./api/backend";
@@ -159,6 +160,33 @@ function scrollParent(el: Element | null): HTMLElement {
   return main ?? (document.scrollingElement as HTMLElement);
 }
 
+/** LT / RT : saute d'une page (environ un écran) vers le haut ou le bas. */
+function pageMove(dir: "up" | "down") {
+  const from = current();
+  if (!from) {
+    move(dir);
+    return;
+  }
+  const page = Math.max(200, scrollParent(from).clientHeight * 0.8);
+  const start = from.getBoundingClientRect().top;
+  let at = from;
+  for (let i = 0; i < 80; i++) {
+    move(dir);
+    const now = current();
+    if (!now || now === at) break;
+    at = now;
+    if (Math.abs(now.getBoundingClientRect().top - start) >= page) break;
+  }
+}
+
+/** View / Select : bascule plein écran / fenêtre (comme F11). */
+function toggleFullscreen() {
+  backend
+    .isFullscreen()
+    .then((on) => backend.setFullscreen(!on))
+    .catch(() => undefined);
+}
+
 function scrollLoop() {
   if (Math.abs(stick.ry) < 0.2) {
     scrolling = false;
@@ -216,6 +244,15 @@ function navigate(e: PadEvent) {
       break;
     case "rb":
       switchTab(1);
+      break;
+    case "lt":
+      pageMove("up");
+      break;
+    case "rt":
+      pageMove("down");
+      break;
+    case "select":
+      toggleFullscreen();
       break;
   }
 }

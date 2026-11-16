@@ -15,3 +15,34 @@ html.pad-nav :focus {
   outline: 4px solid var(--nier-low);
   outline-offset: 4px;
 }
+
+/* Indications des boutons de la manette (PadHints), en bas à droite, sans prendre les clics. */
+.pad-hints {
+  position: fixed;
+  right: var(--gutter);
+  bottom: 14px;
+  z-index: 95;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px 18px;
+  max-width: calc(100vw - 2 * var(--gutter));
+  padding: 7px 14px;
+  font-size: var(--fs-xs);
+  letter-spacing: var(--nier-tracking-wide);
+  color: var(--nier-high);
+  background: var(--nier-low-trans);
+  box-shadow: 4px 4px 0 var(--nier-shadow);
+  pointer-events: none;
+}
+.pad-hint { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.pad-glyph {
+  min-width: 1.7em;
+  padding: 1px 5px;
+  border: 1px solid var(--nier-high);
+  border-radius: 3px;
+  text-align: center;
+  font-weight: 600;
+}
+/* Bandeau « Hors ligne » remonté au-dessus des indications. */
+html.pad-nav .offline-banner { bottom: 60px; }
