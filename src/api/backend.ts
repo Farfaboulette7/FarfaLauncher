@@ -486,6 +486,18 @@ export interface Crash {
   error: string | null;
 }
 
+/** Version précédente d'une sauvegarde, gardée par FarfaRomManager. */
+export interface SaveVersion {
+  version: string;
+  /** Date de son envoi (RFC 3339). */
+  savedAt: string;
+  /** Date à laquelle une autre l'a remplacée. */
+  replacedAt: string;
+  size: number;
+  /** Appareil qui l'a envoyée (inconnu pour les plus anciennes). */
+  device: string | null;
+}
+
 export interface SaveSync {
   dir: string | null;
   patterns: string[];
@@ -630,6 +642,9 @@ export const backend = {
   setSaveLocation: (romId: number, dir: string | null, off: boolean) =>
     invoke<InstalledGame>("set_save_location", { romId, dir, off }),
   openSaveFolder: (romId: number) => invoke<void>("open_save_folder", { romId }),
+  /** `null` : pas d'historique pour ce jeu (sauvegarde gardée par RomM). */
+  saveHistory: (romId: number) => invoke<SaveVersion[] | null>("save_history", { romId }),
+  restoreSaveVersion: (romId: number, version: string) => invoke<void>("restore_save_version", { romId, version }),
   runningGames: () => invoke<number[]>("running_games"),
   flushPlaySessions: () => invoke<number>("flush_play_sessions"),
   /** Envoie les sauvegardes gardées hors ligne ; rend le nombre encore en attente. */

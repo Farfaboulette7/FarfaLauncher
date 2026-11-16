@@ -428,3 +428,15 @@
 /* Rapport de bug. */
 .report-text { width: 100%; resize: vertical; min-height: 96px; font-family: inherit; }
 .report-files { margin: 4px 0 0; padding-left: 18px; font-size: var(--fs-xs); opacity: 0.8; max-height: 140px; overflow: auto; }
+
+/* Historique des sauvegardes : une ligne par version (date, appareil et taille, restaurer). */
+.save-history { list-style: none; margin: 8px 0 0; padding: 0; max-height: 50vh; overflow: auto; }
+.save-history li {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--nier-low-trans);
+}
+.save-history-when { font-weight: 600; }

@@ -23,6 +23,7 @@ import {
   InstallPhase,
   isAppError,
   SaveChoice,
+  SaveVersion,
   SharedShaders,
   Optimizations,
   Target,
@@ -85,7 +86,7 @@ export function InstallPanel({ game: base, target, installs, onError }: Props) {
   const progress = installs.progress.get(game.id);
   const error = installs.errors.get(game.id);
   const [message, setMessage] = useState<string | null>(null);
-  const [dialog, setDialog] = useState<"exe" | "uninstall" | "proton" | "cod" | "report" | null>(null);
+  const [dialog, setDialog] = useState<"exe" | "uninstall" | "proton" | "cod" | "report" | "history" | null>(null);
   /** Rapport proposé juste après un plantage (le jeu s'est fermé tout seul). */
   const [reportAfterCrash, setReportAfterCrash] = useState(false);
   /** Proposition ouverte d'elle-même après le plantage (avec « Ne plus demander »). */
@@ -513,6 +514,11 @@ export function InstallPanel({ game: base, target, installs, onError }: Props) {
                 Ouvrir les sauvegardes
               </button>
             )}
+            {inst.executable && !inst.saves.off && (
+              <button className="n-link" disabled={offline} title={offline ? OFFLINE_TITLE : undefined} onClick={() => setDialog("history")}>
+                Historique des sauvegardes…
+              </button>
+            )}
             {inst.executable && !inst.shared && (
               <button className="n-link" onClick={() => setSaveAsk({ kind: "where", suggestions: [], thenPlay: false })}>
                 Dossier des sauvegardes…
@@ -624,6 +630,17 @@ export function InstallPanel({ game: base, target, installs, onError }: Props) {
           onSent={() => {
             setDialog(null);
             setReportSent("Rapport envoyé, merci ! Suivez sa réponse avec l'icône des messages, en haut de la bibliothèque.");
+          }}
+        />
+      )}
+      {dialog === "history" && inst && (
+        <SaveHistoryDialog
+          romId={game.id}
+          name={game.name}
+          onClose={() => setDialog(null)}
+          onRestored={(v) => {
+            setDialog(null);
+            setSaveNotice(`Sauvegarde du ${formatIso(v.savedAt)} restaurée. L'ancienne est gardée dans l'historique.`);
           }}
         />
       )}
@@ -1425,6 +1442,118 @@ function crashDescription(c: Crash): string {
   const after = c.seconds < 60 ? `${c.seconds} s` : formatPlaytime(c.seconds * 1000);
   const error = c.error ? ` (erreur : ${c.error})` : "";
   return `Le jeu s'est arrêté tout seul au bout de ${after}${error}.\nCe que je faisais : `;
+}
+
+/** Date RFC 3339 du serveur, en clair. */
+function formatIso(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : formatDate(d);
+}
+
+/** Historique des sauvegardes d'un jeu sur le serveur, avec restauration après confirmation. */
+function SaveHistoryDialog({
+  romId,
+  name,
+  onClose,
+  onRestored,
+}: {
+  romId: number;
+  name: string;
+  onClose: () => void;
+  onRestored: (v: SaveVersion) => void;
+}) {
+  /** `undefined` : chargement ; `null` : pas d'historique pour ce jeu. */
+  const [versions, setVersions] = useState<SaveVersion[] | null | undefined>(undefined);
+  const [chosen, setChosen] = useState<SaveVersion | null>(null);
+  const [restoring, setRestoring] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    backend
+      .saveHistory(romId)
+      .then(setVersions)
+      .catch((e) => {
+        setError(errorMessage(e));
+        setVersions([]);
+      });
+  }, [romId]);
+  async function restore(v: SaveVersion) {
+    setRestoring(true);
+    setError(null);
+    try {
+      await backend.restoreSaveVersion(romId, v.version);
+      onRestored(v);
+    } catch (e) {
+      setError(errorMessage(e));
+      setRestoring(false);
+    }
+  }
+  if (chosen) {
+    return (
+      <Dialog
+        title="Restaurer la sauvegarde"
+        onClose={restoring ? () => {} : () => setChosen(null)}
+        actions={
+          <>
+            <button className="n-btn" onClick={() => setChosen(null)} disabled={restoring}>
+              Annuler
+            </button>
+            <button className="n-btn" onClick={() => restore(chosen)} disabled={restoring}>
+              {restoring ? "Restauration…" : "Restaurer"}
+            </button>
+          </>
+        }
+      >
+        <p>
+          Remplacer la sauvegarde actuelle de <strong>{name}</strong> par celle du <strong>{formatIso(chosen.savedAt)}</strong>
+          {chosen.device ? ` (${chosen.device})` : ""} ?
+        </p>
+        <p className="n-hint">
+          Rien n'est perdu : la sauvegarde actuelle du serveur passe d'abord dans l'historique, et celle de cet ordinateur est copiée dans les copies de
+          secours du jeu.
+        </p>
+        {error && <p className="n-alert">{error}</p>}
+      </Dialog>
+    );
+  }
+  return (
+    <Dialog
+      title="Historique des sauvegardes"
+      onClose={onClose}
+      actions={
+        <button className="n-btn" onClick={onClose}>
+          Fermer
+        </button>
+      }
+    >
+      {versions === undefined ? (
+        <p className="n-hint">
+          <span className="n-spinner" /> Lecture de l'historique…
+        </p>
+      ) : versions === null ? (
+        <p>La sauvegarde de {name} est gardée par RomM, qui ne conserve que la dernière : pas d'historique pour ce jeu.</p>
+      ) : versions.length === 0 ? (
+        !error && <p>Pas encore de version précédente : elles apparaissent quand une nouvelle sauvegarde remplace l'ancienne.</p>
+      ) : (
+        <>
+          <p className="n-hint">Les {versions.length} dernières versions remplacées sur le serveur, de la plus récente à la plus ancienne.</p>
+          <ul className="save-history">
+            {versions.map((v) => (
+              <li key={v.version}>
+                <span className="save-history-when">{formatIso(v.savedAt)}</span>
+                <span className="n-hint">
+                  {v.device ?? "appareil inconnu"} · {formatSize(v.size)}
+                </span>
+                <button className="n-link" onClick={() => setChosen(v)}>
+                  Restaurer…
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {error && <p className="n-alert">{error}</p>}
+    </Dialog>
+  );
 }
 
 function UninstallDialog({

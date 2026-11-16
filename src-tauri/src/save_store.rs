@@ -5,8 +5,9 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::Duration;
 
+use reqwest::header::HeaderValue;
 use reqwest::StatusCode;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{log_err, AppError, AppResult};
 use crate::install::state::InstalledGame;
@@ -16,6 +17,8 @@ use crate::romm::saves::{self as romm, ServerSave};
 use crate::settings::Settings;
 
 const UPLOAD_TIMEOUT: Duration = Duration::from_secs(600);
+/// En-tête qui donne au gestionnaire le nom de l'appareil (historique des sauvegardes).
+const DEVICE_HEADER: &str = "X-Farfa-Device";
 /// Jeux déjà contrôlés pour la reprise depuis RomM.
 const IMPORTED_FILE: &str = "recomp-saves-imported.json";
 
@@ -30,6 +33,39 @@ pub struct RemoteSave {
 #[serde(rename_all = "camelCase")]
 struct ManagerSave {
     updated_at: String,
+}
+
+/// Version précédente d'une sauvegarde, gardée par FarfaRomManager.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveVersion {
+    /// Identifiant à rendre pour la restaurer.
+    pub version: String,
+    /// Date de son envoi (RFC 3339).
+    pub saved_at: String,
+    /// Date à laquelle une autre l'a remplacée.
+    pub replaced_at: String,
+    pub size: u64,
+    /// Appareil qui l'a envoyée (inconnu pour les plus anciennes).
+    #[serde(default)]
+    pub device: Option<String>,
+}
+
+/// Nom de cet appareil, tel qu'il apparaît dans l'historique des sauvegardes.
+pub fn device_name() -> String {
+    std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .ok()
+        .or_else(|| std::fs::read_to_string("/etc/hostname").ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "Ordinateur".to_string())
+}
+
+/// Nom de l'appareil pour l'en-tête HTTP : ASCII visible seulement, 64 caractères au plus.
+fn device_header() -> Option<HeaderValue> {
+    let name: String = device_name().chars().filter(|c| c.is_ascii_graphic() || *c == ' ').take(64).collect();
+    HeaderValue::from_str(name.trim()).ok().filter(|v| !v.is_empty())
 }
 
 pub enum SaveStore {
@@ -94,6 +130,22 @@ impl SaveStore {
             SaveStore::Recomp(save) => save.upload(zip).await,
         }
     }
+
+    /// Versions précédentes ; `None` : pas d'historique (sauvegarde gardée par RomM, qui la remplace).
+    pub async fn history(&self) -> AppResult<Option<Vec<SaveVersion>>> {
+        match self {
+            SaveStore::Romm { .. } => Ok(None),
+            SaveStore::Recomp(save) => save.history().await.map(Some),
+        }
+    }
+
+    /// Remet une version précédente en place sur le serveur (l'actuelle passe dans l'historique).
+    pub async fn restore(&self, version: &str) -> AppResult<String> {
+        match self {
+            SaveStore::Romm { .. } => Err(AppError::NotAvailable),
+            SaveStore::Recomp(save) => save.restore(version).await,
+        }
+    }
 }
 
 impl RecompSave {
@@ -118,7 +170,27 @@ impl RecompSave {
     }
 
     pub async fn upload(&self, zip: Vec<u8>) -> AppResult<String> {
-        let req = self.manager.put_bytes(&self.path, zip).timeout(UPLOAD_TIMEOUT);
+        let mut req = self.manager.put_bytes(&self.path, zip).timeout(UPLOAD_TIMEOUT);
+        if let Some(device) = device_header() {
+            req = req.header(DEVICE_HEADER, device);
+        }
+        let save: ManagerSave = parse_json(self.manager.send(req).await?).await?;
+        Ok(save.updated_at)
+    }
+
+    pub async fn history(&self) -> AppResult<Vec<SaveVersion>> {
+        self.manager.get_json(&format!("{}/history", self.path)).await
+    }
+
+    pub async fn restore(&self, version: &str) -> AppResult<String> {
+        // Identifiant venu du serveur : chiffres et « T » seulement (pas de chemin).
+        if version.is_empty() || !version.chars().all(|c| c.is_ascii_digit() || c == 'T') {
+            return Err(AppError::NotAvailable);
+        }
+        let mut req = self.manager.post(&format!("{}/history/{version}/restore", self.path), &serde_json::json!({}));
+        if let Some(device) = device_header() {
+            req = req.header(DEVICE_HEADER, device);
+        }
         let save: ManagerSave = parse_json(self.manager.send(req).await?).await?;
         Ok(save.updated_at)
     }
@@ -188,6 +260,26 @@ mod tests {
             r#"{"recomps":[{"id":"pokemon","games":[{"romId":7,"game":"red"},{"romId":null,"game":"blue"}]},{"id":"melee","games":[{"romId":9}]}]}"#,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn reads_the_manager_history() {
+        let v: Vec<SaveVersion> = serde_json::from_str(
+            r#"[{"version":"20261116T020000123456","savedAt":"2026-11-16T01:00:00+00:00","replacedAt":"2026-11-16T02:00:00.123456+00:00","size":12,"device":null},
+                {"version":"20261115T020000123456","savedAt":"2026-11-15T01:00:00+00:00","replacedAt":"2026-11-15T02:00:00+00:00","size":8}]"#,
+        )
+        .unwrap();
+        assert_eq!(v.len(), 2);
+        assert_eq!(v[1].device, None);
+        assert_eq!(v[0].size, 12);
+    }
+
+    #[test]
+    fn device_header_is_plain_ascii() {
+        if let Some(h) = device_header() {
+            assert!(h.to_str().is_ok());
+            assert!(h.len() <= 64);
+        }
     }
 
     #[test]

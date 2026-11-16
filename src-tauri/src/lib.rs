@@ -105,6 +105,8 @@ pub fn run() {
             commands::session::session_status,
             commands::session::check_connection,
             commands::saves::flush_pending_saves,
+            commands::saves::save_history,
+            commands::saves::restore_save_version,
             commands::session::set_server,
             commands::session::start_device_auth,
             commands::session::poll_device_auth,

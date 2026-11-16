@@ -361,6 +361,25 @@ pub async fn after_play(state: &AppState, client: Option<RommClient>, rom_id: i6
     }
 }
 
+/// Versions précédentes de la sauvegarde du jeu sur le serveur ; `None` : pas d'historique
+/// pour ce jeu (sauvegarde gardée par RomM).
+pub async fn history(state: &AppState, rom_id: i64) -> AppResult<Option<Vec<crate::save_store::SaveVersion>>> {
+    let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
+    let store = store_of(state, state.online_client()?, &st);
+    store.history().await
+}
+
+/// Remet une version précédente en place : sur le serveur (l'actuelle passe d'abord dans
+/// l'historique), puis sur ce PC (la locale est d'abord copiée dans les copies de secours du jeu).
+pub async fn restore_version(state: &AppState, rom_id: i64, version: &str) -> AppResult<()> {
+    let _busy = state.mark_busy(rom_id)?;
+    let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
+    let store = store_of(state, state.online_client()?, &st);
+    store.restore(version).await?;
+    tracing::info!("« {} » : version {version} de la sauvegarde remise en place sur le serveur", st.name);
+    before_play(state, rom_id, SaveChoice::Server).await
+}
+
 /// Que faire d'une sauvegarde gardée hors ligne, selon le serveur à son retour.
 #[derive(Debug, PartialEq)]
 enum PendingAction {

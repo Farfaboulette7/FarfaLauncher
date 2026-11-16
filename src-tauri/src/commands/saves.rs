@@ -29,6 +29,18 @@ pub async fn flush_pending_saves(state: State<'_, AppState>) -> AppResult<usize>
     Ok(crate::save_sync::flush_pending(&state).await)
 }
 
+/// Historique de la sauvegarde d'un jeu ; `None` : pas d'historique pour ce jeu.
+#[tauri::command]
+pub async fn save_history(state: State<'_, AppState>, rom_id: i64) -> AppResult<Option<Vec<crate::save_store::SaveVersion>>> {
+    crate::save_sync::history(&state, rom_id).await
+}
+
+/// Restaure une version précédente (serveur puis ce PC, après copie de l'actuelle).
+#[tauri::command]
+pub async fn restore_save_version(state: State<'_, AppState>, rom_id: i64, version: String) -> AppResult<()> {
+    crate::save_sync::restore_version(&state, rom_id, &version).await
+}
+
 #[tauri::command]
 pub fn open_save_folder(app: tauri::AppHandle, state: State<'_, AppState>, rom_id: i64) -> AppResult<()> {
     let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
