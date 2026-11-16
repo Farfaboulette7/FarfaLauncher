@@ -203,7 +203,35 @@ pub fn read_state(game_dir: &Path) -> Option<InstalledGame> {
         .map_err(|e| tracing::warn!("état illisible dans {}: {e}", game_dir.display()))
         .ok()?;
     st.game_dir = game_dir.to_path_buf();
+    migrate_bo3(&mut st);
     Some(st)
+}
+
+/// Black Ops III installé en 0.9.6 comme une « recomp » (boiii) : c'est un jeu PC Call of Duty
+/// (Proton sous Linux, client boiii du gestionnaire). Les fichiers en place restent, sans rien
+/// retélécharger ; boiii est revérifié au prochain lancement.
+fn migrate_bo3(st: &mut InstalledGame) {
+    if st.pc.is_some() || st.shared.is_some() || st.archive_name != "call-of-duty-black-ops-3_Windows.zip" {
+        return;
+    }
+    tracing::info!("« {} » : ancienne installation en recomp, reprise comme jeu PC Call of Duty", st.name);
+    st.version = None;
+    st.version_raw = None;
+    st.archive_name = "bo3_game_files-01.zip".into();
+    st.executable = Some("BlackOps3.exe".into());
+    st.rom_sources.clear();
+    st.roms.clear();
+    st.direct_launch = None;
+    st.pc = Some(crate::pc::PcInstall {
+        kind: crate::pc::PcKind::Cod,
+        os: crate::pc::PcOs::Windows,
+        cod: Some(crate::pc::cod::CodGame::Bo3),
+        args: Vec::new(),
+        cwd: None,
+        proton: None,
+        steam_app_id: None,
+        keys: Vec::new(),
+    });
 }
 
 fn page_path(game_dir: &Path, rom_id: i64) -> PathBuf {
@@ -433,5 +461,48 @@ mod tests {
         assert_eq!(find(&config, 19).unwrap().executable.as_deref(), Some("game.exe"));
         assert_eq!(rekey_ids(&config, &[(40, 19)]), 0);
         std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod bo3_tests {
+    use super::*;
+
+    #[test]
+    fn bo3_recomp_install_becomes_a_cod_pc_game() {
+        let dir = std::env::temp_dir().join(format!("farfa-bo3-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = InstalledGame {
+            rom_id: 10625,
+            name: "Call of Duty: Black Ops III".into(),
+            version: Some("v3.0.0".into()),
+            version_raw: None,
+            target: crate::platform::Target::Windows,
+            archive_name: "call-of-duty-black-ops-3_Windows.zip".into(),
+            executable: Some("boiii.exe".into()),
+            pending_candidates: vec![],
+            roms: vec![],
+            rom_sources: vec![RomSource { rel_path: "ROM/BO3-data-01.extract.zip".into(), size: 1, sha1: None, md5: None, placed: vec!["zone".into()] }],
+            mods_downloaded: vec![],
+            saves: Default::default(),
+            direct_launch: None,
+            prefer_launcher: false,
+            players: Vec::new(),
+            installed_at: 1,
+            updated_at: 1,
+            game_dir: dir.clone(),
+            pc: None,
+            shared: None,
+        };
+        std::fs::write(dir.join(STATE_FILE), serde_json::to_string(&old).unwrap()).unwrap();
+        let st = read_state(&dir).unwrap();
+        assert_eq!(st.pc.as_ref().and_then(|p| p.cod), Some(crate::pc::cod::CodGame::Bo3));
+        assert_eq!(st.executable.as_deref(), Some("BlackOps3.exe"));
+        assert!(st.rom_sources.is_empty() && st.version.is_none());
+        // Une installation normale ne bouge pas.
+        let other = InstalledGame { archive_name: "x_Windows.zip".into(), ..old };
+        std::fs::write(dir.join(STATE_FILE), serde_json::to_string(&other).unwrap()).unwrap();
+        assert!(read_state(&dir).unwrap().pc.is_none());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

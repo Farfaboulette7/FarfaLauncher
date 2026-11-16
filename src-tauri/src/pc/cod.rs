@@ -9,6 +9,11 @@
 //! | Black Ops           | Plutonium (t5sp)            | t5mp        | t5sp    |
 //! | Black Ops 2         | T6SP-Mod                    | t6mp        | t6zm    |
 //! | Modern Warfare 3    | IW5-Mod (AlterWare)         | iw5mp       | —       |
+//! | Black Ops III       | boiii (Ezz)                 | boiii       | boiii   |
+//!
+//! Black Ops III est en plusieurs archives (`bo3_game_files-01.zip`…) et son client,
+//! boiii-free, vient de FarfaRomManager (fiche `boiii`, version suivie et gardée là-bas),
+//! pas de CB Servers : voir `install::sync_boiii`.
 //!
 //! Les fichiers des clients viennent du dépôt public de CB Servers
 //! (manifeste `[chemin, taille, sha1, destination?]`) et sont revérifiés
@@ -39,7 +44,11 @@ pub enum CodGame {
     Bo1,
     Bo2,
     Mw3,
+    Bo3,
 }
+
+/// Fiche de FarfaRomManager qui fournit boiii (client de Black Ops III).
+pub const BOIII_CLIENT: &str = "boiii";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -78,8 +87,15 @@ pub enum ModeLaunch {
 }
 
 impl CodGame {
+    /// `bo2_game_files.zip`, ou un morceau `bo3_game_files-01.zip`.
     pub fn from_zip_name(name: &str) -> Option<Self> {
-        let stem = name.to_ascii_lowercase().strip_suffix("_game_files.zip")?.to_string();
+        let lower = name.to_ascii_lowercase();
+        let base = lower.strip_suffix(".zip")?;
+        let base = match base.rsplit_once('-') {
+            Some((head, part)) if !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()) => head,
+            _ => base,
+        };
+        let stem = base.strip_suffix("_game_files")?.to_string();
         Some(match stem.as_str() {
             "cod4" => CodGame::Cod4,
             "waw" => CodGame::Waw,
@@ -87,6 +103,7 @@ impl CodGame {
             "bo1" => CodGame::Bo1,
             "bo2" => CodGame::Bo2,
             "mw3" => CodGame::Mw3,
+            "bo3" => CodGame::Bo3,
             _ => return None,
         })
     }
@@ -105,6 +122,8 @@ impl CodGame {
                 only: &["plutonium.exe", "alterware-launcher.exe"],
                 marker: "alterware-launcher.exe",
             }],
+            // Client servi par FarfaRomManager (install::sync_boiii).
+            CodGame::Bo3 => &[],
         }
     }
 
@@ -122,6 +141,7 @@ impl CodGame {
             CodGame::Bo1 => "BlackOpsMP.exe",
             CodGame::Bo2 => "t6mp.exe",
             CodGame::Mw3 => "iw5mp.exe",
+            CodGame::Bo3 => "BlackOps3.exe",
         }
     }
 
@@ -131,6 +151,8 @@ impl CodGame {
             .filter_map(|mode| {
                 let launch = self.launch(mode)?;
                 let label = match mode {
+                    // Un seul lancement : campagne, multijoueur et zombies se choisissent dans le jeu.
+                    _ if self == CodGame::Bo3 => "Black Ops III",
                     CodMode::Sp => "Campagne",
                     CodMode::Mp => "Multijoueur",
                     CodMode::Zm => "Zombies",
@@ -159,6 +181,9 @@ impl CodGame {
             (CodGame::Mw3, Sp) => exe("alterware-launcher.exe", &["iw5-mod", "--skip-launcher-update", "--pass", "-singleplayer"]),
             (CodGame::Mw3, Mp) => pluto("iw5mp", "iw5Path"),
             (CodGame::Cod4 | CodGame::Mw2 | CodGame::Mw3, Zm) => None,
+            // -noupdate : la version de boiii est celle de FarfaRomManager ; -launch : sans son écran.
+            (CodGame::Bo3, Mp) => exe("boiii.exe", &["-noupdate", "-launch"]),
+            (CodGame::Bo3, Sp | Zm) => None,
         }
     }
 }
@@ -298,6 +323,7 @@ impl CodGame {
             CodGame::Bo2 => storage("t6"),
             CodGame::Mw3 => storage("iw5"),
             CodGame::Cod4 | CodGame::Mw2 => game_dir.join("players"),
+            CodGame::Bo3 => game_dir.join("boiii_players").join("user"),
         }
     }
 }
@@ -372,6 +398,8 @@ mod tests {
         assert_eq!(CodGame::from_zip_name("BO2_game_files.zip"), Some(CodGame::Bo2));
         assert_eq!(CodGame::from_zip_name("cod2_game_files.zip"), None);
         assert_eq!(CodGame::from_zip_name("mw2.zip"), None);
+        assert_eq!(CodGame::from_zip_name("bo3_game_files-07.zip"), Some(CodGame::Bo3));
+        assert_eq!(CodGame::from_zip_name("bo3_game_files-x.zip"), None);
     }
 
     #[test]
@@ -382,6 +410,8 @@ mod tests {
         assert_eq!(labels(CodGame::Waw), [("Campagne", true), ("Multijoueur", true), ("Zombies", true)]);
         assert!(CodGame::Mw2.modes().iter().all(|m| !m.plutonium));
         assert_eq!(CodGame::Mw3.launch(CodMode::Mp), Some(ModeLaunch::Plutonium { game: "iw5mp", path_key: "iw5Path" }));
+        assert_eq!(labels(CodGame::Bo3), [("Black Ops III", false)]);
+        assert!(matches!(CodGame::Bo3.launch(CodMode::Mp), Some(ModeLaunch::Exe { exe: "boiii.exe", .. })));
     }
 
     #[test]

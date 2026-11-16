@@ -781,21 +781,24 @@ mod tests {
 
     #[test]
     fn recomp_choice_then_advice_then_first() {
+        // Builds pour le système qui lance les tests (la CI tourne aussi sous Linux et Mac).
+        let me = crate::platform::detect();
         let text = r#"{"recomps":[
           {"id":"hookshot","name":"Hookshot","repo":"r","version":{"cle":"a","nom":"2.1"},"games":[{"romId":7}],"files":[{"name":"h_Windows.zip","size":1,"sha1":"a","system":"Windows"}]},
           {"id":"longshot","name":"Longshot","repo":"r","version":{"cle":"b","nom":"v3.0.0-rc.3"},"games":[{"romId":7}],"advice":"Suite de Hookshot","files":[{"name":"l_Windows.zip","size":1,"sha1":"b","system":"Windows"}]},
-          {"id":"seule","name":"Seule","repo":"r","version":{"cle":"c","nom":"1"},"games":[{"romId":8}]}],"emulators":[]}"#;
-        let mut c: Catalog = serde_json::from_str(text).unwrap();
+          {"id":"seule","name":"Seule","repo":"r","version":{"cle":"c","nom":"1"},"games":[{"romId":8}]}],"emulators":[]}"#
+            .replace("Windows", me.suffix());
+        let mut c: Catalog = serde_json::from_str(&text).unwrap();
         assert_eq!(c.recomp_for_rom(7).unwrap().id, "longshot"); // conseillée
         c.choices.insert(7, "hookshot".into());
         assert_eq!(c.recomp_for_rom(7).unwrap().id, "hookshot"); // choisie
         c.choices.insert(7, "disparue".into());
         assert_eq!(c.recomp_for_rom(7).unwrap().id, "longshot"); // choix qui n'existe plus
-        let offers = c.recomp_offers(7, Target::Windows);
+        let offers = c.recomp_offers(7, me);
         assert_eq!(offers.iter().map(|o| (o.id.as_str(), o.available, o.advice.is_some())).collect::<Vec<_>>(),
                    vec![("hookshot", true, false), ("longshot", true, true)]);
         // Conseillée sans build pour ce système : celle qui en a une.
-        let sans: Catalog = serde_json::from_str(&text.replace(r#"[{"name":"l_Windows.zip","size":1,"sha1":"b","system":"Windows"}]"#, "[]")).unwrap();
+        let sans: Catalog = serde_json::from_str(&text.replace(&format!(r#"[{{"name":"l_{0}.zip","size":1,"sha1":"b","system":"{0}"}}]"#, me.suffix()), "[]")).unwrap();
         assert_eq!(sans.recomp_for_rom(7).unwrap().id, "hookshot");
         assert!(c.recomp_offers(8, Target::Windows).is_empty()); // une seule : pas de choix
         assert_eq!(c.recomp_for_rom(8).unwrap().id, "seule");

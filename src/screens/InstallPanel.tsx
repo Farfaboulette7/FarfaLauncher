@@ -1192,8 +1192,13 @@ function CodModeDialog({
   useEffect(() => {
     backend
       .codModes(romId)
-      .then(setModes)
+      .then((list) => {
+        // Un seul lancement possible (Black Ops III : le mode se choisit dans le jeu) : pas de question.
+        if (list.length === 1 && !list[0].plutonium) onChoose({ mode: list[0].mode, online: false });
+        else setModes(list);
+      })
       .catch(() => setModes([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [romId]);
   return (
     <Dialog

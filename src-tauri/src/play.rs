@@ -62,8 +62,10 @@ async fn prepare_pc(state: &AppState, st: &state::InstalledGame, cod: Option<Cod
     };
     if let Some(game) = pc.cod {
         let choice = cod.ok_or(AppError::ModeRequired)?;
+        let (client, catalog, base) = (state.client()?, state.catalog(), crate::manager::base_url(&state.settings()));
+        let access = crate::pc::install::ManagerAccess { client: &client, base: base.as_deref(), catalog: &catalog };
         let (exe, args, cwd) =
-            crate::pc::install::prepare_cod(game, choice.mode, choice.online, &st.game_dir, runner.as_ref(), &player_name()).await?;
+            crate::pc::install::prepare_cod(game, choice.mode, choice.online, &st.game_dir, runner.as_ref(), &player_name(), &access).await?;
         return Ok(Some(PreparedPc { exe, args, cwd, runner }));
     }
     let exe = st.executable.as_deref().ok_or(AppError::NoExecutable)?;
@@ -128,7 +130,7 @@ pub async fn start(state: &AppState, rom_id: i64, save_choice: SaveChoice, cod: 
             let dir = exe_dir.clone();
             let _ = tokio::task::spawn_blocking(move || launch::before::run_all(&before, &dir)).await;
         }
-        // Recomp qui écrit à un endroit fixe (boiii : %LOCALAPPDATA%oiii) : relié au dossier du jeu.
+        // Recomp qui écrit à un endroit fixe (boiii : %LOCALAPPDATA%\boiii) : relié au dossier du jeu.
         if let Some(r) = state.catalog().recomp_for_install(&st).filter(|r| !r.links.is_empty()) {
             crate::links::apply(&r.links, &exe_dir);
         }

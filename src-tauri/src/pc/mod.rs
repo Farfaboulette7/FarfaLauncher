@@ -183,8 +183,10 @@ pub fn classify(fs_name: &str, files: &[RemoteFile], me: Target) -> Option<PcGam
         return None;
     }
     let (kind, os, cod, picked): (PcKind, PcOs, Option<CodGame>, Vec<RemoteFile>) =
-        if let Some((cod, zip)) = files.iter().find_map(|f| CodGame::from_zip_name(&f.file_name).map(|c| (c, *f))) {
-            (PcKind::Cod, PcOs::Windows, Some(cod), vec![zip.clone()])
+        if let Some(cod) = files.iter().find_map(|f| CodGame::from_zip_name(&f.file_name)) {
+            // Un zip, ou des morceaux (Black Ops III) : tous ceux de ce jeu, rien d'autre du dossier.
+            let zips = files.iter().filter(|f| CodGame::from_zip_name(&f.file_name) == Some(cod)).map(|f| (*f).clone()).collect();
+            (PcKind::Cod, PcOs::Windows, Some(cod), zips)
         } else if let Some(installers) = gog::pick_installers(&files) {
             (PcKind::GogInstaller, PcOs::Windows, None, installers)
         } else if files.iter().all(|f| lower_name(f).ends_with(".zip")) {
@@ -280,6 +282,10 @@ mod tests {
     fn cod_and_archives() {
         let g = classify("Call of duty black ops 2", &[file("bo2_game_files.zip", 9)], Target::Windows).unwrap();
         assert_eq!((g.kind, g.cod), (PcKind::Cod, Some(CodGame::Bo2)));
+        // Black Ops III : ses morceaux seulement (le repack d'origine reste à côté sur RomM), avec Proton sous Linux.
+        let bo3 = [file("bo3_game_files-01.zip", 10), file("bo3_game_files-02.zip", 4), file("setup-multi10.exe", 5), file("fg-01.bin", 50)];
+        let g = classify("Call of duty black ops 3", &bo3, Target::Linux).unwrap();
+        assert_eq!((g.kind, g.cod, g.files.len(), g.size, g.proton, g.runnable), (PcKind::Cod, Some(CodGame::Bo3), 2, 14, true, true));
         let g = classify("Jeu [linux]", &[file("jeu.zip", 9)], Target::Linux).unwrap();
         assert_eq!((g.kind, g.os, g.proton), (PcKind::Archive, PcOs::Linux, false));
     }

@@ -92,7 +92,7 @@ fn is_empty_dir(dir: &Path) -> bool {
 }
 
 /// `Ok(true)` : lien posé, `Ok(false)` : déjà en place.
-fn place(path: &Path, target: &Path) -> std::io::Result<bool> {
+pub(crate) fn place(path: &Path, target: &Path) -> std::io::Result<bool> {
     if is_link(path) {
         if same_dir(path, target) {
             return Ok(false);

@@ -34,6 +34,89 @@ fn space_factor(kind: PcKind) -> f64 {
     }
 }
 
+/// Place nécessaire avant de télécharger. Les archives sont extraites une à une et chacune est
+/// supprimée aussitôt : il faut tous les fichiers, plus l'extraction de la plus grosse.
+fn needed_space(pc: &PcGame) -> u64 {
+    let factor = space_factor(pc.kind);
+    match pc.kind {
+        PcKind::Archive | PcKind::Cod => {
+            let largest = pc.files.iter().map(|f| f.size).max().unwrap_or(0);
+            pc.size + (largest as f64 * (factor - 1.0)) as u64
+        }
+        _ => (pc.size as f64 * factor) as u64,
+    }
+}
+
+/// Accès à FarfaRomManager, d'où vient le client de Black Ops III.
+pub struct ManagerAccess<'a> {
+    pub client: &'a crate::romm::client::RommClient,
+    pub base: Option<&'a str>,
+    pub catalog: &'a crate::manager::Catalog,
+}
+
+/// Fichier qui retient le client boiii en place (son SHA-1).
+const BOIII_MARKER: &str = ".farfa-client";
+
+/// Black Ops III : boiii (exe + `boiii/data`) depuis FarfaRomManager, posé dans le jeu s'il a
+/// changé ; puis `%LOCALAPPDATA%\boiii` (celui du préfixe sous Proton) relié à `jeu/boiii`,
+/// car boiii y écrit toujours. Gestionnaire injoignable : le client en place est gardé.
+pub async fn sync_boiii(
+    access: &ManagerAccess<'_>,
+    game_dir: &Path,
+    local_appdata: &Path,
+    cancel: &CancellationToken,
+    mut on_progress: impl FnMut(u64, u64),
+) -> AppResult<()> {
+    let installed = game_dir.join("boiii.exe").is_file();
+    let file = access.catalog.recomp(cod::BOIII_CLIENT).and_then(|r| r.archives(Target::Windows).1).map(|a| a.file);
+    let marker = game_dir.join("boiii").join(BOIII_MARKER);
+    match file {
+        None if installed => tracing::warn!("boiii absent du catalogue : client en place gardé"),
+        None => {
+            tracing::error!("boiii absent du catalogue de FarfaRomManager (fiche « {} »)", cod::BOIII_CLIENT);
+            return Err(AppError::NotAvailable);
+        }
+        Some(f) if std::fs::read_to_string(&marker).ok().as_deref() == f.sha1.as_deref() && installed => {}
+        Some(f) => {
+            let zip = game_dir.join(INTERNAL_DIR).join("downloads").join("boiii-client.zip");
+            let size = f.size;
+            if let Err(e) = download::download_any(access.client, access.base, &f, &zip, cancel, |got| on_progress(got, size), || {}).await {
+                if installed {
+                    tracing::warn!("boiii non mis à jour ({}), client en place gardé", e.code());
+                } else {
+                    return Err(e);
+                }
+            } else {
+                let (gd, z, sha1, cancel) = (game_dir.to_path_buf(), zip.clone(), f.sha1.clone().unwrap_or_default(), cancel.clone());
+                blocking(move || -> AppResult<()> {
+                    let staging = gd.join(INTERNAL_DIR).join("staging-client");
+                    let _ = std::fs::remove_dir_all(&staging);
+                    extract::extract(&z, ArchiveKind::Zip, &staging, &cancel, |_, _| {})?;
+                    let root = extract::content_root(&staging)?;
+                    // Sans casse : les profils et clés du joueur (boiii/user, boiii_players) restent.
+                    extract::merge_into(&root, &gd)?;
+                    let _ = std::fs::remove_dir_all(&staging);
+                    let _ = std::fs::remove_file(&z);
+                    std::fs::write(gd.join("boiii").join(BOIII_MARKER), sha1).map_err(|e| download::disk_error("client boiii", e))?;
+                    Ok(())
+                })
+                .await?;
+                tracing::info!("boiii {} posé", f.file_name);
+            }
+        }
+    }
+    let (link, target) = (local_appdata.join("boiii"), game_dir.join("boiii"));
+    blocking(move || {
+        match crate::links::place(&link, &target) {
+            Ok(true) => tracing::info!("lien {} -> {}", link.display(), target.display()),
+            Ok(false) => {}
+            Err(e) => tracing::warn!("lien {} non posé: {e}", link.display()),
+        }
+        Ok(())
+    })
+    .await
+}
+
 /// `%LOCALAPPDATA%` vu par le jeu (celui du préfixe sous Proton).
 pub fn local_appdata(runner: Option<&Runner>) -> PathBuf {
     match runner {
@@ -189,7 +272,7 @@ pub async fn run(job: &InstallJob, game: Game, pc: PcGame) -> AppResult<InstallO
     };
     let downloads = game_dir.join(INTERNAL_DIR).join("downloads");
     tracing::info!("installation de « {} » (jeu PC {:?}/{:?}) dans {}", game.name, pc.kind, pc.os, game_dir.display());
-    ensure_space(&game_dir, (pc.size as f64 * space_factor(pc.kind)) as u64)?;
+    ensure_space(&game_dir, needed_space(&pc))?;
     std::fs::create_dir_all(game_dir.join(INTERNAL_DIR)).map_err(|e| download::disk_error("création du dossier du jeu", e))?;
 
     // 1. Proton d'abord : s'il manque, inutile de télécharger le jeu.
@@ -291,7 +374,12 @@ pub async fn run(job: &InstallJob, game: Game, pc: PcGame) -> AppResult<InstallO
             blocking(move || r.ensure_prefix()).await?;
         }
         let dirs = ClientDirs { game_dir: game_dir.clone(), local_appdata: local_appdata(runner.as_ref()) };
-        cod::sync_clients(cod, &dirs, &job.cancel, |done, total| job.emit(rom_id, "client", done, total)).await?;
+        if cod == CodGame::Bo3 {
+            let access = ManagerAccess { client: &job.client, base: job.manager_base.as_deref(), catalog: &job.catalog };
+            sync_boiii(&access, &game_dir, &dirs.local_appdata, &job.cancel, |done, total| job.emit(rom_id, "client", done, total)).await?;
+        } else {
+            cod::sync_clients(cod, &dirs, &job.cancel, |done, total| job.emit(rom_id, "client", done, total)).await?;
+        }
     }
 
     // 5. Exécutable et manière de lancer.
@@ -378,6 +466,7 @@ pub async fn prepare_cod(
     game_dir: &Path,
     runner: Option<&Runner>,
     player: &str,
+    access: &ManagerAccess<'_>,
 ) -> AppResult<(PathBuf, Vec<String>, Option<PathBuf>)> {
     let launch = cod.launch(mode).ok_or(AppError::Internal)?;
     if let Some(r) = runner {
@@ -386,7 +475,12 @@ pub async fn prepare_cod(
     }
     let appdata = local_appdata(runner);
     let dirs = ClientDirs { game_dir: game_dir.to_path_buf(), local_appdata: appdata.clone() };
-    if let Err(e) = cod::sync_clients(cod, &dirs, &CancellationToken::new(), |_, _| {}).await {
+    let synced = if cod == CodGame::Bo3 {
+        sync_boiii(access, game_dir, &appdata, &CancellationToken::new(), |_, _| {}).await
+    } else {
+        cod::sync_clients(cod, &dirs, &CancellationToken::new(), |_, _| {}).await
+    };
+    if let Err(e) = synced {
         // Hors ligne : on joue avec le client en place.
         tracing::warn!("clients de {cod:?} non vérifiés: {}", e.code());
     }
