@@ -125,6 +125,17 @@ pub fn local_appdata(runner: Option<&Runner>) -> PathBuf {
     }
 }
 
+/// Racine d'un morceau d'archive : dans le dossier enveloppe du premier morceau
+/// s'il en avait un et que ce morceau l'a aussi, sinon le morceau tel quel.
+fn chunk_root(staging: &Path, wrapper: &Path) -> PathBuf {
+    let inside = staging.join(wrapper);
+    if !wrapper.as_os_str().is_empty() && inside.is_dir() {
+        inside
+    } else {
+        staging.to_path_buf()
+    }
+}
+
 /// Préfixe Wine d'un jeu (gardé à la désinstallation, comme ses sauvegardes).
 pub fn prefix_for(config_dir: &Path, game_dir: &Path, rom_id: i64) -> PathBuf {
     let name = game_dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| format!("jeu-{rom_id}"));
@@ -322,6 +333,9 @@ pub async fn run(job: &InstallJob, game: Game, pc: PcGame) -> AppResult<InstallO
             let (gd, cancel, cb) = (game_dir.clone(), job.cancel.clone(), job.on_progress.clone());
             blocking(move || -> AppResult<()> {
                 let staging = gd.join(INTERNAL_DIR).join("staging");
+                // Dossier enveloppe décidé par le premier morceau seulement : un morceau qui ne
+                // contient que `zone/` (Call of Duty en morceaux) ne doit pas être aplati.
+                let mut wrapper: Option<PathBuf> = None;
                 for zip in zips {
                     let mut last = Instant::now() - Duration::from_secs(1);
                     extract::extract(&zip, ArchiveKind::Zip, &staging, &cancel, |done, total| {
@@ -330,7 +344,14 @@ pub async fn run(job: &InstallJob, game: Game, pc: PcGame) -> AppResult<InstallO
                             cb(crate::install::Progress { rom_id, phase: "extract", done, total, verifying: false });
                         }
                     })?;
-                    let root = extract::content_root(&staging)?;
+                    let root = match &wrapper {
+                        None => {
+                            let root = extract::content_root(&staging)?;
+                            wrapper = Some(root.strip_prefix(&staging).map(Path::to_path_buf).unwrap_or_default());
+                            root
+                        }
+                        Some(w) => chunk_root(&staging, w),
+                    };
                     let n = extract::merge_into(&root, &gd)?;
                     let _ = std::fs::remove_dir_all(&staging);
                     let _ = std::fs::remove_file(&zip);
@@ -470,8 +491,18 @@ pub async fn prepare_cod(
 ) -> AppResult<(PathBuf, Vec<String>, Option<PathBuf>)> {
     let launch = cod.launch(mode).ok_or(AppError::Internal)?;
     if let Some(r) = runner {
-        let r = r.clone();
-        blocking(move || r.ensure_prefix()).await?;
+        let (r, gd) = (r.clone(), game_dir.to_path_buf());
+        blocking(move || {
+            r.ensure_prefix()?;
+            // boiii exige Steam dans le préfixe, que Proton ne pose pas sous umu.
+            if cod == CodGame::Bo3 {
+                if let Err(e) = r.ensure_steam_marker(&gd) {
+                    tracing::warn!("Steam non préparé dans le préfixe: {}", e.code());
+                }
+            }
+            Ok(())
+        })
+        .await?;
     }
     let appdata = local_appdata(runner);
     let dirs = ClientDirs { game_dir: game_dir.to_path_buf(), local_appdata: appdata.clone() };
@@ -570,4 +601,22 @@ fn kill_tree(child: &mut std::process::Child) {
     }
     let _ = child.kill();
     let _ = child.wait();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chunks_keep_their_folders() {
+        let staging = std::env::temp_dir().join(format!("farfa-morceau-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(staging.join("zone")).unwrap();
+        // Premier morceau sans enveloppe : un morceau « zone/ » seul reste dans zone/.
+        assert_eq!(chunk_root(&staging, Path::new("")), staging);
+        // Premier morceau dans « Jeu/ » : les suivants aussi, s'ils l'ont.
+        assert_eq!(chunk_root(&staging, Path::new("Jeu")), staging);
+        std::fs::create_dir_all(staging.join("Jeu")).unwrap();
+        assert_eq!(chunk_root(&staging, Path::new("Jeu")), staging.join("Jeu"));
+        std::fs::remove_dir_all(staging).unwrap();
+    }
 }

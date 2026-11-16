@@ -323,6 +323,83 @@ impl Runner {
         }
         Ok(())
     }
+
+    /// Steam « présent » dans le préfixe : `C:\Program Files (x86)\Steam\steam.exe` et la
+    /// clé `HKLM\Software\Wow6432Node\Valve\Steam\InstallPath`. Proton ne pose `steam.exe`
+    /// qu'à partir du Steam de Linux (`STEAM_COMPAT_CLIENT_INSTALL_PATH/legacycompat`),
+    /// absent sous umu ; boiii refuse alors de démarrer (« Steam must be installed… »).
+    /// Le fichier posé n'est qu'un repère : Proton force son `steam.exe` intégré (`steam.exe=b`).
+    /// boiii charge aussi `steamclient64.dll` et ses voisines depuis ce dossier : sans
+    /// elles, le jeu plante à l'intro (boiii-free, PR #204). Elles sont copiées depuis le jeu.
+    pub fn ensure_steam_marker(&self, game_dir: &Path) -> AppResult<()> {
+        let drive_c = self.drive_c();
+        let steam = drive_c.join("Program Files (x86)").join("Steam");
+        let exe = steam.join("steam.exe");
+        std::fs::create_dir_all(&steam).map_err(|e| log_err(AppError::Disk, "dossier Steam du préfixe", e))?;
+        if !exe.exists() {
+            std::fs::write(&exe, b"FarfaLauncher : Steam pour boiii\n").map_err(|e| log_err(AppError::Disk, "steam.exe du préfixe", e))?;
+            tracing::info!("repère {} posé", exe.display());
+        }
+        for dll in ["steamclient64.dll", "tier0_s64.dll", "vstdlib_s64.dll", "gameoverlayrenderer64.dll"] {
+            let (src, dst) = (game_dir.join(dll), steam.join(dll));
+            if src.is_file() && !dst.exists() {
+                match std::fs::copy(&src, &dst) {
+                    Ok(_) => tracing::info!("{dll} copiée dans le Steam du préfixe"),
+                    Err(e) => tracing::warn!("{dll} non copiée dans le Steam du préfixe: {e}"),
+                }
+            }
+        }
+        let Some(reg) = drive_c.parent().map(|p| p.join("system.reg")) else { return Ok(()) };
+        let text = match std::fs::read_to_string(&reg) {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::warn!("{} illisible ({e}) : clé de Steam non posée", reg.display());
+                return Ok(());
+            }
+        };
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        if let Some(new) = with_steam_install_path(&text, now) {
+            std::fs::write(&reg, new).map_err(|e| log_err(AppError::Disk, "system.reg du préfixe", e))?;
+            tracing::info!("clé InstallPath de Steam ajoutée à {}", reg.display());
+        }
+        Ok(())
+    }
+}
+
+/// `system.reg` (registre Wine, HKLM) avec `InstallPath` de Steam dans la vue 32 bits,
+/// ou `None` si la valeur y est déjà.
+fn with_steam_install_path(reg: &str, now: u64) -> Option<String> {
+    const KEY: &str = r"[Software\\Wow6432Node\\Valve\\Steam]";
+    const VALUE: &str = r#""InstallPath"="C:\\Program Files (x86)\\Steam""#;
+    let lower = reg.to_ascii_lowercase();
+    let Some(start) = lower.find(&KEY.to_ascii_lowercase()) else {
+        let mut out = reg.to_string();
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str(&format!("\n{KEY} {now}\n{VALUE}\n"));
+        return Some(out);
+    };
+    let line_end = reg[start..].find('\n').map(|i| start + i + 1).unwrap_or(reg.len());
+    let block_end = reg[line_end..].find("\n[").map(|i| line_end + i + 1).unwrap_or(reg.len());
+    if lower[line_end..block_end].contains("\"installpath\"=") {
+        return None;
+    }
+    // Valeur ajoutée après la dernière ligne de la clé.
+    let body_end = line_end + reg[line_end..block_end].trim_end().len();
+    let mut out = String::with_capacity(reg.len() + VALUE.len() + 2);
+    if body_end == line_end {
+        out.push_str(&reg[..line_end]);
+        out.push_str(VALUE);
+        out.push('\n');
+        out.push_str(&reg[line_end..]);
+    } else {
+        out.push_str(&reg[..body_end]);
+        out.push('\n');
+        out.push_str(VALUE);
+        out.push_str(&reg[body_end..]);
+    }
+    Some(out)
 }
 
 /// Prépare Proton (et umu) pour un jeu : téléchargements si besoin.
@@ -353,6 +430,28 @@ mod tests {
         let mut v = vec!["GE-Proton10-30", "Proton 9.0 (Beta)", "GE-Proton11-9", "GE-Proton11-11"];
         v.sort_by_key(|n| std::cmp::Reverse((is_ge(n), version_key(n))));
         assert_eq!(v, ["GE-Proton11-11", "GE-Proton11-9", "GE-Proton10-30", "Proton 9.0 (Beta)"]);
+    }
+
+    #[test]
+    fn steam_install_path_in_registry() {
+        let value = r#""InstallPath"="C:\\Program Files (x86)\\Steam""#;
+        // Clé absente : ajoutée à la fin.
+        let reg = "WINE REGISTRY Version 2\n\n[Software\\\\Wine] 1\n\"A\"=\"b\"\n";
+        let out = with_steam_install_path(reg, 42).unwrap();
+        assert!(out.starts_with(reg));
+        assert!(out.ends_with(&format!("\n[Software\\\\Wow6432Node\\\\Valve\\\\Steam] 42\n{value}\n")));
+        // Déjà là : rien à faire.
+        assert!(with_steam_install_path(&out, 43).is_none());
+        // Clé présente sans la valeur : ajoutée dans la clé, pas dans la suivante.
+        let reg = "[Software\\\\Wow6432Node\\\\Valve\\\\Steam] 1\n#time=1\n\"Other\"=\"x\"\n\n[Software\\\\Z] 2\n\"InstallPath\"=\"y\"\n";
+        let out = with_steam_install_path(reg, 3).unwrap();
+        assert_eq!(
+            out,
+            format!("[Software\\\\Wow6432Node\\\\Valve\\\\Steam] 1\n#time=1\n\"Other\"=\"x\"\n{value}\n\n[Software\\\\Z] 2\n\"InstallPath\"=\"y\"\n")
+        );
+        // Clé vide.
+        let out = with_steam_install_path("[Software\\\\Wow6432Node\\\\Valve\\\\Steam] 1\n", 3).unwrap();
+        assert_eq!(out, format!("[Software\\\\Wow6432Node\\\\Valve\\\\Steam] 1\n{value}\n"));
     }
 
     #[cfg(unix)]
