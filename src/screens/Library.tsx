@@ -36,6 +36,7 @@ import "./Library.css";
 import "./Hack.css";
 import { FullscreenButton } from "../components/FullscreenButton";
 import { ReportsInbox } from "../components/ReportsInbox";
+import { OfflineContext } from "../offline";
 
 type Tab = "recent" | "library" | "favorites";
 /** Filtre de la bibliothèque, des favoris et de la recherche. */
@@ -212,6 +213,12 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
   const favorites = useFavorites(handleError, !!session.connected);
   const reloadInstalls = installs.reload;
   const reloadFavorites = favorites.reload;
+  // Retour du serveur : les favoris, restés en lecture seule, sont relus.
+  const wasOffline = useRef(session.offline);
+  useEffect(() => {
+    if (wasOffline.current && !session.offline) reloadFavorites();
+    wasOffline.current = session.offline;
+  }, [session.offline, reloadFavorites]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -261,9 +268,11 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
   useEffect(() => {
     backend.systemTarget().then(setTarget);
     loadSounds();
-    // Temps de jeu resté en attente (serveur injoignable lors d'une session).
+    // Temps de jeu et sauvegardes restés en attente (serveur injoignable lors d'une
+    // session) : envoyés au démarrage et à chaque retour du serveur.
     if (!session.offline) {
       backend.flushPlaySessions().catch((e) => console.warn("sessions en attente non envoyées", e));
+      backend.flushPendingSaves().catch((e) => console.warn("sauvegardes en attente non envoyées", e));
     }
     // Cache d'abord pour un affichage immédiat, puis rafraîchissement auprès
     // du serveur pour faire apparaître les nouveaux jeux.
@@ -521,9 +530,16 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
   function stage(node: ReactNode) {
     const vars = hack ? ({ "--hx": `${hack.x}px`, "--hy": `${hack.y}px` } as CSSProperties) : undefined;
     return (
-      <div className={hack ? `hack-stage hack-stage--${hack.phase}` : "hack-stage"} style={vars}>
-        {node}
-      </div>
+      <OfflineContext.Provider value={!!session.offline}>
+        <div className={hack ? `hack-stage hack-stage--${hack.phase}` : "hack-stage"} style={vars}>
+          {node}
+        </div>
+        {session.offline && (
+          <div className="offline-banner" role="status">
+            <strong>Hors ligne</strong> · Serveur injoignable. Les jeux installés restent jouables ; temps de jeu et sauvegardes partiront à son retour.
+          </div>
+        )}
+      </OfflineContext.Provider>
     );
   }
 

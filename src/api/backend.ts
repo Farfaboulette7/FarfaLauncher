@@ -466,7 +466,8 @@ export interface GameStopped {
   recorded: boolean;
   pending: number;
   /** Envoi de la sauvegarde après la partie. */
-  save: "off" | "unchanged" | "uploaded" | "failed";
+  /** `pending` : serveur injoignable, sauvegarde gardée sur ce PC et envoyée à son retour. */
+  save: "off" | "unchanged" | "uploaded" | "failed" | "pending";
   saveError: AppError | null;
   /** État du jeu, quand le jeu démarré par son launcher vient d'être relevé. */
   game: InstalledGame | null;
@@ -552,6 +553,8 @@ export const INSTALL_FINISHED_EVENT = "install-finished";
 
 export const backend = {
   sessionStatus: () => invoke<SessionInfo>("session_status"),
+  /** Le serveur répond-il ? (Le Rust passe en mode hors ligne ou en sort.) */
+  checkConnection: () => invoke<boolean>("check_connection"),
   setServer: (url: string) => invoke<ServerInfo>("set_server", { url }),
   startDeviceAuth: () => invoke<DeviceAuthStart>("start_device_auth"),
   pollDeviceAuth: () => invoke<DeviceAuthPoll>("poll_device_auth"),
@@ -629,6 +632,8 @@ export const backend = {
   openSaveFolder: (romId: number) => invoke<void>("open_save_folder", { romId }),
   runningGames: () => invoke<number[]>("running_games"),
   flushPlaySessions: () => invoke<number>("flush_play_sessions"),
+  /** Envoie les sauvegardes gardées hors ligne ; rend le nombre encore en attente. */
+  flushPendingSaves: () => invoke<number>("flush_pending_saves"),
   downloadedMods: (romId: number) => invoke<string[]>("downloaded_mods", { romId }),
   downloadMod: (romId: number, fileId: number) => invoke<void>("download_mod", { romId, fileId }),
 };

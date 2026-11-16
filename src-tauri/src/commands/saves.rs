@@ -22,6 +22,13 @@ pub fn set_save_location(state: State<'_, AppState>, rom_id: i64, dir: Option<St
     crate::save_sync::set_location(&state, rom_id, dir, off)
 }
 
+/// Envoie les sauvegardes gardées sur ce PC pendant que le serveur était injoignable.
+/// Rend le nombre de sauvegardes encore en attente.
+#[tauri::command]
+pub async fn flush_pending_saves(state: State<'_, AppState>) -> AppResult<usize> {
+    Ok(crate::save_sync::flush_pending(&state).await)
+}
+
 #[tauri::command]
 pub fn open_save_folder(app: tauri::AppHandle, state: State<'_, AppState>, rom_id: i64) -> AppResult<()> {
     let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;

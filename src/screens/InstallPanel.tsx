@@ -32,6 +32,7 @@ import { InstallsState } from "../hooks/useInstalls";
 import { Dialog } from "../components/Dialog";
 import { REPORT_SENT_EVENT } from "../components/ReportsInbox";
 import { LaunchOverlay } from "../components/LaunchOverlay";
+import { useOffline } from "../offline";
 
 const PHASE_LABELS: Record<InstallPhase, string> = {
   prepare: "Préparation…",
@@ -56,6 +57,9 @@ const PHASE_LABELS: Record<InstallPhase, string> = {
   finalize: "Finalisation…",
 };
 
+/** Infobulle des boutons qui demandent le serveur. */
+const OFFLINE_TITLE = "Indisponible hors ligne";
+
 /** Plantages déjà proposés au joueur : la proposition ne s'ouvre qu'une fois par partie. */
 const crashesProposed = new WeakSet<GameStopped>();
 
@@ -69,6 +73,8 @@ interface Props {
 
 export function InstallPanel({ game: base, target, installs, onError }: Props) {
   const inst = installs.installed.get(base.id);
+  /** Serveur injoignable : jouer oui, installer ou mettre à jour non. */
+  const offline = useOffline();
   /** Émulateur choisi avant l'installation (`null` : le premier proposé). */
   const [emulatorChoice, setEmulatorChoice] = useState<string | null>(null);
   /** Recomp choisie avant l'installation, quand le jeu en a plusieurs (`null` : celle proposée). */
@@ -142,13 +148,14 @@ export function InstallPanel({ game: base, target, installs, onError }: Props) {
   const last = installs.lastSession.get(game.id);
   // Le jeu vient de planter : proposer tout de suite un rapport prérempli.
   useEffect(() => {
-    if (!last?.askReport || !inst || runningSince !== undefined || dialog !== null || crashesProposed.has(last)) return;
+    // Hors ligne, le rapport ne partirait pas : proposé au retour du serveur.
+    if (!last?.askReport || !inst || offline || runningSince !== undefined || dialog !== null || crashesProposed.has(last)) return;
     crashesProposed.add(last);
     setReportSent(null);
     setReportAfterCrash(true);
     setReportProposed(true);
     setDialog("report");
-  }, [last, inst, runningSince, dialog]);
+  }, [last, inst, offline, runningSince, dialog]);
 
   async function run<T>(f: () => Promise<T>): Promise<T | undefined> {
     setMessage(null);
@@ -265,6 +272,13 @@ export function InstallPanel({ game: base, target, installs, onError }: Props) {
       <div className="n-panel-body gd-actions-body">
         {progress ? (
           <ProgressView phase={progress.phase} done={progress.done} total={progress.total} verifying={!!progress.verifying} onCancel={() => backend.cancelInstall(game.id)} />
+        ) : offline && !inst?.executable && !pendingChoice ? (
+          <>
+            <button className="n-btn n-btn--primary n-btn--block" disabled>
+              Installer
+            </button>
+            <p className="n-hint">Hors ligne : l'installation sera possible au retour du serveur.</p>
+          </>
         ) : !isAvailable(game) && !game.detailsLoaded ? (
           <p>
             <span className="n-spinner" /> Lecture des fichiers sur le serveur…
@@ -308,7 +322,7 @@ export function InstallPanel({ game: base, target, installs, onError }: Props) {
               </button>
             )}
             {last && <p className="n-hint">{sessionSummary(last)}</p>}
-            {installedWithEmulator && runningSince === undefined && !busy && !launching && (
+            {installedWithEmulator && !offline && runningSince === undefined && !busy && !launching && (
               <EmulatorPicker
                 game={base}
                 current={game.emulator}
@@ -319,7 +333,7 @@ export function InstallPanel({ game: base, target, installs, onError }: Props) {
             )}
             {canSwitchToRecomp && runningSince === undefined && !busy && !launching && (
               <>
-                <button className="n-btn n-btn--block gd-launcher" onClick={() => installs.start(game.id, undefined, null, false)}>
+                <button className="n-btn n-btn--block gd-launcher" disabled={offline} title={offline ? OFFLINE_TITLE : undefined} onClick={() => installs.start(game.id, undefined, null, false)}>
                   Passer à la recomp
                 </button>
                 <p className="n-hint">La ROM déjà téléchargée est reprise. La recomp a ses propres sauvegardes, celles de l'émulateur restent sur le serveur.</p>
@@ -327,14 +341,14 @@ export function InstallPanel({ game: base, target, installs, onError }: Props) {
             )}
             {canSwitchToEmulator && runningSince === undefined && !busy && !launching && (
               <>
-                <button className="n-btn n-btn--block gd-launcher" onClick={() => installs.start(game.id, undefined, null, true, game.emulator?.id)}>
+                <button className="n-btn n-btn--block gd-launcher" disabled={offline} title={offline ? OFFLINE_TITLE : undefined} onClick={() => installs.start(game.id, undefined, null, true, game.emulator?.id)}>
                   Passer en émulation ({game.emulator?.name})
                 </button>
                 <p className="n-hint">La ROM est reprise et le dossier de la recomp reste sur le disque. L'émulateur a ses propres sauvegardes.</p>
               </>
             )}
             {update && runningSince === undefined && !busy && !launching && (
-              <button className="n-btn n-btn--block gd-update" onClick={() => installs.start(game.id, undefined, null, installedWithEmulator)}>
+              <button className="n-btn n-btn--block gd-update" disabled={offline} title={offline ? OFFLINE_TITLE : undefined} onClick={() => installs.start(game.id, undefined, null, installedWithEmulator)}>
                 Mettre à jour ({inst.versionRaw ? inst.version : "?"} → {installedWithEmulator ? game.emulator?.version : game.serverVersion})
               </button>
             )}
@@ -439,6 +453,8 @@ export function InstallPanel({ game: base, target, installs, onError }: Props) {
             Le jeu s'est arrêté brusquement.{" "}
             <button
               className="n-link"
+              disabled={offline}
+              title={offline ? OFFLINE_TITLE : undefined}
               onClick={() => {
                 setReportAfterCrash(true);
                 setReportProposed(false);
@@ -509,6 +525,8 @@ export function InstallPanel({ game: base, target, installs, onError }: Props) {
             )}
             <button
               className="n-link"
+              disabled={offline}
+              title={offline ? OFFLINE_TITLE : undefined}
               onClick={() => {
                 setReportAfterCrash(false);
                 setReportProposed(false);
@@ -1462,9 +1480,11 @@ function sessionSummary(s: GameStopped): string {
   const save =
     s.save === "uploaded"
       ? " Sauvegarde envoyée sur le serveur."
-      : s.save === "failed"
-        ? ` Sauvegarde non envoyée : ${s.saveError?.message ?? "erreur inconnue"}`
-        : "";
+      : s.save === "pending"
+        ? " Serveur injoignable : sauvegarde gardée sur ce PC, envoyée à son retour."
+        : s.save === "failed"
+          ? ` Sauvegarde non envoyée : ${s.saveError?.message ?? "erreur inconnue"}`
+          : "";
   return time + save;
 }
 

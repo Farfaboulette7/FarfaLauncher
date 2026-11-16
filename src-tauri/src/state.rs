@@ -29,6 +29,9 @@ pub struct AppState {
     pub library: Mutex<Option<LibrarySnapshot>>,
     /// Un seul rafraîchissement à la fois : pas de requêtes en double.
     pub refreshing: AtomicBool,
+    /// Serveur injoignable (NAS éteint…) : jeux installés jouables, envois mis en file
+    /// d'attente, sans attendre la fin du délai de connexion à chaque requête.
+    pub offline: AtomicBool,
     /// Installations en cours (jeu → jeton d'annulation).
     pub installs: Mutex<HashMap<i64, CancellationToken>>,
     /// Jeux en cours d'exécution.
@@ -76,6 +79,7 @@ impl AppState {
             pending_device: Mutex::new(None),
             library: Mutex::new(None),
             refreshing: AtomicBool::new(false),
+            offline: AtomicBool::new(false),
             installs: Mutex::new(HashMap::new()),
             running: Mutex::new(HashSet::new()),
             #[cfg(feature = "gui")]
@@ -159,6 +163,28 @@ impl AppState {
 
     pub fn set_client(&self, client: Option<RommClient>) {
         *self.client.lock().unwrap() = client;
+    }
+
+    /// Le serveur était injoignable au dernier essai.
+    pub fn is_offline(&self) -> bool {
+        self.offline.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Note l'état du serveur ; rend `true` s'il vient de changer.
+    pub fn set_offline(&self, offline: bool) -> bool {
+        let before = self.offline.swap(offline, std::sync::atomic::Ordering::Relaxed);
+        if before != offline {
+            tracing::info!("serveur {}", if offline { "injoignable : mode hors ligne" } else { "de nouveau joignable" });
+        }
+        before != offline
+    }
+
+    /// Client du serveur, refusé tout de suite hors ligne (pas d'attente de connexion).
+    pub fn online_client(&self) -> AppResult<RommClient> {
+        if self.is_offline() {
+            return Err(AppError::ServerUnreachable);
+        }
+        self.client()
     }
 }
 

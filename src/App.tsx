@@ -7,6 +7,7 @@ import { NowPlaying } from "./components/NowPlaying";
 import { Backdrop } from "./components/Backdrop";
 import { UpdateDialog } from "./components/UpdateDialog";
 import { useUpdater } from "./hooks/useUpdater";
+import { useConnectionWatch } from "./offline";
 
 export default function App() {
   const [session, setSession] = useState<SessionInfo | null>(null);
@@ -14,6 +15,7 @@ export default function App() {
   const [intro, setIntro] = useState(true);
   const endIntro = useCallback(() => setIntro(false), []);
   const updater = useUpdater();
+  useConnectionWatch(session, setSession);
 
   useEffect(() => {
     backend

@@ -156,6 +156,9 @@ pub struct SaveSync {
     /// (Avant la première partie, le jeu n'a souvent encore rien créé.)
     #[serde(default)]
     pub searched_after_play: bool,
+    /// Sauvegarde changée pendant que le serveur était injoignable : envoyée à son retour.
+    #[serde(default)]
+    pub pending_upload: bool,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]

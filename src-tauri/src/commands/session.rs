@@ -41,6 +41,7 @@ pub async fn session_status(state: State<'_, AppState>) -> AppResult<SessionInfo
     match auth::me(&client).await {
         Ok(me) => {
             state.set_client(Some(client));
+            state.set_offline(false);
             Ok(SessionInfo { server_url: Some(server_url), connected: true, offline: false, username: Some(me.username), notice: None })
         }
         Err(e @ (AppError::AuthInvalid | AppError::Forbidden)) => {
@@ -51,6 +52,7 @@ pub async fn session_status(state: State<'_, AppState>) -> AppResult<SessionInfo
         }
         Err(AppError::ServerUnreachable | AppError::Server) => {
             state.set_client(Some(client));
+            state.set_offline(true);
             Ok(SessionInfo { server_url: Some(server_url), connected: true, offline: true, username: None, notice: None })
         }
         Err(e) => Err(e),
@@ -170,8 +172,26 @@ async fn finish_login(state: &AppState, server_url: &str, token: String) -> AppR
     })?;
     secrets::store_token(server_url, &token)?;
     state.set_client(Some(client));
+    state.set_offline(false);
     tracing::info!("connecté en tant que {}", me.username);
     Ok(SessionInfo { server_url: Some(server_url.to_string()), connected: true, offline: false, username: Some(me.username), notice: None })
+}
+
+/// Délai d'attente du test de connexion : court, il revient toutes les 20 à 60 s.
+const CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+
+/// Test du serveur (heartbeat RomM, sans authentification), répété par l'interface pour
+/// passer en mode hors ligne ou en sortir. Rend `true` si le serveur répond.
+#[tauri::command]
+pub async fn check_connection(state: State<'_, AppState>) -> AppResult<bool> {
+    let client = state.client()?;
+    let online = match client.send(client.get("api/heartbeat").timeout(CHECK_TIMEOUT)).await {
+        Ok(_) => true,
+        Err(AppError::ServerUnreachable | AppError::Server) => false,
+        Err(e) => return Err(e),
+    };
+    state.set_offline(!online);
+    Ok(online)
 }
 
 /// Oublie le token local. (Il reste révocable côté RomM : Paramètres →

@@ -45,9 +45,13 @@ struct PreparedPc {
 
 /// Pseudo du joueur dans les Call of Duty : son compte du launcher, sinon (hors
 /// ligne) celui de la session de l'ordinateur.
-async fn player_name(client: &crate::romm::client::RommClient) -> String {
+async fn player_name(client: Option<&crate::romm::client::RommClient>) -> String {
     let clean = |n: String| n.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_').take(15).collect::<String>();
-    if let Ok(me) = crate::romm::auth::me(client).await {
+    let me = match client {
+        Some(c) => crate::romm::auth::me(c).await.ok(),
+        None => None,
+    };
+    if let Some(me) = me {
         let n = clean(me.username);
         if !n.is_empty() {
             return n;
@@ -72,7 +76,7 @@ async fn prepare_pc(state: &AppState, st: &state::InstalledGame, cod: Option<Cod
         let choice = cod.ok_or(AppError::ModeRequired)?;
         let (client, catalog, base) = (state.client()?, state.catalog(), crate::manager::base_url(&state.settings()));
         let access = crate::pc::install::ManagerAccess { client: &client, base: base.as_deref(), catalog: &catalog };
-        let player = player_name(&client).await;
+        let player = player_name(state.online_client().ok().as_ref()).await;
         let (exe, args, cwd) =
             crate::pc::install::prepare_cod(game, choice.mode, choice.online, &st.game_dir, runner.as_ref(), &player, &access).await?;
         return Ok(Some(PreparedPc { exe, args, cwd, runner }));
@@ -216,7 +220,8 @@ pub async fn finish(state: &AppState, rom_id: i64, started: OffsetDateTime, lear
     // La sauvegarde en premier (Steam Deck : le programme peut être arrêté peu après
     // la fermeture du jeu). Même pour une session courte : le joueur a pu sauvegarder.
     let (save, save_error) = save_sync::after_play(state, state.client().ok(), rom_id, std::time::SystemTime::from(started)).await;
-    let pending = match state.client() {
+    // Hors ligne : le temps de jeu reste dans la file, envoyé au retour du serveur.
+    let pending = match state.online_client() {
         Ok(client) if recorded => playtime::flush(&client, &state.config_dir).await.unwrap_or_else(|_| playtime::pending_count(&state.config_dir)),
         _ => playtime::pending_count(&state.config_dir),
     };
@@ -235,7 +240,8 @@ fn shaders_job(state: &AppState, st: &state::InstalledGame, exe_dir: &std::path:
     let base = crate::manager::base_url(&state.settings())?;
     let rom_dir = st.shared.as_ref()?.rom_dir.clone()?;
     Some(crate::shaders::Job {
-        manager: state.client().ok()?.with_base(&base),
+        // Hors ligne : pas de partage des shaders pour cette partie.
+        manager: state.online_client().ok()?.with_base(&base),
         emulator,
         rom_id: st.rom_id,
         shader_root,

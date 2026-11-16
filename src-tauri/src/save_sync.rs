@@ -135,7 +135,7 @@ pub async fn check(state: &AppState, rom_id: i64) -> AppResult<SaveCheck> {
         // lancement. On joue, et on cherche à nouveau à la sortie — sauf s'il
         // y a une sauvegarde sur le serveur à poser avant de jouer.
         if !st.saves.searched_after_play {
-            let on_server = match state.client() {
+            let on_server = match state.online_client() {
                 Ok(client) => matches!(store_of(&state, client, &st).find().await, Ok(Some(_))),
                 Err(_) => false,
             };
@@ -147,7 +147,8 @@ pub async fn check(state: &AppState, rom_id: i64) -> AppResult<SaveCheck> {
         let suggestions = saves::suggestions(&st.game_dir, &exes(&st), &st.name).iter().map(|p| p.to_string_lossy().into_owned()).collect();
         return Ok(SaveCheck::Unknown { suggestions });
     };
-    let Ok(client) = state.client() else { return Ok(SaveCheck::Ready) };
+    // Hors ligne : on joue avec la locale, envoyée au retour du serveur.
+    let Ok(client) = state.online_client() else { return Ok(SaveCheck::Ready) };
     let store = store_of(&state, client, &st);
     let remote = match store.find().await {
         Ok(Some(s)) => s,
@@ -162,6 +163,11 @@ pub async fn check(state: &AppState, rom_id: i64) -> AppResult<SaveCheck> {
         let loc = loc.clone();
         tokio::task::spawn_blocking(move || saves::hash_local(&loc)).await.map_err(|_| AppError::Internal)??
     };
+    // Partie jouée hors ligne, serveur inchangé depuis : la locale est la plus récente, elle
+    // partira après cette partie (son empreinte diffère de celle du dernier échange).
+    if st.saves.pending_upload && st.saves.synced_server.as_deref() == Some(remote.updated_at.as_str()) {
+        return Ok(SaveCheck::Ready);
+    }
     let remote_hash = if st.saves.synced_server.as_deref() == Some(remote.updated_at.as_str()) {
         st.saves.synced_hash.clone()
     } else {
@@ -242,7 +248,7 @@ fn prune_backups(dir: &std::path::Path) {
     }
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum SaveUpload {
     /// Pas de synchronisation pour ce jeu.
@@ -251,6 +257,8 @@ pub enum SaveUpload {
     Unchanged,
     Uploaded,
     Failed,
+    /// Serveur injoignable : gardée sur ce PC, envoyée à son retour.
+    Pending,
 }
 
 /// Après la partie : envoie la sauvegarde si elle a changé depuis le dernier échange.
@@ -313,13 +321,21 @@ pub async fn after_play(state: &AppState, client: Option<RommClient>, rom_id: i6
         .await
         .map_err(|_| AppError::Internal)??;
         if hash.is_none() || hash == st.saves.synced_hash {
+            if st.saves.pending_upload {
+                st.saves.pending_upload = false;
+                state::write_state(&state.config_dir, &st)?;
+            }
             return Ok(SaveUpload::Unchanged);
+        }
+        if state.is_offline() {
+            return Err(AppError::ServerUnreachable);
         }
         let client = client.ok_or(AppError::AuthInvalid)?;
         let size = zip.len();
         let updated_at = store_of(state, client, &st).upload(zip).await?;
         st.saves.synced_hash = hash;
         st.saves.synced_server = Some(updated_at);
+        st.saves.pending_upload = false;
         state::write_state(&state.config_dir, &st)?;
         tracing::info!("« {} » : sauvegarde envoyée ({size} octets)", st.name);
         Ok(SaveUpload::Uploaded)
@@ -327,9 +343,93 @@ pub async fn after_play(state: &AppState, client: Option<RommClient>, rom_id: i6
     .await;
     match res {
         Ok(r) => (r, None),
+        // Serveur injoignable : la sauvegarde attend son retour (`flush_pending`).
+        Err(e) if matches!(e, AppError::ServerUnreachable | AppError::Server) => {
+            tracing::warn!("« {} » : serveur injoignable, sauvegarde gardée pour plus tard ({})", st.name, e.code());
+            if !st.saves.pending_upload {
+                st.saves.pending_upload = true;
+                if let Err(e) = state::write_state(&state.config_dir, &st) {
+                    tracing::error!("sauvegarde en attente non mémorisée: {}", e.code());
+                }
+            }
+            (SaveUpload::Pending, None)
+        }
         Err(e) => {
             tracing::error!("« {} » : sauvegarde non envoyée ({})", st.name, e.code());
             (SaveUpload::Failed, Some(e))
         }
+    }
+}
+
+/// Que faire d'une sauvegarde gardée hors ligne, selon le serveur à son retour.
+#[derive(Debug, PartialEq)]
+enum PendingAction {
+    /// Serveur inchangé depuis le dernier échange : la locale part.
+    Upload,
+    /// Une autre machine a envoyé la sienne entre-temps : la question sera posée au
+    /// prochain lancement (`check`), rien n'est écrasé.
+    AskAtNextLaunch,
+}
+
+fn pending_action(synced_server: Option<&str>, remote_updated: Option<&str>) -> PendingAction {
+    if synced_server == remote_updated {
+        PendingAction::Upload
+    } else {
+        PendingAction::AskAtNextLaunch
+    }
+}
+
+/// Envoie les sauvegardes gardées hors ligne (au retour du serveur). Rend le nombre de
+/// sauvegardes encore en attente.
+pub async fn flush_pending(state: &AppState) -> usize {
+    let pending: Vec<InstalledGame> = state::list_installed(&state.config_dir).into_iter().filter(|st| st.saves.pending_upload).collect();
+    let mut left = 0;
+    for mut st in pending {
+        // Jeu en cours : il enverra lui-même à la fin de la partie.
+        if state.running.lock().unwrap().contains(&st.rom_id) {
+            left += 1;
+            continue;
+        }
+        let Ok(client) = state.online_client() else { return left + 1 };
+        let remote = match store_of(state, client.clone(), &st).find().await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("« {} » : sauvegarde en attente non envoyée ({})", st.name, e.code());
+                left += 1;
+                continue;
+            }
+        };
+        match pending_action(st.saves.synced_server.as_deref(), remote.as_ref().map(|r| r.updated_at.as_str())) {
+            PendingAction::Upload => {
+                let (save, _) = after_play(state, Some(client), st.rom_id, SystemTime::now()).await;
+                tracing::info!("« {} » : sauvegarde gardée hors ligne → {save:?}", st.name);
+                if matches!(save, SaveUpload::Pending | SaveUpload::Failed) {
+                    left += 1;
+                }
+            }
+            PendingAction::AskAtNextLaunch => {
+                tracing::info!("« {} » : sauvegarde changée aussi sur le serveur, question au prochain lancement", st.name);
+                st.saves.pending_upload = false;
+                if let Err(e) = state::write_state(&state.config_dir, &st) {
+                    tracing::error!("sauvegarde en attente non mise à jour: {}", e.code());
+                }
+            }
+        }
+    }
+    left
+}
+
+#[cfg(test)]
+mod pending_tests {
+    use super::{pending_action, PendingAction};
+
+    #[test]
+    fn uploads_only_if_the_server_did_not_change() {
+        assert_eq!(pending_action(Some("2026-11-16T02:00:00Z"), Some("2026-11-16T02:00:00Z")), PendingAction::Upload);
+        // Rien sur le serveur, ni avant ni maintenant : première sauvegarde du jeu.
+        assert_eq!(pending_action(None, None), PendingAction::Upload);
+        // Envoyée depuis le Deck pendant la nuit : on ne l'écrase pas.
+        assert_eq!(pending_action(Some("2026-11-16T02:00:00Z"), Some("2026-11-16T03:00:00Z")), PendingAction::AskAtNextLaunch);
+        assert_eq!(pending_action(None, Some("2026-11-16T03:00:00Z")), PendingAction::AskAtNextLaunch);
     }
 }

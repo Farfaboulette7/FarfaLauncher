@@ -345,3 +345,22 @@
 .fx-lite .card:hover,
 .fx-lite .card:focus-visible,
 .fx-lite.pad-nav .card:focus { transform: none; top: -3px; }
+
+/* Bandeau « Hors ligne » : posé en bas de l'écran, sans masquer l'en-tête ni les cartes. */
+.offline-banner {
+  position: fixed;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  z-index: 90;
+  max-width: min(92vw, 860px);
+  padding: 8px 18px;
+  font-size: var(--fs-xs);
+  letter-spacing: var(--nier-tracking-wide);
+  color: var(--nier-high);
+  background: var(--nier-low-trans);
+  border-left: 4px solid var(--nier-alert);
+  box-shadow: 4px 4px 0 var(--nier-shadow);
+  pointer-events: none;
+}
+.offline-banner strong { text-transform: uppercase; }
