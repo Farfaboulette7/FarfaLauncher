@@ -19,6 +19,7 @@ import {
   PcKind,
   ProtonVersion,
   GameStopped,
+  isWaiting,
   Crash,
   InstallPhase,
   isAppError,
@@ -35,7 +36,7 @@ import { REPORT_SENT_EVENT } from "../components/ReportsInbox";
 import { LaunchOverlay } from "../components/LaunchOverlay";
 import { useOffline } from "../offline";
 
-const PHASE_LABELS: Record<InstallPhase, string> = {
+export const PHASE_LABELS: Record<InstallPhase, string> = {
   prepare: "Préparation…",
   proton: "Téléchargement de Proton",
   download: "Téléchargement",
@@ -56,6 +57,8 @@ const PHASE_LABELS: Record<InstallPhase, string> = {
   shaders: "Préparation des shaders",
   cache: "Préparation des données du jeu",
   finalize: "Finalisation…",
+  queued: "En attente",
+  paused: "En pause",
 };
 
 /** Infobulle des boutons qui demandent le serveur. */
@@ -272,7 +275,7 @@ export function InstallPanel({ game: base, target, installs, onError }: Props) {
       <div className="n-panel-header">{inst?.executable ? "Jeu installé" : "Installation"}</div>
       <div className="n-panel-body gd-actions-body">
         {progress ? (
-          <ProgressView phase={progress.phase} done={progress.done} total={progress.total} verifying={!!progress.verifying} onCancel={() => backend.cancelInstall(game.id)} />
+          <ProgressView romId={game.id} phase={progress.phase} done={progress.done} total={progress.total} verifying={!!progress.verifying} onCancel={() => backend.cancelInstall(game.id)} />
         ) : offline && !inst?.executable && !pendingChoice ? (
           <>
             <button className="n-btn n-btn--primary n-btn--block" disabled>
@@ -1066,19 +1069,58 @@ function OptimizedFacts({ romId, running }: { romId: number; running: boolean })
 
 const LEVEL_NAMES: Record<Optimizations["level"], string> = { faible: "modeste", moyen: "moyen", fort: "puissant" };
 
-function ProgressView({
-  phase,
-  done,
-  total,
-  verifying,
-  onCancel,
-}: {
+/** Place dans la file, en clair : « 1er », « 2e »… */
+export function queuePlace(n: number): string {
+  return n === 1 ? "1er" : `${n}e`;
+}
+
+type ProgressProps = {
+  romId: number;
   phase: InstallPhase;
   done: number;
   total: number;
   verifying: boolean;
   onCancel: () => void;
-}) {
+};
+
+/** Progression d'une installation, ou sa place dans la file de téléchargements. */
+function ProgressView(props: ProgressProps) {
+  const { romId, phase, done, total, onCancel } = props;
+  if (!isWaiting(phase)) return <ActiveProgress {...props} />;
+  return (
+    <div className="gd-progress">
+      <div className="gd-progress-label">{PHASE_LABELS[phase]}</div>
+      <p className="n-hint">
+        {phase === "paused"
+          ? "Ce qui est déjà téléchargé est gardé : l'installation reprendra là où elle s'est arrêtée."
+          : `${queuePlace(done)} sur ${total} dans la file : l'installation commencera après les précédentes.`}
+      </p>
+      <div className="gd-inst-actions">
+        {phase === "paused" ? (
+          <button className="n-link" onClick={() => backend.resumeInstall(romId)}>
+            Reprendre
+          </button>
+        ) : (
+          <>
+            {done > 1 && (
+              <button className="n-link" onClick={() => backend.moveInstall(romId, true)}>
+                Passer devant
+              </button>
+            )}
+            <button className="n-link" onClick={() => backend.pauseInstall(romId)}>
+              Mettre en pause
+            </button>
+          </>
+        )}
+        <button className="n-link" onClick={onCancel}>
+          Annuler
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ActiveProgress({ romId, phase, done, total, verifying, onCancel }: ProgressProps) {
   const installing = phase === "installer";
   // Installateur : estimation d'après la place prise, jamais 100 % avant la fin.
   const pct = total > 0 ? Math.min(installing ? 99 : 100, (done / total) * 100) : null;
@@ -1120,13 +1162,23 @@ function ProgressView({
       {installing && <p className="n-hint">Installation en cours, elle ne peut plus être annulée.</p>}
       {hint && <p className="n-hint">{hint}</p>}
       {phase !== "finalize" && phase !== "data" && phase !== "place" && !installing && (
-        <button className="n-link" onClick={onCancel}>
-          Annuler
-        </button>
+        <div className="gd-inst-actions">
+          {PAUSABLE.includes(phase) && (
+            <button className="n-link" onClick={() => backend.pauseInstall(romId)}>
+              Mettre en pause
+            </button>
+          )}
+          <button className="n-link" onClick={onCancel}>
+            Annuler
+          </button>
+        </div>
       )}
     </div>
   );
 }
+
+/** Étapes où une pause ne perd rien : les téléchargements (repris grâce aux fichiers `.part`). */
+export const PAUSABLE: InstallPhase[] = ["prepare", "download", "proton", "client"];
 
 function ExeChoiceDialog({
   candidates,

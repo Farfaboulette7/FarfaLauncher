@@ -352,6 +352,10 @@ export interface InstallInfo {
   installRoot: string;
   games: InstalledGame[];
   active: number[];
+  /** File de téléchargements, dans l'ordre (absente avec un ancien moteur). */
+  queue?: { romId: number; paused: boolean }[];
+  /** Limite de débit des téléchargements en Mo/s (0 : illimité). */
+  downloadLimitMb?: number;
 }
 
 export type InstallPhase =
@@ -374,7 +378,15 @@ export type InstallPhase =
   | "cleanup"
   | "shaders"
   | "cache"
-  | "finalize";
+  | "finalize"
+  // File de téléchargements : `done` = place dans la file, `total` = sa longueur.
+  | "queued"
+  | "paused";
+
+/** Le jeu attend dans la file (son tour ou une reprise), sans rien installer. */
+export function isWaiting(phase: InstallPhase): boolean {
+  return phase === "queued" || phase === "paused";
+}
 
 export interface InstallProgress {
   romId: number;
@@ -596,6 +608,13 @@ export const backend = {
   installGame: (romId: number, dest?: string, proton?: string | null, withEmulator = false, emulator?: string | null, recomp?: string | null) =>
     invoke<void>("install_game", { romId, dest: dest ?? null, proton: proton ?? null, withEmulator, emulator: emulator ?? null, recomp: recomp ?? null }),
   cancelInstall: (romId: number) => invoke<void>("cancel_install", { romId }),
+  /** Pause : ce qui est téléchargé est gardé, la reprise repart de là. */
+  pauseInstall: (romId: number) => invoke<void>("pause_install", { romId }),
+  resumeInstall: (romId: number) => invoke<void>("resume_install", { romId }),
+  /** Monte (`up`) ou descend le jeu d'une place dans la file. */
+  moveInstall: (romId: number, up: boolean) => invoke<void>("move_install", { romId, up }),
+  /** Limite de débit en Mo/s (0 : illimité). */
+  setDownloadLimit: (mb: number) => invoke<void>("set_download_limit", { mb }),
   executableCandidates: (romId: number) => invoke<string[]>("executable_candidates", { romId }),
   chooseExecutable: (romId: number, executable: string) => invoke<InstalledGame>("choose_executable", { romId, executable }),
   uninstallGame: (romId: number, keepSaves: boolean) => invoke<void>("uninstall_game", { romId, keepSaves }),

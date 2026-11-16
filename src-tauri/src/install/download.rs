@@ -3,7 +3,8 @@
 //! fournit, taille sinon).
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 use md5::Md5;
@@ -21,6 +22,24 @@ use crate::romm::library::{file_content_path, RemoteFile};
 const STALL_TIMEOUT: Duration = Duration::from_secs(60);
 /// Nombre de reprises automatiques après une coupure.
 const RETRIES: u32 = 3;
+
+/// Limite de débit des téléchargements, en octets par seconde (0 : illimité). Changée par
+/// les Paramètres, elle s'applique aussi au téléchargement en cours.
+static LIMIT: AtomicU64 = AtomicU64::new(0);
+
+/// Limite de débit en Mo/s (0 : illimité).
+pub fn set_limit_mb(mb: u32) {
+    LIMIT.store(u64::from(mb) * 1024 * 1024, Ordering::Relaxed);
+}
+
+/// Attente à faire pour rester sous `limit` octets/s, après `bytes` octets reçus en `elapsed`.
+fn throttle_wait(bytes: u64, elapsed: Duration, limit: u64) -> Option<Duration> {
+    if limit == 0 {
+        return None;
+    }
+    let expected = Duration::from_secs_f64(bytes as f64 / limit as f64);
+    expected.checked_sub(elapsed).filter(|d| *d >= Duration::from_millis(5))
+}
 
 /// Télécharge `file` vers `dest` (via `dest.part`, repris s'il existe).
 /// `on_progress(octets reçus au total)` est appelé régulièrement.
@@ -150,6 +169,8 @@ async fn download_once(
     let mut received = have;
     on_progress(received);
     let mut stream = resp.bytes_stream();
+    // Mesure du débit depuis le dernier changement de limite.
+    let (mut limit, mut since, mut counted) = (LIMIT.load(Ordering::Relaxed), Instant::now(), 0u64);
     loop {
         let next = tokio::select! {
             _ = cancel.cancelled() => {
@@ -167,6 +188,20 @@ async fn download_once(
         out.write_all(&chunk).await.map_err(|e| disk_error("écriture du téléchargement", e))?;
         received += chunk.len() as u64;
         on_progress(received);
+        let now_limit = LIMIT.load(Ordering::Relaxed);
+        if now_limit != limit {
+            (limit, since, counted) = (now_limit, Instant::now(), 0);
+        }
+        counted += chunk.len() as u64;
+        if let Some(wait) = throttle_wait(counted, since.elapsed(), limit) {
+            tokio::select! {
+                _ = cancel.cancelled() => {
+                    out.flush().await.ok();
+                    return Err(AppError::Cancelled);
+                }
+                _ = tokio::time::sleep(wait) => {}
+            }
+        }
     }
     out.flush().await.map_err(|e| disk_error("écriture du téléchargement", e))?;
     if received != file.size {
@@ -243,4 +278,19 @@ async fn is_compressed_container(path: &Path, name: &str) -> bool {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+#[cfg(test)]
+mod throttle_tests {
+    use super::*;
+
+    #[test]
+    fn waits_only_when_ahead_of_the_limit() {
+        let mb = 1024 * 1024;
+        assert_eq!(throttle_wait(10 * mb, Duration::from_secs(1), 0), None);
+        // 10 Mo reçus en 1 s avec une limite de 5 Mo/s : 1 s d'attente.
+        assert_eq!(throttle_wait(10 * mb, Duration::from_secs(1), 5 * mb), Some(Duration::from_secs(1)));
+        // Déjà en retard sur la limite : pas d'attente.
+        assert_eq!(throttle_wait(mb, Duration::from_secs(2), 5 * mb), None);
+    }
 }

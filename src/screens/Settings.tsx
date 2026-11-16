@@ -13,6 +13,9 @@ import { backdropMotion, setBackdropMotion } from "../display";
 import { audioAutoDisabled, clearAudioNotice } from "../audioGuard";
 import "./Settings.css";
 
+/** Limites de débit proposées, en Mo/s (0 : aucune). */
+const DOWNLOAD_LIMITS = [0, 1, 2, 5, 10, 20, 50];
+
 interface Props {
   session: SessionInfo;
   installs: InstallsState;
@@ -35,6 +38,14 @@ export function Settings({ session, installs, onBack, onLogout, onCacheCleared, 
   const [managerInput, setManagerInput] = useState("");
   const [music, setMusic] = useState(musicSettings());
   const [motion, setMotion] = useState(backdropMotion());
+  /** Limite de débit des téléchargements en Mo/s (0 : illimité) ; `null` tant qu'elle n'est pas lue. */
+  const [limit, setLimit] = useState<number | null>(null);
+  useEffect(() => {
+    backend
+      .installInfo()
+      .then((info) => setLimit(info.downloadLimitMb ?? 0))
+      .catch(() => setLimit(0));
+  }, []);
   const root = useRef<HTMLDivElement>(null);
   useReveal(root, [], { screen: true });
 
@@ -168,6 +179,29 @@ export function Settings({ session, installs, onBack, onLogout, onCacheCleared, 
                   </button>
                 )}
               </div>
+              {limit !== null && (
+                <>
+                  <label className="settings-check">
+                    Limite de débit des téléchargements
+                    <select
+                      className="n-input settings-limit"
+                      value={limit}
+                      onChange={(e) => {
+                        const mb = Number(e.target.value);
+                        setLimit(mb);
+                        act(() => backend.setDownloadLimit(mb), mb === 0 ? "Téléchargements sans limite." : `Téléchargements limités à ${mb} Mo/s.`);
+                      }}
+                    >
+                      {DOWNLOAD_LIMITS.map((mb) => (
+                        <option key={mb} value={mb}>
+                          {mb === 0 ? "Aucune" : `${mb} Mo/s`}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <p className="n-hint">Pour laisser de la place aux autres sur la connexion. Elle s'applique aussi au téléchargement en cours.</p>
+                </>
+              )}
             </div>
           </section>
 

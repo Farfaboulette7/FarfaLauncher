@@ -32,6 +32,8 @@ pub struct Settings {
     pub recomp_choice: std::collections::BTreeMap<i64, String>,
     /// Jeux (romId) pour lesquels le joueur a choisi « Ne plus demander » après un plantage.
     pub crash_prompt_off: Vec<i64>,
+    /// Limite de débit des téléchargements en Mo/s (0 : illimité).
+    pub download_limit_mb: u32,
 }
 
 impl Default for Settings {
@@ -47,6 +49,7 @@ impl Default for Settings {
             reports_seen: Default::default(),
             recomp_choice: Default::default(),
             crash_prompt_off: Vec::new(),
+            download_limit_mb: 0,
         }
     }
 }

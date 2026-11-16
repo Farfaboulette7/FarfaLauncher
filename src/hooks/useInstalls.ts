@@ -57,6 +57,8 @@ export function useInstalls(onAuthError: (e: unknown) => Promise<string>): Insta
     setProgress((p) => {
       const next = new Map(p);
       for (const id of info.active) if (!next.has(id)) next.set(id, { romId: id, phase: "prepare", done: 0, total: 0 });
+      const queue = info.queue ?? [];
+      queue.forEach((q, i) => next.set(q.romId, { romId: q.romId, phase: q.paused ? "paused" : "queued", done: i + 1, total: queue.length }));
       return next;
     });
   }, []);

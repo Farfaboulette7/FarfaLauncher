@@ -37,6 +37,7 @@ import "./Hack.css";
 import { FullscreenButton } from "../components/FullscreenButton";
 import { ReportsInbox } from "../components/ReportsInbox";
 import { OfflineContext } from "../offline";
+import { Downloads } from "../components/Downloads";
 
 type Tab = "recent" | "library" | "favorites";
 /** Filtre de la bibliothèque, des favoris et de la recherche. */
@@ -608,6 +609,7 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
               Mettre à jour ({update.version})
             </button>
           )}
+          <Downloads installs={installs} nameOf={(id) => known(id)?.name ?? `Jeu ${id}`} />
           <ReportsInbox offline={session.offline} />
           <button
             className="n-btn"

@@ -34,6 +34,10 @@ pub struct AppState {
     pub offline: AtomicBool,
     /// Installations en cours (jeu → jeton d'annulation).
     pub installs: Mutex<HashMap<i64, CancellationToken>>,
+    /// Installations en attente de leur tour ou en pause (voir `commands::install`).
+    pub queue: Mutex<Vec<crate::install::QueuedInstall>>,
+    /// Pause demandée pour l'installation en cours : elle retourne dans la file.
+    pub pause_requested: Mutex<HashSet<i64>>,
     /// Jeux en cours d'exécution.
     pub running: Mutex<HashSet<i64>>,
     /// Parties lancées, de leur démarrage à leur fermeture (menu en jeu).
@@ -81,6 +85,8 @@ impl AppState {
             refreshing: AtomicBool::new(false),
             offline: AtomicBool::new(false),
             installs: Mutex::new(HashMap::new()),
+            queue: Mutex::new(Vec::new()),
+            pause_requested: Mutex::new(HashSet::new()),
             running: Mutex::new(HashSet::new()),
             #[cfg(feature = "gui")]
             playing: Mutex::new(HashMap::new()),

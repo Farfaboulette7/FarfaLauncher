@@ -69,6 +69,36 @@ pub struct InstallJob {
     pub on_progress: Arc<dyn Fn(Progress) + Send + Sync>,
 }
 
+/// Installation en attente dans la file : une seule tourne à la fois, les autres attendent
+/// leur tour (ou sont en pause, leur téléchargement repris là où il s'est arrêté).
+#[derive(Debug, Clone, PartialEq)]
+pub struct QueuedInstall {
+    pub rom_id: i64,
+    pub install_root: PathBuf,
+    pub proton: Option<String>,
+    pub with_emulator: bool,
+    pub emulator_id: Option<String>,
+    pub paused: bool,
+}
+
+/// Monte (`up`) ou descend un jeu d'une place dans la file ; `false` s'il n'a pas bougé.
+pub fn queue_move(queue: &mut [QueuedInstall], rom_id: i64, up: bool) -> bool {
+    let Some(i) = queue.iter().position(|q| q.rom_id == rom_id) else { return false };
+    let j = if up { i.checked_sub(1) } else { Some(i + 1).filter(|j| *j < queue.len()) };
+    match j {
+        Some(j) => {
+            queue.swap(i, j);
+            true
+        }
+        None => false,
+    }
+}
+
+/// Prochaine installation à lancer : la première qui n'est ni en pause, ni bloquée (jeu lancé…).
+pub fn queue_next(queue: &[QueuedInstall], blocked: impl Fn(i64) -> bool) -> Option<usize> {
+    queue.iter().position(|q| !q.paused && !blocked(q.rom_id))
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase", tag = "status")]
 pub enum InstallOutcome {
@@ -971,6 +1001,33 @@ pub(crate) fn remove_quarantine(game_dir: &Path) {
 
 pub(crate) async fn blocking<T: Send + 'static>(f: impl FnOnce() -> AppResult<T> + Send + 'static) -> AppResult<T> {
     tokio::task::spawn_blocking(f).await.map_err(|e| log_err(AppError::Internal, "tâche interrompue", e))?
+}
+
+#[cfg(test)]
+mod queue_tests {
+    use super::*;
+
+    fn q(id: i64, paused: bool) -> QueuedInstall {
+        QueuedInstall { rom_id: id, install_root: PathBuf::new(), proton: None, with_emulator: false, emulator_id: None, paused }
+    }
+
+    #[test]
+    fn moves_inside_the_queue() {
+        let mut queue = vec![q(1, false), q(2, false), q(3, false)];
+        assert!(queue_move(&mut queue, 3, true));
+        assert_eq!(queue.iter().map(|q| q.rom_id).collect::<Vec<_>>(), [1, 3, 2]);
+        assert!(!queue_move(&mut queue, 1, true));
+        assert!(!queue_move(&mut queue, 2, false));
+        assert!(!queue_move(&mut queue, 9, true));
+    }
+
+    #[test]
+    fn next_skips_paused_and_blocked() {
+        let queue = vec![q(1, true), q(2, false), q(3, false)];
+        assert_eq!(queue_next(&queue, |_| false), Some(1));
+        assert_eq!(queue_next(&queue, |id| id == 2), Some(2));
+        assert_eq!(queue_next(&[q(1, true)], |_| false), None);
+    }
 }
 
 #[cfg(test)]

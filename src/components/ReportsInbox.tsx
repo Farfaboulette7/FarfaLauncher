@@ -18,6 +18,9 @@ const STATUS: Record<string, { label: string; tone: "wait" | "work" | "done" }> 
   clos: { label: "Clos", tone: "done" },
 };
 
+/** Nouveautés déjà ouvertes d'elles-mêmes pendant cette session (la boîte existe en deux endroits). */
+let newsOpened = false;
+
 /** Clé de lecture des nouveautés d'une version du launcher. */
 const newsKey = (version: string) => `launcher-${version}`;
 
@@ -87,9 +90,16 @@ export function ReportsInbox({ offline }: { offline: boolean }) {
     };
   }, [load]);
 
-  if (seen === null) return null;
   // Seules les nouveautés de la version installée comptent comme nouvelles.
-  const newsUnread = !!version && news.length > 0 && news[0].version === version && !seen[newsKey(version)];
+  const newsUnread = !!seen && !!version && news.length > 0 && news[0].version === version && !seen[newsKey(version)];
+  // « Quoi de neuf » : après une mise à jour, les nouveautés s'ouvrent d'elles-mêmes, une fois.
+  useEffect(() => {
+    if (!newsUnread || newsOpened) return;
+    newsOpened = true;
+    setOpen(true);
+  }, [newsUnread]);
+
+  if (seen === null) return null;
   const count = reports.filter((r) => unread(r, seen)).length + (newsUnread ? 1 : 0);
 
   function close() {

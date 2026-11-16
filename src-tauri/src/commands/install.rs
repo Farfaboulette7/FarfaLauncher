@@ -1,5 +1,9 @@
 //! Commandes d'installation. Une installation tourne en arrière-plan et pousse
 //! `install-progress` puis `install-finished` à l'interface.
+//!
+//! File de téléchargements : une seule installation tourne à la fois ; les autres attendent
+//! (`queued`, avec leur place) ou sont en pause (`paused`). Une pause annule l'installation en
+//! cours sans effacer ce qui est téléchargé : elle reprend là où elle s'était arrêtée.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -9,7 +13,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tokio_util::sync::CancellationToken;
 
 use crate::error::{log_err, AppError, AppResult};
-use crate::install::{self, detect, path_to_rel, state, InstallJob, InstallOutcome};
+use crate::install::{self, detect, path_to_rel, state, InstallJob, InstallOutcome, Progress, QueuedInstall};
 use crate::pc::{cod, dosbox, proton};
 use crate::platform;
 use crate::romm::library::Game;
@@ -23,6 +27,17 @@ pub struct InstallInfo {
     pub games: Vec<state::InstalledGame>,
     /// Jeux en cours d'installation.
     pub active: Vec<i64>,
+    /// File d'attente, dans l'ordre.
+    pub queue: Vec<QueueEntry>,
+    /// Limite de débit des téléchargements en Mo/s (0 : illimité).
+    pub download_limit_mb: u32,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueueEntry {
+    pub rom_id: i64,
+    pub paused: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -39,6 +54,8 @@ pub fn install_info(state: State<'_, AppState>) -> InstallInfo {
         install_root: state.install_root().to_string_lossy().into_owned(),
         games: state::list_installed(&state.config_dir),
         active: state.installs.lock().unwrap().keys().copied().collect(),
+        queue: state.queue.lock().unwrap().iter().map(|q| QueueEntry { rom_id: q.rom_id, paused: q.paused }).collect(),
+        download_limit_mb: state.settings().download_limit_mb,
     }
 }
 
@@ -79,8 +96,6 @@ pub fn install_game(
         Some(_) => return Err(AppError::Internal),
         None => state.install_root(),
     };
-    let client = state.client()?;
-    let cancel = CancellationToken::new();
     let manifest = state.manifest();
     let with_emulator = with_emulator == Some(true);
     if manifest.page(rom_id).is_some() && !with_emulator {
@@ -97,58 +112,171 @@ pub fn install_game(
             return Err(AppError::AlreadyRunning);
         }
     }
+    state.client()?;
     {
-        let mut jobs = state.installs.lock().unwrap();
+        let jobs = state.installs.lock().unwrap();
         if state.running.lock().unwrap().contains(&rom_id) {
             return Err(AppError::AlreadyRunning);
         }
-        if jobs.contains_key(&rom_id) || state.is_busy(rom_id) {
+        let mut queue = state.queue.lock().unwrap();
+        if jobs.contains_key(&rom_id) || queue.iter().any(|q| q.rom_id == rom_id) || state.is_busy(rom_id) {
             return Err(AppError::Busy);
         }
-        jobs.insert(rom_id, cancel.clone());
+        queue.push(QueuedInstall { rom_id, install_root, proton, with_emulator, emulator_id: emulator, paused: false });
     }
+    emit_queue(&app);
+    pump(&app);
+    Ok(())
+}
+
+/// Place de chaque jeu de la file, envoyée à l'interface (`queued` ou `paused`).
+fn emit_queue(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let queue = state.queue.lock().unwrap().clone();
+    let total = queue.len() as u64;
+    for (i, q) in queue.iter().enumerate() {
+        let phase = if q.paused { "paused" } else { "queued" };
+        let _ = app.emit("install-progress", Progress { rom_id: q.rom_id, phase, done: i as u64 + 1, total, verifying: false });
+    }
+}
+
+/// Lance la prochaine installation de la file si aucune ne tourne.
+fn pump(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let Ok(client) = state.client() else { return };
+    let running = state.running.lock().unwrap().clone();
+    let (entry, cancel) = {
+        let mut jobs = state.installs.lock().unwrap();
+        if !jobs.is_empty() {
+            return;
+        }
+        let mut queue = state.queue.lock().unwrap();
+        let Some(i) = install::queue_next(&queue, |id| running.contains(&id) || state.is_busy(id)) else { return };
+        let entry = queue.remove(i);
+        let cancel = CancellationToken::new();
+        jobs.insert(entry.rom_id, cancel.clone());
+        (entry, cancel)
+    };
+    emit_queue(app);
+    let settings = state.settings();
+    install::download::set_limit_mb(settings.download_limit_mb);
+    let rom_id = entry.rom_id;
+    tracing::info!("installation du jeu {rom_id} : début");
     let emitter = app.clone();
     let job = InstallJob {
         client,
         config_dir: state.config_dir.clone(),
-        install_root,
+        install_root: entry.install_root.clone(),
         target: platform::detect(),
         cancel,
-        proton,
-        manifest,
+        proton: entry.proton.clone(),
+        manifest: state.manifest(),
         catalog: state.catalog(),
-        manager_base: crate::manager::base_url(&state.settings()),
-        with_emulator,
-        emulator_id: emulator,
+        manager_base: crate::manager::base_url(&settings),
+        with_emulator: entry.with_emulator,
+        emulator_id: entry.emulator_id.clone(),
         runtime_lock: state.runtime_lock.clone(),
         on_progress: Arc::new(move |p| {
             let _ = emitter.emit("install-progress", p);
         }),
     };
+    let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let result = job.run(rom_id).await;
         let state = app.state::<AppState>();
         state.installs.lock().unwrap().remove(&rom_id);
-        let payload = match result {
-            Ok(outcome) => InstallFinished { rom_id, outcome: Some(outcome), error: None },
-            Err(e) => {
-                if !matches!(e, AppError::Cancelled) {
-                    tracing::error!("installation du jeu {rom_id} échouée: {}", e.code());
+        let paused = state.pause_requested.lock().unwrap().remove(&rom_id);
+        if paused && matches!(result, Err(AppError::Cancelled)) {
+            // En pause : retour en tête de file, les fichiers déjà reçus sont gardés.
+            tracing::info!("installation du jeu {rom_id} en pause");
+            state.queue.lock().unwrap().insert(0, QueuedInstall { paused: true, ..entry });
+            emit_queue(&app);
+        } else {
+            let payload = match result {
+                Ok(outcome) => InstallFinished { rom_id, outcome: Some(outcome), error: None },
+                Err(e) => {
+                    if !matches!(e, AppError::Cancelled) {
+                        tracing::error!("installation du jeu {rom_id} échouée: {}", e.code());
+                    }
+                    InstallFinished { rom_id, outcome: None, error: Some(e) }
                 }
-                InstallFinished { rom_id, outcome: None, error: Some(e) }
-            }
-        };
-        let _ = app.emit("install-finished", payload);
+            };
+            let _ = app.emit("install-finished", payload);
+        }
+        pump(&app);
     });
-    Ok(())
+}
+
+/// Retire un jeu de la file d'attente ; l'interface le voit comme une installation annulée.
+fn drop_from_queue(app: &AppHandle, rom_id: i64) -> bool {
+    let state = app.state::<AppState>();
+    let removed = {
+        let mut queue = state.queue.lock().unwrap();
+        let before = queue.len();
+        queue.retain(|q| q.rom_id != rom_id);
+        queue.len() != before
+    };
+    if removed {
+        let _ = app.emit("install-finished", InstallFinished { rom_id, outcome: None, error: Some(AppError::Cancelled) });
+        emit_queue(app);
+    }
+    removed
 }
 
 #[tauri::command]
-pub fn cancel_install(state: State<'_, AppState>, rom_id: i64) {
-    if let Some(token) = state.installs.lock().unwrap().get(&rom_id) {
+pub fn cancel_install(app: AppHandle, state: State<'_, AppState>, rom_id: i64) {
+    let token = state.installs.lock().unwrap().get(&rom_id).cloned();
+    if let Some(token) = token {
         tracing::info!("annulation de l'installation du jeu {rom_id}");
+        state.pause_requested.lock().unwrap().remove(&rom_id);
         token.cancel();
+    } else if drop_from_queue(&app, rom_id) {
+        tracing::info!("jeu {rom_id} retiré de la file des téléchargements");
     }
+}
+
+/// Met en pause : l'installation en cours s'arrête (ce qui est téléchargé reste), une
+/// installation en attente garde sa place sans démarrer.
+#[tauri::command]
+pub fn pause_install(app: AppHandle, state: State<'_, AppState>, rom_id: i64) {
+    let token = state.installs.lock().unwrap().get(&rom_id).cloned();
+    if let Some(token) = token {
+        state.pause_requested.lock().unwrap().insert(rom_id);
+        token.cancel();
+        return;
+    }
+    if let Some(q) = state.queue.lock().unwrap().iter_mut().find(|q| q.rom_id == rom_id) {
+        q.paused = true;
+    }
+    emit_queue(&app);
+}
+
+/// Reprend une installation en pause (à son tour dans la file).
+#[tauri::command]
+pub fn resume_install(app: AppHandle, state: State<'_, AppState>, rom_id: i64) {
+    if let Some(q) = state.queue.lock().unwrap().iter_mut().find(|q| q.rom_id == rom_id) {
+        q.paused = false;
+    }
+    emit_queue(&app);
+    pump(&app);
+}
+
+/// Monte (`up`) ou descend un jeu d'une place dans la file d'attente.
+#[tauri::command]
+pub fn move_install(app: AppHandle, state: State<'_, AppState>, rom_id: i64, up: bool) {
+    let moved = install::queue_move(&mut state.queue.lock().unwrap(), rom_id, up);
+    if moved {
+        emit_queue(&app);
+    }
+}
+
+/// Limite de débit des téléchargements en Mo/s (0 : illimité), appliquée tout de suite.
+#[tauri::command]
+pub fn set_download_limit(state: State<'_, AppState>, mb: u32) -> AppResult<()> {
+    state.update_settings(|s| s.download_limit_mb = mb)?;
+    install::download::set_limit_mb(mb);
+    tracing::info!("limite de débit des téléchargements : {} Mo/s (0 = aucune)", mb);
+    Ok(())
 }
 
 /// Système des exécutables d'un jeu : un jeu Windows sous Proton a des `.exe`.
@@ -197,8 +325,10 @@ async fn game_details(state: &AppState, rom_id: i64) -> AppResult<Game> {
 }
 
 #[tauri::command]
-pub async fn uninstall_game(state: State<'_, AppState>, rom_id: i64, keep_saves: bool) -> AppResult<()> {
+pub async fn uninstall_game(app: AppHandle, state: State<'_, AppState>, rom_id: i64, keep_saves: bool) -> AppResult<()> {
     let _busy = state.mark_busy(rom_id)?;
+    // Mise à jour en attente : elle n'a plus lieu d'être.
+    drop_from_queue(&app, rom_id);
     state.check_family_idle(rom_id)?;
     let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
     // Recomp qui avait relié un dossier hors du jeu (boiii) : le lien part avec le jeu.
