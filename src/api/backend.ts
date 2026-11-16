@@ -472,6 +472,17 @@ export interface GameStopped {
   game: InstalledGame | null;
   /** Le jeu semble avoir planté : on propose d'envoyer un rapport. */
   crashed: boolean;
+  /** Détails du plantage, pour préremplir le rapport (absent avec un ancien moteur). */
+  crash?: Crash | null;
+  /** Ouvrir tout de suite la proposition de rapport (« Ne plus demander » pas coché). */
+  askReport?: boolean;
+}
+
+export interface Crash {
+  /** Durée de la partie, en secondes. */
+  seconds: number;
+  /** Erreur qui a arrêté le jeu, ou son code de sortie ; `null` : fermé trop vite. */
+  error: string | null;
 }
 
 export interface SaveSync {
@@ -582,6 +593,8 @@ export const backend = {
   /** `dest` : dossier qui contiendra celui du jeu. */
   moveGame: (romId: number, dest: string) => invoke<InstalledGame>("move_game", { romId, dest }),
   setPreferLauncher: (romId: number, prefer: boolean) => invoke<InstalledGame>("set_prefer_launcher", { romId, prefer }),
+  /** `ask = false` : « Ne plus demander pour ce jeu » après un plantage. */
+  setCrashPrompt: (romId: number, ask: boolean) => invoke<void>("set_crash_prompt", { romId, ask }),
   systemInfo: () => invoke<SystemInfo>("system_info"),
   serverPing: () => invoke<number>("server_ping"),
   optimizations: (romId: number) => invoke<Optimizations>("optimizations", { romId }),

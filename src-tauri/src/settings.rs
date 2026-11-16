@@ -30,6 +30,8 @@ pub struct Settings {
     pub reports_seen: std::collections::BTreeMap<String, u64>,
     /// Recomp choisie (identifiant du catalogue) pour les jeux qui en ont plusieurs : romId → recomp.
     pub recomp_choice: std::collections::BTreeMap<i64, String>,
+    /// Jeux (romId) pour lesquels le joueur a choisi « Ne plus demander » après un plantage.
+    pub crash_prompt_off: Vec<i64>,
 }
 
 impl Default for Settings {
@@ -44,6 +46,7 @@ impl Default for Settings {
             optimize_off: Vec::new(),
             reports_seen: Default::default(),
             recomp_choice: Default::default(),
+            crash_prompt_off: Vec::new(),
         }
     }
 }

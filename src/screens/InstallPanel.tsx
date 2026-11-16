@@ -19,6 +19,7 @@ import {
   PcKind,
   ProtonVersion,
   GameStopped,
+  Crash,
   InstallPhase,
   isAppError,
   SaveChoice,
@@ -55,6 +56,9 @@ const PHASE_LABELS: Record<InstallPhase, string> = {
   finalize: "Finalisation…",
 };
 
+/** Plantages déjà proposés au joueur : la proposition ne s'ouvre qu'une fois par partie. */
+const crashesProposed = new WeakSet<GameStopped>();
+
 interface Props {
   game: Game;
   target: Target | null;
@@ -78,6 +82,10 @@ export function InstallPanel({ game: base, target, installs, onError }: Props) {
   const [dialog, setDialog] = useState<"exe" | "uninstall" | "proton" | "cod" | "report" | null>(null);
   /** Rapport proposé juste après un plantage (le jeu s'est fermé tout seul). */
   const [reportAfterCrash, setReportAfterCrash] = useState(false);
+  /** Proposition ouverte d'elle-même après le plantage (avec « Ne plus demander »). */
+  const [reportProposed, setReportProposed] = useState(false);
+  /** Question remise en place pour ce jeu (lien « Me reproposer… »). */
+  const [crashPromptBack, setCrashPromptBack] = useState(false);
   const [reportSent, setReportSent] = useState<string | null>(null);
   /** Version de Proton choisie avant l'installation (`null` : la recommandée). */
   const [protonChoice, setProtonChoice] = useState<string | null>(null);
@@ -132,6 +140,15 @@ export function InstallPanel({ game: base, target, installs, onError }: Props) {
     };
   }, [game.id, installedExe, runningSince]);
   const last = installs.lastSession.get(game.id);
+  // Le jeu vient de planter : proposer tout de suite un rapport prérempli.
+  useEffect(() => {
+    if (!last?.askReport || !inst || runningSince !== undefined || dialog !== null || crashesProposed.has(last)) return;
+    crashesProposed.add(last);
+    setReportSent(null);
+    setReportAfterCrash(true);
+    setReportProposed(true);
+    setDialog("report");
+  }, [last, inst, runningSince, dialog]);
 
   async function run<T>(f: () => Promise<T>): Promise<T | undefined> {
     setMessage(null);
@@ -424,11 +441,28 @@ export function InstallPanel({ game: base, target, installs, onError }: Props) {
               className="n-link"
               onClick={() => {
                 setReportAfterCrash(true);
+                setReportProposed(false);
                 setDialog("report");
               }}
             >
               Signaler le problème
             </button>
+            {last.askReport === false && !crashPromptBack && (
+              <>
+                {" · "}
+                <button
+                  className="n-link"
+                  onClick={() =>
+                    backend
+                      .setCrashPrompt(game.id, true)
+                      .then(() => setCrashPromptBack(true))
+                      .catch(async (e) => setMessage(await onError(e)))
+                  }
+                >
+                  Me reproposer un rapport après un plantage
+                </button>
+              </>
+            )}
           </p>
         )}
         {reportSent && <p className="n-notice">{reportSent}</p>}
@@ -477,6 +511,7 @@ export function InstallPanel({ game: base, target, installs, onError }: Props) {
               className="n-link"
               onClick={() => {
                 setReportAfterCrash(false);
+                setReportProposed(false);
                 setDialog("report");
               }}
             >
@@ -561,6 +596,12 @@ export function InstallPanel({ game: base, target, installs, onError }: Props) {
           romId={game.id}
           name={game.name}
           afterCrash={reportAfterCrash}
+          crash={reportAfterCrash ? (last?.crash ?? null) : null}
+          proposed={reportProposed}
+          onMute={() => {
+            setCrashPromptBack(false);
+            backend.setCrashPrompt(game.id, false).catch(async (e) => setMessage(await onError(e)));
+          }}
           onClose={() => setDialog(null)}
           onSent={() => {
             setDialog(null);
@@ -1253,19 +1294,34 @@ function ReportDialog({
   romId,
   name,
   afterCrash,
+  crash,
+  proposed,
+  onMute,
   onClose,
   onSent,
 }: {
   romId: number;
   name: string;
   afterCrash: boolean;
+  /** Plantage qui vient d'arriver : la description est préremplie. */
+  crash: Crash | null;
+  /** Ouverte d'elle-même après le plantage : case « Ne plus demander pour ce jeu ». */
+  proposed: boolean;
+  /** Le joueur a coché « Ne plus demander pour ce jeu ». */
+  onMute: () => void;
   onClose: () => void;
   onSent: () => void;
 }) {
-  const [text, setText] = useState("");
+  const [text, setText] = useState(() => (crash ? crashDescription(crash) : ""));
+  const [mute, setMute] = useState(false);
   const [files, setFiles] = useState<string[] | null>(null);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Ferme la fenêtre, en retenant « Ne plus demander » s'il est coché. */
+  function close() {
+    if (mute) onMute();
+    onClose();
+  }
   useEffect(() => {
     backend
       .reportFiles(romId)
@@ -1278,6 +1334,7 @@ function ReportDialog({
     try {
       await backend.sendReport(romId, text, afterCrash);
       window.dispatchEvent(new Event(REPORT_SENT_EVENT));
+      if (mute) onMute();
       onSent();
     } catch (e) {
       setError(errorMessage(e));
@@ -1286,12 +1343,12 @@ function ReportDialog({
   }
   return (
     <Dialog
-      title="Signaler un problème"
-      onClose={sending ? () => {} : onClose}
+      title={proposed ? "Le jeu s'est arrêté" : "Signaler un problème"}
+      onClose={sending ? () => {} : close}
       actions={
         <>
-          <button className="n-btn" onClick={onClose} disabled={sending}>
-            Annuler
+          <button className="n-btn" onClick={close} disabled={sending}>
+            {proposed ? "Ne pas envoyer" : "Annuler"}
           </button>
           <button className="n-btn" onClick={send} disabled={sending || text.trim().length < 5}>
             {sending ? "Envoi…" : "Envoyer"}
@@ -1299,13 +1356,24 @@ function ReportDialog({
         </>
       }
     >
-      <p>
-        Qu'est-ce qui ne va pas avec <strong>{name}</strong> ?
-      </p>
+      {proposed ? (
+        <p>
+          <strong>{name}</strong> s'est fermé brusquement. Envoyer un rapport aide à corriger le problème : ajoutez ce que vous faisiez à ce moment-là.
+        </p>
+      ) : (
+        <p>
+          Qu'est-ce qui ne va pas avec <strong>{name}</strong> ?
+        </p>
+      )}
       <textarea
         className="n-input report-text"
         rows={5}
         autoFocus
+        onFocus={(e) => {
+          // Curseur après le texte prérempli.
+          const end = e.currentTarget.value.length;
+          e.currentTarget.setSelectionRange(end, end);
+        }}
         value={text}
         maxLength={4000}
         placeholder="Par exemple : le décor ne s'affiche plus, seul Yoshi est visible, depuis le niveau 2. Ça marchait hier."
@@ -1323,9 +1391,22 @@ function ReportDialog({
           ))}
         </ul>
       )}
+      {proposed && (
+        <label className="n-check">
+          <input type="checkbox" checked={mute} onChange={(e) => setMute(e.target.checked)} disabled={sending} />
+          Ne plus demander pour ce jeu
+        </label>
+      )}
       {error && <p className="n-alert">{error}</p>}
     </Dialog>
   );
+}
+
+/** Début de la description d'un rapport envoyé après un plantage. */
+function crashDescription(c: Crash): string {
+  const after = c.seconds < 60 ? `${c.seconds} s` : formatPlaytime(c.seconds * 1000);
+  const error = c.error ? ` (erreur : ${c.error})` : "";
+  return `Le jeu s'est arrêté tout seul au bout de ${after}${error}.\nCe que je faisais : `;
 }
 
 function UninstallDialog({

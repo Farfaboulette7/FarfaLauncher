@@ -160,6 +160,7 @@ pub fn run() {
             ingame::quit_game,
             commands::launch::set_prefer_launcher,
             commands::launch::flush_play_sessions,
+            commands::launch::set_crash_prompt,
             commands::mods::downloaded_mods,
             commands::mods::download_mod,
         ])

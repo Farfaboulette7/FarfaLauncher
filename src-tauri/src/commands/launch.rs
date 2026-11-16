@@ -29,6 +29,29 @@ struct GameStopped {
     game: Option<state::InstalledGame>,
     /// Le jeu semble avoir planté : l'interface propose d'envoyer un rapport.
     crashed: bool,
+    /// Détails du plantage (durée, erreur), pour préremplir le rapport.
+    crash: Option<crate::launch::Crash>,
+    /// Ouvrir tout de suite la proposition de rapport (le joueur n'a pas coupé la
+    /// question pour ce jeu).
+    ask_report: bool,
+}
+
+/// Faut-il ouvrir la proposition de rapport après un plantage de ce jeu ?
+fn ask_report(crash: Option<&crate::launch::Crash>, prompt_off: &[i64], rom_id: i64) -> bool {
+    crash.is_some() && !prompt_off.contains(&rom_id)
+}
+
+/// « Ne plus demander pour ce jeu » (`ask = false`) ou réactive la question après un plantage.
+#[tauri::command]
+pub fn set_crash_prompt(state: State<'_, AppState>, rom_id: i64, ask: bool) -> AppResult<()> {
+    state.update_settings(|s| {
+        s.crash_prompt_off.retain(|id| *id != rom_id);
+        if !ask {
+            s.crash_prompt_off.push(rom_id);
+        }
+    })?;
+    tracing::info!("rapport proposé après un plantage du jeu {rom_id} : {}", if ask { "oui" } else { "non" });
+    Ok(())
 }
 
 #[tauri::command]
@@ -75,13 +98,13 @@ pub async fn play_game(
 
     tauri::async_runtime::spawn(async move {
         let shown = app.clone();
-        let (learned, crashed) = tauri::async_runtime::spawn_blocking(move || {
+        let (learned, crash) = tauri::async_runtime::spawn_blocking(move || {
             running.wait_outcome(move || {
                 let _ = shown.emit("game-window", rom_id);
             })
         })
         .await
-        .unwrap_or((None, false));
+        .unwrap_or((None, None));
         ended_flag.store(true, std::sync::atomic::Ordering::Relaxed);
         let state = app.state::<AppState>();
         state.running.lock().unwrap().remove(&rom_id);
@@ -96,9 +119,21 @@ pub async fn play_game(
             let _ = window.set_focus();
         }
         let f = play::finish(&state, rom_id, started, learned, shader_job).await;
+        let ask_report = ask_report(crash.as_ref(), &state.settings().crash_prompt_off, rom_id);
         let _ = app.emit(
             "game-stopped",
-            GameStopped { rom_id, duration_ms: f.duration_ms, recorded: f.recorded, pending: f.pending, save: f.save, save_error: f.save_error, game: f.game, crashed },
+            GameStopped {
+                rom_id,
+                duration_ms: f.duration_ms,
+                recorded: f.recorded,
+                pending: f.pending,
+                save: f.save,
+                save_error: f.save_error,
+                game: f.game,
+                crashed: crash.is_some(),
+                crash,
+                ask_report,
+            },
         );
     });
     Ok(())
@@ -120,4 +155,19 @@ pub async fn flush_play_sessions(state: State<'_, AppState>) -> AppResult<usize>
         return Ok(0);
     }
     playtime::flush(&state.client()?, &state.config_dir).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ask_report;
+    use crate::launch::Crash;
+
+    #[test]
+    fn asks_after_a_crash_unless_muted_for_this_game() {
+        let crash = Crash { seconds: 3, error: None };
+        assert!(ask_report(Some(&crash), &[], 7));
+        assert!(ask_report(Some(&crash), &[8], 7));
+        assert!(!ask_report(Some(&crash), &[7], 7));
+        assert!(!ask_report(None, &[], 7));
+    }
 }

@@ -558,11 +558,12 @@ async fn play(state: &AppState, id: i64) -> AppResult<Value> {
     let crate::play::Started { running, started, shader_job, .. } = started;
     let _ = GAME_STOP.set(running.stop_flag());
     spawn_watcher(id, started.unix_timestamp());
-    let (learned, crashed) = tokio::task::spawn_blocking(move || running.wait_outcome(|| {})).await.unwrap_or((None, false));
+    let (learned, crash) = tokio::task::spawn_blocking(move || running.wait_outcome(|| {})).await.unwrap_or((None, None));
+    let crashed = crash.is_some();
     let finished = crate::play::finish(state, id, started, learned, shader_job).await;
     // Fin de partie traitée ici : le veilleur n'a plus que la synchronisation à vérifier.
     let _ = std::fs::write(session_marker(state, id, started.unix_timestamp()), b"");
-    Ok(json!({ "finished": finished, "crashed": crashed }))
+    Ok(json!({ "finished": finished, "crashed": crashed, "crash": crash }))
 }
 
 /// Partie dont `jouer` a terminé lui-même le traitement (temps de jeu enregistré).

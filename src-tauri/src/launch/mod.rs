@@ -245,7 +245,7 @@ impl RunningGame {
 
     /// Comme `wait`, et dit si le jeu semble avoir planté : fermé tout seul en moins de
     /// 15 s, ou arrêté par une erreur grave (exception Windows, signal SIGSEGV…).
-    pub fn wait_outcome(mut self, mut on_window: impl FnMut()) -> (Option<DirectLaunch>, bool) {
+    pub fn wait_outcome(mut self, mut on_window: impl FnMut()) -> (Option<DirectLaunch>, Option<Crash>) {
         // Surveillance rapprochée tant que la fenêtre du jeu n'est pas là.
         let mut window_seen = !cfg!(windows);
         let mut close_asked: Option<Instant> = None;
@@ -290,20 +290,25 @@ impl RunningGame {
         }
         let status = self.child.try_wait().ok().flatten();
         tracing::info!("jeu fermé (pid {}, {})", self.child.id(), status.map(|s| s.to_string()).unwrap_or_else(|| "état inconnu".into()));
-        let quick = self.started.elapsed() < QUICK_EXIT;
+        let elapsed = self.started.elapsed();
+        let quick = elapsed < QUICK_EXIT;
         if quick {
             self.log_output_tail();
         }
+        let fatal = status.and_then(fatal_error);
         // Fermé à la demande du launcher : pas un plantage.
-        let crashed = close_asked.is_none() && (quick || status.is_some_and(is_crash));
-        if crashed {
-            tracing::warn!("le jeu semble avoir planté (rapport de bug proposé)");
+        let crash = (close_asked.is_none() && (quick || fatal.is_some())).then(|| Crash {
+            seconds: elapsed.as_secs(),
+            error: fatal.or_else(|| status.and_then(exit_code_error)),
+        });
+        if let Some(c) = &crash {
+            tracing::warn!("le jeu semble avoir planté après {} s ({}) : rapport de bug proposé", c.seconds, c.error.as_deref().unwrap_or("fermé trop vite"));
         }
         let learned = self.watcher.as_ref().and_then(direct::Watcher::learned);
         if let Some(d) = &learned {
             tracing::info!("jeu démarré par le launcher: {} {:?}", d.exe, d.args);
         }
-        (learned, crashed)
+        (learned, crash)
     }
 
     /// Demande au jeu de se fermer : ses fenêtres reçoivent WM_CLOSE (Windows),
@@ -683,15 +688,113 @@ mod tests {
 
 /// Arrêt sur erreur grave : exception Windows (code 0xC0000000 et plus), ou signal de
 /// plantage sous Linux et macOS.
-fn is_crash(status: std::process::ExitStatus) -> bool {
+/// Arrêt brusque d'un jeu : de quoi proposer et préremplir un rapport de bug.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Crash {
+    /// Durée de la partie, en secondes.
+    pub seconds: u64,
+    /// Erreur qui a arrêté le jeu (« 0xC0000005 (accès mémoire refusé) »), ou son code de
+    /// sortie s'il s'est fermé trop vite ; `None` : fermé trop vite, sans code d'erreur.
+    pub error: Option<String>,
+}
+
+/// Erreur grave qui a arrêté le jeu : exception Windows, signal sous Linux et macOS.
+fn fatal_error(status: std::process::ExitStatus) -> Option<String> {
     #[cfg(windows)]
     {
-        status.code().is_some_and(|c| c as u32 >= 0xC000_0000)
+        status.code().and_then(|c| windows_exception(c as u32))
     }
     #[cfg(unix)]
     {
         use std::os::unix::process::ExitStatusExt;
-        status.signal().is_some_and(|s| [4, 6, 7, 8, 11].contains(&s))
+        status.signal().and_then(fatal_signal)
+    }
+}
+
+/// Code de sortie différent de 0 (jeu fermé trop vite sans erreur grave).
+fn exit_code_error(status: std::process::ExitStatus) -> Option<String> {
+    status.code().filter(|c| *c != 0).map(|c| format!("code de sortie {c}"))
+}
+
+/// Exception Windows (codes 0xC…), avec son nom quand il est connu.
+fn windows_exception(code: u32) -> Option<String> {
+    if code < 0xC000_0000 {
+        return None;
+    }
+    let name = match code {
+        0xC000_0005 => Some("accès mémoire refusé"),
+        0xC000_001D => Some("instruction non prise en charge par le processeur"),
+        0xC000_0094 => Some("division par zéro"),
+        0xC000_00FD => Some("dépassement de pile"),
+        0xC000_0135 => Some("DLL introuvable"),
+        0xC000_0142 => Some("une DLL n'a pas pu démarrer"),
+        0xC000_0374 => Some("mémoire du jeu corrompue"),
+        0xC000_0409 => Some("arrêt d'urgence du jeu"),
+        0xC06D_007E => Some("module introuvable"),
+        _ => None,
+    };
+    Some(match name {
+        Some(n) => format!("0x{code:08X} ({n})"),
+        None => format!("0x{code:08X}"),
+    })
+}
+
+/// Signal qui a arrêté le jeu, s'il signale un plantage.
+#[cfg_attr(windows, allow(dead_code))]
+fn fatal_signal(signal: i32) -> Option<String> {
+    let name = match signal {
+        4 => "SIGILL, instruction non prise en charge",
+        6 => "SIGABRT, arrêt d'urgence du jeu",
+        7 => "SIGBUS, erreur d'accès mémoire",
+        8 => "SIGFPE, erreur de calcul",
+        11 => "SIGSEGV, accès mémoire refusé",
+        _ => return None,
+    };
+    Some(format!("signal {signal} ({name})"))
+}
+
+#[cfg(test)]
+mod crash_tests {
+    use super::*;
+
+    #[test]
+    fn names_windows_exceptions() {
+        assert_eq!(windows_exception(0xC000_0005).as_deref(), Some("0xC0000005 (accès mémoire refusé)"));
+        assert_eq!(windows_exception(0xC123_4567).as_deref(), Some("0xC1234567"));
+        // Codes de sortie ordinaires : pas une exception.
+        assert_eq!(windows_exception(0), None);
+        assert_eq!(windows_exception(1), None);
+    }
+
+    #[test]
+    fn names_fatal_signals() {
+        assert_eq!(fatal_signal(11).as_deref(), Some("signal 11 (SIGSEGV, accès mémoire refusé)"));
+        // SIGTERM, SIGKILL : fermeture demandée, pas un plantage.
+        assert_eq!(fatal_signal(15), None);
+        assert_eq!(fatal_signal(9), None);
+    }
+
+    #[test]
+    fn exit_code_only_when_not_zero() {
+        #[cfg(windows)]
+        use std::os::windows::process::ExitStatusExt;
+        #[cfg(unix)]
+        use std::os::unix::process::ExitStatusExt;
+        #[cfg(windows)]
+        let (ok, err) = (std::process::ExitStatus::from_raw(0), std::process::ExitStatus::from_raw(3));
+        // Sous Unix, le statut brut porte le code de sortie dans l'octet du haut.
+        #[cfg(unix)]
+        let (ok, err) = (std::process::ExitStatus::from_raw(0), std::process::ExitStatus::from_raw(3 << 8));
+        assert_eq!(exit_code_error(ok), None);
+        assert_eq!(exit_code_error(err).as_deref(), Some("code de sortie 3"));
+        assert_eq!(fatal_error(err), None);
+    }
+
+    #[test]
+    fn crash_serializes_for_the_interface() {
+        let c = Crash { seconds: 8, error: Some("code de sortie 1".into()) };
+        assert_eq!(serde_json::to_value(&c).unwrap(), serde_json::json!({ "seconds": 8, "error": "code de sortie 1" }));
     }
 }
 
