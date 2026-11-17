@@ -26,3 +26,63 @@
 .inbox-notes-item::before { content: ""; position: absolute; left: 3px; top: 0.6em; width: 6px; height: 6px; background: var(--nier-low); }
 .inbox-older summary { cursor: pointer; font-weight: 600; }
 .inbox-older[open] summary { margin-bottom: 4px; }
+/* Onglets de la fenêtre Messages : signalements / nouvelles versions. */
+.inbox-tabs { display: flex; gap: 6px; border-bottom: var(--nier-line) solid var(--nier-low); }
+.inbox-tab {
+  position: relative; display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 14px 7px; font: inherit; font-size: var(--fs-sm); letter-spacing: var(--nier-tracking-wide);
+  color: var(--nier-low); background: var(--nier-high-mid); border: none; cursor: pointer; opacity: 0.75;
+}
+.inbox-tab:hover, .inbox-tab:focus-visible { opacity: 1; outline: none; }
+.inbox-tab[aria-selected="true"] { opacity: 1; color: var(--nier-high); background: var(--nier-low); }
+
+/* Liste des signalements : chaque ligne ouvre sa discussion. */
+.inbox-list > li { list-style: none; }
+.inbox-row { display: block; width: 100%; text-align: left; font: inherit; color: inherit; background: none; cursor: pointer; }
+.inbox-row:hover, .inbox-row:focus-visible { background: var(--nier-high-mid); outline: none; }
+.inbox-preview { margin: 6px 0 0 !important; font-size: var(--fs-sm); opacity: 0.8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Discussion avec le support. */
+.chat { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.chat-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.chat-title { flex: 1 1 0; min-width: 0; }
+.chat-back { padding-left: 10px; padding-right: 12px; }
+.chat-log {
+  list-style: none; margin: 0; padding: 10px; display: flex; flex-direction: column; gap: 12px;
+  max-height: min(52vh, 520px); overflow-y: auto; background: var(--nier-surface);
+  border: var(--nier-line) solid var(--nier-high-mid);
+}
+.chat-msg { display: flex; flex-direction: column; max-width: 85%; }
+.chat-msg.is-me { align-self: flex-end; align-items: flex-end; }
+.chat-msg.is-support { align-self: flex-start; align-items: flex-start; }
+.chat-who { font-size: var(--fs-xs); opacity: 0.7; margin-bottom: 3px; }
+.chat-bubble { padding: 8px 12px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-bubble p { margin: 0; }
+.chat-bubble p + p { margin-top: 4px; }
+.is-me .chat-bubble { background: var(--nier-low); color: var(--nier-high); }
+.is-support .chat-bubble { background: var(--nier-high); border-left: 3px solid var(--nier-low); }
+.chat-changes-title { margin-top: 8px !important; font-size: var(--fs-xs); letter-spacing: var(--nier-tracking-wide); text-transform: uppercase; opacity: 0.7; }
+.chat-changes { margin: 2px 0 0; padding-left: 18px; font-size: 0.95em; white-space: normal; }
+.chat-fixed { margin-top: 6px !important; font-size: var(--fs-xs); opacity: 0.8; }
+.chat-end { height: 0; }
+
+/* Trois petits points : le support prépare sa réponse. */
+.chat-typing { display: inline-flex; gap: 5px; align-items: center; padding: 12px 14px; }
+.chat-typing span { width: 7px; height: 7px; background: var(--nier-low); animation: chat-dot 1.2s infinite ease-in-out; }
+.chat-typing span:nth-child(2) { animation-delay: 0.15s; }
+.chat-typing span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes chat-dot {
+  0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-4px); }
+}
+@media (prefers-reduced-motion: reduce) { .chat-typing span { animation-duration: 2.4s; transform: none !important; } }
+.chat-offline { margin: 0; }
+
+.chat-compose { display: flex; gap: 8px; align-items: stretch; }
+.chat-input { flex: 1 1 auto; resize: vertical; min-height: 48px; font-family: inherit; }
+.chat-compose .n-btn { align-self: flex-end; }
+
+/* Taille fixe : changer d'onglet ou ouvrir une discussion ne fait pas bouger la fenêtre. */
+.dialog.n-panel.inbox-dialog { width: min(640px, 100%); height: min(640px, 100%); }
+.inbox-dialog .dialog-body { flex: 1 1 auto; min-height: 0; }
+.inbox-dialog .inbox-tabs { flex: none; }

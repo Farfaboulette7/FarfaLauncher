@@ -519,6 +519,15 @@ pub async fn prepare_cod(
         if let Err(e) = set_boiii_name(game_dir, player) {
             tracing::warn!("pseudo non écrit pour boiii: {}", e.code());
         }
+        // Installations aplaties (avant la 0.9.8) : zone/ rangé avant de jouer.
+        let gd = game_dir.to_path_buf();
+        blocking(move || -> AppResult<()> {
+            if let Err(e) = cod::repair_bo3_zone(&gd) {
+                tracing::warn!("zone/ de Black Ops III non rangé: {e}");
+            }
+            Ok(())
+        })
+        .await?;
     }
     match launch {
         cod::ModeLaunch::Exe { exe, args } => Ok((PathBuf::from(exe), args, None)),

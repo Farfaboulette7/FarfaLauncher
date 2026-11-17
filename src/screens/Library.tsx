@@ -182,6 +182,12 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
   const [seen, setSeen] = useState(loadSeen);
   const [showSettings, setShowSettings] = useState(false);
   const [hack, setHack] = useState<Hack | null>(null);
+  /** Filtre alphabétique (« # » : chiffres, signes, autres alphabets). */
+  const [letter, setLetter] = useState<string | null>(null);
+  /** Index alphabétique de RomM, par console chargée à la demande. */
+  const [charIndexes, setCharIndexes] = useState(new Map<string, { index: Record<string, number>; total: number }>());
+  /** Jeux d'une lettre d'une console chargée à la demande : clé `console:lettre`. */
+  const [letterPages, setLetterPages] = useState(new Map<string, { ids: number[]; loading: boolean }>());
   /** Centre de la jaquette d'où l'on est parti (point de retour du zoom). */
   const openedFrom = useRef({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
   /** Dernier jeu ouvert : sa jaquette sert de cible au zoom arrière. */
@@ -364,6 +370,43 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
     if (group && lazyUseful && !consolePages.has(group.key) && !session.offline) loadConsole(group, 0);
   }, [group, lazyUseful, consolePages, loadConsole, session.offline]);
 
+  // Filtre alphabétique : remis à zéro en changeant de vue.
+  useEffect(() => setLetter(null), [tab, consoleKey]);
+  // Console chargée à la demande : son index alphabétique (une petite requête), pour savoir
+  // quelles lettres ont des jeux et où les trouver sans tout charger.
+  useEffect(() => {
+    if (!group || !lazyUseful || session.offline || charIndexes.has(group.key)) return;
+    const key = group.key;
+    backend
+      .consoleCharIndex(group.lazyIds)
+      .then((ci) => setCharIndexes((m) => new Map(m).set(key, ci)))
+      .catch((e) => console.warn("index alphabétique non chargé", e));
+  }, [group, lazyUseful, session.offline, charIndexes]);
+  // Une lettre choisie dans une console pas entièrement chargée : seulement les jeux de cette lettre.
+  const letterKey = group && letter ? `${group.key}:${letter}` : null;
+  useEffect(() => {
+    if (!group || !letter || !letterKey || !lazyUseful || session.offline || letterPages.has(letterKey)) return;
+    if (consolePages.get(group.key)?.hasMore === false) return; // déjà toute chargée
+    const ci = charIndexes.get(group.key);
+    if (!ci) return;
+    const target = group;
+    setLetterPages((m) => new Map(m).set(letterKey, { ids: [], loading: true }));
+    (async () => {
+      const ids: number[] = [];
+      try {
+        for (const r of letterRanges(ci.index, ci.total, letter)) {
+          const page = await backend.consoleGamesRange(target.lazyIds, r.offset, r.limit);
+          addExtra(page.games);
+          ids.push(...page.games.map((g) => g.id));
+        }
+      } catch (e) {
+        setWarning(await handleError(e));
+      }
+      setLetterPages((m) => new Map(m).set(letterKey, { ids, loading: false }));
+    })();
+  }, [group, letter, letterKey, lazyUseful, session.offline, letterPages, consolePages, charIndexes, addExtra, handleError]);
+  const letterLoading = !!letterKey && !!letterPages.get(letterKey)?.loading;
+
   // « Récent » : les derniers ajouts de tout RomM, pas seulement les recomps.
   useEffect(() => {
     if (tab !== "recent" || session.offline) return;
@@ -445,10 +488,11 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
       return installedIds.map((id) => known(id)).filter((g): g is Game => !!g).sort((a, b) => collator.compare(a.name, b.name));
     const own = consoleKey === null ? allGames : allGames.filter((g) => gameKey(g) === consoleKey);
     const ownIds = new Set(own.map((g) => g.id));
-    const page = consoleKey ? (consolePages.get(consoleKey)?.ids ?? []) : [];
+    const lettered = consoleKey && letter ? (letterPages.get(`${consoleKey}:${letter}`)?.ids ?? []) : [];
+    const page = consoleKey ? [...new Set([...(consolePages.get(consoleKey)?.ids ?? []), ...lettered])] : [];
     const loaded = page.map((id) => extra.get(id)).filter((g): g is Game => !!g && !ownIds.has(g.id));
     return [...own, ...loaded].sort((a, b) => collator.compare(a.name, b.name));
-  }, [tab, allGames, favorites.ids, consoleKey, consolePages, extra, recentIds, known, gameKey, kind, installedIds]);
+  }, [tab, allGames, favorites.ids, consoleKey, consolePages, letter, letterPages, extra, recentIds, known, gameKey, kind, installedIds]);
 
   const q = term.toLocaleLowerCase("fr");
   // « Récent » montre tous les derniers ajouts, sans filtre.
@@ -463,6 +507,15 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
     return [...local, ...found].filter((g) => matchesKind(g, shownKind, installs.installed));
   }, [q, viewGames, tab, searchIds, extra, consoleKey, gameKey, shownKind, installs.installed]);
   const showPlatforms = tab === "library" && consoleKey === null && !q && kind !== "installed";
+  const showLetters = !showPlatforms && tab !== "recent" && !!snapshot;
+  // Lettres qui ont des jeux : ceux de la vue, plus l'index de RomM pour une console chargée à la demande.
+  const charIndex = group && lazyUseful ? charIndexes.get(group.key) : undefined;
+  const lettersWithGames = useMemo(() => {
+    const s = new Set(games.map((g) => letterOf(g.name)));
+    for (const k of Object.keys(charIndex?.index ?? {})) s.add(letterOf(k));
+    return s;
+  }, [games, charIndex]);
+  const shownGames = useMemo(() => (letter ? games.filter((g) => letterOf(g.name) === letter) : games), [games, letter]);
   const page = consoleKey ? consolePages.get(consoleKey) : undefined;
 
   function openTab(t: Tab) {
@@ -652,8 +705,8 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
           onChange={(e) => setQuery(e.target.value)}
         />
         <span className="n-hint lib-count">
-          {searching && <span className="n-spinner" />}
-          {snapshot && !showPlatforms && `${games.length} jeu${games.length > 1 ? "x" : ""}${page?.hasMore ? "+" : ""}`}
+          {(searching || letterLoading) && <span className="n-spinner" />}
+          {snapshot && !showPlatforms && `${shownGames.length} jeu${shownGames.length > 1 ? "x" : ""}${page?.hasMore && !letter ? "+" : ""}`}
           {snapshot && showPlatforms && `${platforms.length} plateforme${platforms.length > 1 ? "s" : ""}`}
           {fetched && ` · mis à jour ${fetched}`}
         </span>
@@ -689,7 +742,8 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
         </div>
       )}
 
-      <main className="lib-grid-wrap n-appear" key={`${tab}:${consoleKey}`} ref={grid}>
+      <div className="lib-body">
+      <main className="lib-grid-wrap n-appear" key={`${tab}:${consoleKey}:${letter ?? ""}`} ref={grid}>
         {!snapshot && loading && (
           <p className="lib-empty">
             <span className="n-spinner" /> Chargement de la bibliothèque…
@@ -707,10 +761,12 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
             ))}
           </ul>
         )}
-        {!showPlatforms && snapshot && games.length === 0 && !page?.loading && !searching && <p className="lib-empty">{emptyMessage(tab, q, favorites.loading, shownKind)}</p>}
+        {!showPlatforms && snapshot && shownGames.length === 0 && !page?.loading && !searching && !letterLoading && (
+          <p className="lib-empty">{letter ? `Aucun jeu à la lettre ${letter}.` : emptyMessage(tab, q, favorites.loading, shownKind)}</p>
+        )}
         {!showPlatforms && tab !== "recent" && (
           <VirtualGrid
-            games={games}
+            games={shownGames}
             initialScroll={listScroll}
             renderCard={(g) => (
               <GameCard game={g} fresh={isNew(g, seen)} inst={installs.installed.get(g.id)} busy={installs.progress.has(g.id)} favorite={favorites.ids.has(g.id)} onOpen={onOpenCard} />
@@ -738,12 +794,61 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
               </ul>
             </section>
           ))}
-        {!showPlatforms && !q && group && lazyUseful && page?.hasMore && (
+        {!showPlatforms && !q && !letter && group && lazyUseful && page?.hasMore && (
           <LoadMore loading={page.loading} onVisible={() => !page.loading && loadConsole(group, page.ids.length)} />
         )}
       </main>
+      {showLetters && (
+        <nav className="lib-letters" aria-label="Filtrer par lettre">
+          <button className="lib-letter lib-letter--all" aria-pressed={letter === null} onClick={() => setLetter(null)} title="Toutes les lettres">
+            Tout
+          </button>
+          {LETTERS.map((l) => (
+            <button
+              key={l}
+              className="lib-letter"
+              aria-pressed={letter === l}
+              disabled={letter !== l && !lettersWithGames.has(l)}
+              title={l === "#" ? "Chiffres, signes et autres alphabets" : `Jeux en ${l}`}
+              onClick={() => {
+                listScroll.current = 0;
+                setLetter(letter === l ? null : l);
+              }}
+            >
+              {l}
+            </button>
+          ))}
+        </nav>
+      )}
+      </div>
     </div>,
   );
+}
+
+/** Lettres du filtre alphabétique, sur le côté de la grille. */
+const LETTERS = ["#", ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"];
+
+/** Lettre d'un nom pour le filtre : sa première lettre sans accent, sinon « # » (chiffres, signes, japonais…). */
+function letterOf(name: string): string {
+  const c = name.trim().normalize("NFD").replace(/[̀-ͯ]/g, "").charAt(0).toUpperCase();
+  return c >= "A" && c <= "Z" ? c : "#";
+}
+
+/**
+ * Tranches de la liste triée par nom de RomM dont le premier caractère tombe sous cette lettre,
+ * d'après son index alphabétique (caractère → position du premier jeu). Tranches voisines fusionnées.
+ */
+function letterRanges(index: Record<string, number>, total: number, letter: string): { offset: number; limit: number }[] {
+  const entries = Object.entries(index).sort((a, b) => a[1] - b[1]);
+  const ranges: { offset: number; limit: number }[] = [];
+  entries.forEach(([key, start], i) => {
+    const end = i + 1 < entries.length ? entries[i + 1][1] : total;
+    if (end <= start || letterOf(key) !== letter) return;
+    const last = ranges[ranges.length - 1];
+    if (last && last.offset + last.limit === start) last.limit += end - start;
+    else ranges.push({ offset: start, limit: end - start });
+  });
+  return ranges;
 }
 
 function viewTitle(tab: Tab, group: ConsoleGroup | null): string {

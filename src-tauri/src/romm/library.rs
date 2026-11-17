@@ -379,6 +379,25 @@ pub async fn list_games_page(client: &RommClient, platform_ids: &[i64], me: Targ
     Ok((page.items.into_iter().map(|r| to_game(r, client.base(), me, false)).collect(), more))
 }
 
+#[derive(Deserialize)]
+struct RawCharIndex {
+    #[serde(default)]
+    char_index: std::collections::BTreeMap<String, usize>,
+    #[serde(default)]
+    total: usize,
+}
+
+/// Index alphabétique d'une console : premier caractère du nom (en minuscule, tel que RomM
+/// le calcule) → position du premier jeu dans la liste triée par nom ; et le nombre de jeux.
+pub async fn char_index(client: &RommClient, platform_ids: &[i64]) -> AppResult<(std::collections::BTreeMap<String, usize>, usize)> {
+    let ids: String = platform_ids.iter().map(|id| format!("&platform_ids={id}")).collect();
+    let path = format!(
+        "api/roms?with_char_index=true&with_filter_values=false&with_rom_id_index=false&with_total=true&order_by=name&order_dir=asc&limit=1&offset=0{ids}"
+    );
+    let raw: RawCharIndex = client.get_json(&path).await?;
+    Ok((raw.char_index, raw.total))
+}
+
 /// Recherche dans tout RomM (sans les fichiers des jeux).
 pub async fn search_games(client: &RommClient, term: &str, me: Target, limit: usize) -> AppResult<Vec<Game>> {
     let path = format!(

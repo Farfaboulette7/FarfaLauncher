@@ -4,7 +4,8 @@
   flex-direction: column;
 }
 .lib > * { flex: none; }
-.lib > .lib-grid-wrap { flex: 1 1 auto; min-height: 0; }
+.lib > .lib-body { flex: 1 1 auto; min-height: 0; display: flex; }
+.lib-body > .lib-grid-wrap { flex: 1 1 auto; min-width: 0; }
 
 /* ---------- Onglets principaux ---------- */
 .lib-brand { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
@@ -377,3 +378,32 @@
 .dl-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dl-list .n-hint { grid-column: 1; }
 .dl-actions { grid-column: 2; grid-row: 1 / span 2; display: flex; gap: 12px; align-items: center; }
+
+/* ---------- Filtre alphabétique (sur le côté de la grille) ---------- */
+.lib-letters {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 16px clamp(6px, 0.8vw, 14px) 16px 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.lib-letter {
+  flex: none;
+  min-width: 30px;
+  padding: 2px 4px;
+  font: inherit;
+  font-size: var(--fs-xs);
+  line-height: 1.3;
+  text-align: center;
+  color: var(--nier-text);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.lib-letter--all { margin-bottom: 4px; letter-spacing: 0; }
+.lib-letter:hover:not(:disabled),
+.lib-letter:focus-visible { background: var(--nier-high-mid); outline: none; }
+.lib-letter[aria-pressed="true"] { background: var(--nier-low); color: var(--nier-high); }
+.lib-letter:disabled { opacity: 0.3; cursor: default; }

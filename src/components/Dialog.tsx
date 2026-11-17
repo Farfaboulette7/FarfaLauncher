@@ -6,10 +6,12 @@ interface Props {
   children: ReactNode;
   actions: ReactNode;
   onClose?: () => void;
+  /** Classe en plus sur la fenêtre (taille propre à une fenêtre). */
+  className?: string;
 }
 
 /** Fenêtre modale au style YoRHa (Échap ferme si `onClose` est fourni). */
-export function Dialog({ title, children, actions, onClose }: Props) {
+export function Dialog({ title, children, actions, onClose, className }: Props) {
   useEffect(() => {
     if (!onClose) return;
     const onKey = (e: KeyboardEvent) => {
@@ -31,7 +33,7 @@ export function Dialog({ title, children, actions, onClose }: Props) {
       // Clic à côté de la fenêtre : comme « Annuler ».
       onClick={(e) => e.target === e.currentTarget && onClose?.()}
     >
-      <div className="dialog n-panel n-appear">
+      <div className={`dialog n-panel n-appear${className ? ` ${className}` : ""}`}>
         <div className="n-panel-header">{title}</div>
         <div className="n-panel-body dialog-body">{children}</div>
         <div className="dialog-actions">{actions}</div>

@@ -466,6 +466,40 @@ pub fn cod_modes(state: State<'_, AppState>, rom_id: i64) -> AppResult<Vec<cod::
     Ok(st.pc.and_then(|p| p.cod).map(|c| c.modes()).unwrap_or_default())
 }
 
+/// Black Ops III installé : son dossier.
+fn bo3_dir(state: &AppState, rom_id: i64) -> AppResult<std::path::PathBuf> {
+    let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
+    match st.pc.and_then(|p| p.cod) {
+        Some(cod::CodGame::Bo3) => Ok(st.game_dir),
+        _ => Err(AppError::Internal),
+    }
+}
+
+/// Langue en place de Black Ops III (`fr` ou `en`).
+#[tauri::command]
+pub fn bo3_language(state: State<'_, AppState>, rom_id: i64) -> AppResult<&'static str> {
+    Ok(cod::bo3_language(&bo3_dir(&state, rom_id)?))
+}
+
+/// Met Black Ops III en `fr` ou en `en` (renommages des zones, instantané).
+#[tauri::command]
+pub async fn set_bo3_language(state: State<'_, AppState>, rom_id: i64, lang: String) -> AppResult<&'static str> {
+    if !cod::BO3_LANGUAGES.contains(&lang.as_str()) {
+        return Err(AppError::Internal);
+    }
+    if state.running.lock().unwrap().contains(&rom_id) {
+        return Err(AppError::AlreadyRunning);
+    }
+    let dir = bo3_dir(&state, rom_id)?;
+    tokio::task::spawn_blocking(move || -> AppResult<&'static str> {
+        cod::repair_bo3_zone(&dir).map_err(|e| crate::error::log_err(AppError::Disk, "zone/ de Black Ops III", e))?;
+        cod::set_bo3_language(&dir, &lang).map_err(|e| crate::error::log_err(AppError::Disk, "langue de Black Ops III", e))?;
+        Ok(cod::bo3_language(&dir))
+    })
+    .await
+    .map_err(|_| AppError::Internal)?
+}
+
 #[tauri::command]
 pub fn set_install_dir(state: State<'_, AppState>, path: Option<String>) -> AppResult<String> {
     let dir = path.map(PathBuf::from).filter(|p| p.is_absolute());

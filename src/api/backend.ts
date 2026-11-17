@@ -78,7 +78,7 @@ export type Manual = { kind: "resource"; url: string } | { kind: "file"; file: R
 
 /** Jeu de la plateforme « Ordinateur ». */
 export type PcKind = "portable" | "archive" | "gogInstaller" | "cod";
-export type CodGame = "cod4" | "waw" | "mw2" | "bo1" | "bo2" | "mw3";
+export type CodGame = "cod4" | "waw" | "mw2" | "bo1" | "bo2" | "mw3" | "bo3";
 export type CodMode = "sp" | "mp" | "zm";
 
 export interface PcGame {
@@ -170,6 +170,9 @@ export interface CodModeInfo {
   /** Passe par Plutonium : en ligne ou en LAN. */
   plutonium: boolean;
 }
+
+/** Langue de Black Ops III (boiii ne parle qu'anglais au jeu : le launcher renomme ses zones). */
+export type Bo3Language = "fr" | "en";
 
 export interface Platform {
   id: number;
@@ -435,6 +438,13 @@ export interface Optimizations {
   applied: { label: string; key: string; value: string }[];
 }
 
+/** Message du fil d'un rapport : le joueur, ou Claude qui lui répond. */
+export interface ReportMessage {
+  de: "joueur" | "claude";
+  texte: string;
+  at: number | null;
+}
+
 /** Rapport de bug envoyé par ce joueur, avec la réponse après analyse. */
 export interface MyReport {
   id: string;
@@ -450,6 +460,8 @@ export interface MyReport {
   modifications: string[];
   /** Version du launcher qui apporte la correction. */
   corrigeDans: string | null;
+  /** Échanges après la première réponse (absent sur un gestionnaire plus ancien). */
+  messages?: ReportMessage[];
   /** Dernière nouvelle (secondes Unix). */
   updatedAt: number;
 }
@@ -638,7 +650,13 @@ export const backend = {
   myReports: () => invoke<MyReport[]>("my_reports"),
   reportsSeen: () => invoke<Record<string, number>>("reports_seen"),
   markReportsSeen: (seen: Record<string, number>) => invoke<void>("mark_reports_seen", { seen }),
+  replyReport: (id: string, text: string) => invoke<{ messages: ReportMessage[]; status: string }>("reply_report", { id, text }),
+  supportStatus: () => invoke<{ enLigne: boolean; vuA: number | null }>("support_status"),
   consoleGames: (platformIds: number[], offset: number) => invoke<GamesPage>("console_games", { platformIds, offset }),
+  consoleGamesRange: (platformIds: number[], offset: number, limit: number) =>
+    invoke<GamesPage>("console_games_range", { platformIds, offset, limit }),
+  /** Index alphabétique de RomM : premier caractère (minuscule) → position dans la liste triée par nom. */
+  consoleCharIndex: (platformIds: number[]) => invoke<{ index: Record<string, number>; total: number }>("console_char_index", { platformIds }),
   searchGames: (term: string) => invoke<Game[]>("search_games", { term }),
   recentGames: () => invoke<Game[]>("recent_games"),
   gamesByIds: (ids: number[]) => invoke<Game[]>("games_by_ids", { ids }),
@@ -650,6 +668,8 @@ export const backend = {
   protonVersions: () => invoke<ProtonVersion[]>("proton_versions"),
   setProtonVersion: (romId: number, version: string | null) => invoke<InstalledGame>("set_proton_version", { romId, version }),
   codModes: (romId: number) => invoke<CodModeInfo[]>("cod_modes", { romId }),
+  bo3Language: (romId: number) => invoke<Bo3Language>("bo3_language", { romId }),
+  setBo3Language: (romId: number, lang: Bo3Language) => invoke<Bo3Language>("set_bo3_language", { romId, lang }),
   setKeyBinds: (romId: number, keys: KeyBind[]) => invoke<InstalledGame>("set_key_binds", { romId, keys }),
   controllerPorts: (romId: number) => invoke<number>("controller_ports", { romId }),
   setPlayers: (romId: number, players: (PlayerPad | null)[]) => invoke<InstalledGame>("set_players", { romId, players }),

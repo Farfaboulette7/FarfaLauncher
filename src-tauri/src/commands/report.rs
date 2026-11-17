@@ -87,3 +87,33 @@ pub fn mark_reports_seen(state: State<'_, AppState>, seen: std::collections::BTr
     state.update_settings(|s| s.reports_seen.extend(seen))?;
     Ok(())
 }
+
+/// Réponse du joueur à l'analyse d'un de ses rapports (Claude lui répondra dans le fil).
+#[tauri::command]
+pub async fn reply_report(state: State<'_, AppState>, id: String, text: String) -> AppResult<serde_json::Value> {
+    let text = text.trim().to_string();
+    if text.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err(AppError::Internal);
+    }
+    let base = crate::manager::base_url(&state.settings()).ok_or(AppError::ServerUnreachable)?;
+    let client = state.client()?.with_base(&base);
+    let resp = client
+        .send(client.post(&format!("api/reports/{id}/reply"), &serde_json::json!({ "texte": text })))
+        .await?;
+    let thread: serde_json::Value = resp.json().await.map_err(|e| log_err(AppError::Server, "réponse au message", e))?;
+    tracing::info!("réponse envoyée au rapport {id}");
+    // Écrit d'ici : pas une nouvelle à signaler.
+    let seen_at = state::now() + 120;
+    state.update_settings(|s| {
+        s.reports_seen.insert(id, seen_at);
+    })?;
+    Ok(thread)
+}
+
+/// Le support (le PC qui analyse les rapports) est-il allumé ? `{ "enLigne": bool, "vuA": secondes|null }`.
+#[tauri::command]
+pub async fn support_status(state: State<'_, AppState>) -> AppResult<serde_json::Value> {
+    let base = crate::manager::base_url(&state.settings()).ok_or(AppError::ServerUnreachable)?;
+    let client = state.client()?.with_base(&base);
+    client.get_json("api/reports/support").await
+}

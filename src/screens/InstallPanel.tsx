@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   backend,
+  Bo3Language,
   CodChoice,
   errorMessage,
   CodModeInfo,
@@ -765,6 +766,53 @@ const PC_KIND_LABELS: Record<PcKind, string> = {
   cod: "jeu + client communautaire",
 };
 
+/** Black Ops III : langue du jeu (boiii ne parle qu'anglais au jeu, le launcher renomme ses zones). */
+function Bo3LanguageFact({ romId, playing }: { romId: number; playing: boolean }) {
+  const [lang, setLang] = useState<Bo3Language | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    backend
+      .bo3Language(romId)
+      .then((l) => live && setLang(l))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [romId]);
+  const choose = (l: Bo3Language) => {
+    if (l === lang || busy) return;
+    setBusy(true);
+    setError(null);
+    backend
+      .setBo3Language(romId, l)
+      .then(setLang)
+      .catch((e) => setError(errorMessage(e)))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <>
+      <dt>Langue</dt>
+      <dd>
+        <span className="gd-lang" role="group" aria-label="Langue du jeu">
+          {(
+            [
+              ["fr", "Français"],
+              ["en", "English"],
+            ] as const
+          ).map(([code, label]) => (
+            <button key={code} className="n-btn" aria-pressed={lang === code} disabled={busy || playing || lang === null} onClick={() => choose(code)}>
+              {label}
+            </button>
+          ))}
+        </span>
+        {error && <p className="n-alert">{error}</p>}
+      </dd>
+    </>
+  );
+}
+
 /** Détails de l'installation, affichés dans l'onglet « Informations ». */
 export function InstallFacts({ game: base, target, installs }: { game: Game; target: Target | null; installs: InstallsState }) {
   const inst = installs.installed.get(base.id);
@@ -891,6 +939,7 @@ export function InstallFacts({ game: base, target, installs }: { game: Game; tar
           <dd>{inst.pc.proton.version ?? "version recommandée"}</dd>
         </>
       )}
+      {inst?.executable && inst.pc?.cod === "bo3" && <Bo3LanguageFact romId={base.id} playing={playing} />}
       {!inst && isAvailable(game) && (
         <>
           <dt>Téléchargement</dt>

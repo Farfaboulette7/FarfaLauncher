@@ -638,11 +638,13 @@ impl Catalog {
 
     pub fn recomp_for_rom(&self, rom_id: i64) -> Option<&CatalogRecomp> {
         let all = self.recomps_for_rom(rom_id);
-        let chosen = self.choices.get(&rom_id).and_then(|id| all.iter().find(|r| &r.id == id));
         // Sans choix : la conseillée, puis la première, parmi celles qui ont une build pour ce
         // système (Longshot n'en a pas sous Linux : Hookshot y reste proposée).
         let me = crate::platform::detect();
         let here = |r: &&&CatalogRecomp| r.is_shared() || r.archives(me).1.is_some();
+        // Un choix enregistré sans build pour ce système (Longshot retenu sous Linux par une
+        // ancienne version) est ignoré : sinon la mise à jour échoue toujours (« not_available »).
+        let chosen = self.choices.get(&rom_id).and_then(|id| all.iter().filter(here).find(|r| &r.id == id));
         chosen
             .or_else(|| all.iter().filter(here).find(|r| r.advice.is_some()))
             .or_else(|| all.iter().find(here))
@@ -799,6 +801,10 @@ mod tests {
                    vec![("hookshot", true, false), ("longshot", true, true)]);
         // Conseillée sans build pour ce système : celle qui en a une.
         let sans: Catalog = serde_json::from_str(&text.replace(&format!(r#"[{{"name":"l_{0}.zip","size":1,"sha1":"b","system":"{0}"}}]"#, me.suffix()), "[]")).unwrap();
+        assert_eq!(sans.recomp_for_rom(7).unwrap().id, "hookshot");
+        // Choix enregistré d'une recomp sans build pour ce système : ignoré.
+        let mut sans = sans;
+        sans.choices.insert(7, "longshot".into());
         assert_eq!(sans.recomp_for_rom(7).unwrap().id, "hookshot");
         assert!(c.recomp_offers(8, Target::Windows).is_empty()); // une seule : pas de choix
         assert_eq!(c.recomp_for_rom(8).unwrap().id, "seule");

@@ -265,6 +265,8 @@ pub async fn favorite_set(state: State<'_, AppState>, rom_id: i64, favorite: boo
 
 /// Jeux par page pour les consoles chargées à la demande.
 const CONSOLE_PAGE: usize = 60;
+/// Jeux au plus d'une tranche (une lettre d'une grosse console).
+const CONSOLE_RANGE_MAX: usize = 1000;
 const SEARCH_LIMIT: usize = 60;
 const RECENT_LIMIT: usize = 24;
 
@@ -295,6 +297,30 @@ pub async fn console_games(state: State<'_, AppState>, platform_ids: Vec<i64>, o
     let me = platform::detect();
     let (games, has_more) = library::list_games_page(&state.client()?, &platform_ids, me, offset, CONSOLE_PAGE).await?;
     Ok(GamesPage { games: annotated(&state, games, me), has_more })
+}
+
+/// Tranche des jeux d'une console triés par nom (filtre par lettre : de la position de la
+/// lettre dans l'index alphabétique à celle de la suivante).
+#[tauri::command]
+pub async fn console_games_range(state: State<'_, AppState>, platform_ids: Vec<i64>, offset: usize, limit: usize) -> AppResult<GamesPage> {
+    let me = platform::detect();
+    let limit = limit.clamp(1, CONSOLE_RANGE_MAX);
+    let (games, has_more) = library::list_games_page(&state.client()?, &platform_ids, me, offset, limit).await?;
+    Ok(GamesPage { games: annotated(&state, games, me), has_more })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CharIndex {
+    pub index: std::collections::BTreeMap<String, usize>,
+    pub total: usize,
+}
+
+/// Index alphabétique d'une console (voir `library::char_index`).
+#[tauri::command]
+pub async fn console_char_index(state: State<'_, AppState>, platform_ids: Vec<i64>) -> AppResult<CharIndex> {
+    let (index, total) = library::char_index(&state.client()?, &platform_ids).await?;
+    Ok(CharIndex { index, total })
 }
 
 #[tauri::command]
