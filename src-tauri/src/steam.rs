@@ -436,7 +436,10 @@ mod tests {
     #[test]
     fn add_keeps_other_shortcuts_and_updates_in_place() {
         let mut root = parse(&sample()).unwrap();
-        let exe = Path::new(r"C:\Users\x\FarfaLauncher\farfalauncher.exe");
+        // Chemin du système qui fait tourner les tests (Linux et macOS ne découpent pas `C:\…`).
+        let dir = Path::new(if cfg!(windows) { r"C:\Users\x\FarfaLauncher" } else { "/home/x/FarfaLauncher" });
+        let exe_path = dir.join("farfalauncher.exe");
+        let exe = exe_path.as_path();
         let id = upsert(&mut root, 42, "Zelda", exe, None);
         assert!(id & 0x8000_0000 != 0);
         assert_eq!(id, shortcut_appid(&format!("\"{}\"", exe.display()), "Zelda"));
@@ -446,7 +449,7 @@ mod tests {
         assert_eq!(list[1].0, "1");
         let ours = &list[1].1;
         assert_eq!(ours.str("LaunchOptions").unwrap(), "--jouer 42");
-        assert_eq!(ours.str("StartDir").unwrap(), r#""C:\Users\x\FarfaLauncher""#);
+        assert_eq!(ours.str("StartDir").unwrap(), format!("\"{}\"", dir.display()));
         assert_eq!(ours.get("appid"), Some(&Vdf::Int(id as i32)));
         assert_eq!(find(&root, 42), Some(id));
         assert_eq!(find(&root, 7), None);
