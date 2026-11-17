@@ -330,12 +330,12 @@ impl CodGame {
 
 // ---------- Black Ops III : zones et langue ----------
 //
-// boiii répond toujours « english » quand le jeu demande la langue de Steam
-// (`GetCurrentGameLanguage`), et `localization.txt` n'y change rien : le jeu charge donc
-// toujours `zone/en_*` et `zone/snd/en/`. Pour le français, on fait comme la communauté :
-// les zones `fr_*` prennent le nom des `en_*` (mises de côté) et `snd/fr` celui de `snd/en`.
-// Uniquement des renommages : instantané, sans place en plus, pareil sous Proton.
-// Le choix se fait dans l'onglet Informations du jeu et reste en place d'une partie à l'autre.
+// La langue du jeu vient de `localization.txt`, à la racine : c'est ce que fait le
+// « Language Switcher » fourni avec le jeu (dossiers `French` et `English`). Les versions
+// 1.0 et 1.1 bêta renommaient en plus les zones `fr_*` en `en_*` (et `snd/fr` en `snd/en`),
+// en croyant le jeu bloqué en anglais par boiii : il cherchait alors les `fr_*` disparus et
+// plantait. Ces renommages sont défaits (`restore_bo3_zones`), au changement de langue et
+// avant chaque partie. Le choix se fait dans l'onglet Informations du jeu.
 
 /// Langues proposées pour Black Ops III (le jeu les contient toutes les deux).
 pub const BO3_LANGUAGES: [&str; 2] = ["fr", "en"];
@@ -347,13 +347,18 @@ fn bo3_kept(game_dir: &Path) -> PathBuf {
     game_dir.join(crate::install::extract::INTERNAL_DIR).join(BO3_KEPT)
 }
 
-/// Langue en place : `fr` si les zones françaises portent les noms anglais.
+/// `localization.txt` du « Language Switcher » fourni avec le jeu.
+fn bo3_switcher(game_dir: &Path, lang: &str) -> PathBuf {
+    let folder = if lang == "fr" { "French" } else { "English" };
+    game_dir.join("_Language Switcher").join(folder).join("localization.txt")
+}
+
+/// Langue en place : `fr` si `localization.txt` est celui du français.
 pub fn bo3_language(game_dir: &Path) -> &'static str {
-    let zone = game_dir.join("zone");
-    if !zone.join("fr_core_pre_gfx.ff").exists() && bo3_kept(game_dir).join("en_core_pre_gfx.ff").exists() {
-        "fr"
-    } else {
-        "en"
+    let read = |p: &Path| std::fs::read(p).ok();
+    match (read(&game_dir.join("localization.txt")), read(&bo3_switcher(game_dir, "fr"))) {
+        (Some(cur), Some(fr)) if cur == fr => "fr",
+        _ => "en",
     }
 }
 
@@ -363,9 +368,8 @@ fn strip_lang<'a>(name: &'a str, lang: &str) -> Option<&'a str> {
     head.eq_ignore_ascii_case(&format!("{lang}_")).then(|| &name[3..])
 }
 
-/// Banques de sons d'un dossier `snd/<langue>` : `core.fr.sabl` devient `core.en.sabl`
-/// (`from` → `to`). Le jeu, qui se croit en anglais, ne cherche que des `*.en.*` dans
-/// `snd/en` : sans ce renommage, il ne trouve aucune banque et plante au démarrage.
+/// Banques de sons d'un dossier `snd/<langue>` : `core.en.sabl` devient `core.fr.sabl`
+/// (`from` → `to`). Ne remplace jamais un fichier déjà là.
 fn rename_snd_banks(dir: &Path, from: &str, to: &str) -> std::io::Result<usize> {
     if !dir.is_dir() {
         return Ok(0);
@@ -397,80 +401,62 @@ fn files_of(dir: &Path) -> std::io::Result<Vec<(String, PathBuf)>> {
     Ok(out)
 }
 
-/// Met Black Ops III en `fr` ou en `en`. Rejouable sans risque : reprend un changement
-/// interrompu, et accepte une réinstallation faite par-dessus (zones neuves des deux langues).
+/// Met Black Ops III en `fr` ou en `en` : seulement `localization.txt`, comme le
+/// « Language Switcher » fourni avec le jeu. Défait d'abord les renommages de zones des
+/// versions 1.0 et 1.1 bêta : le jeu, mis en français par ce fichier, y cherchait des `fr_*`
+/// et `snd/fr` qui n'existaient plus, et plantait au démarrage (rapport 20261117-130619-1-10625).
 pub fn set_bo3_language(game_dir: &Path, lang: &str) -> std::io::Result<()> {
+    restore_bo3_zones(game_dir)?;
+    let switcher = bo3_switcher(game_dir, lang);
+    if switcher.is_file() {
+        std::fs::copy(&switcher, game_dir.join("localization.txt"))?;
+        tracing::info!("Black Ops III en « {lang} »");
+    }
+    Ok(())
+}
+
+/// Remet les zones et les sons sous leurs vrais noms (`fr_*`, `snd/fr/*.fr.*`) après un
+/// passage au français fait par renommage. Rejouable sans risque : reprend un changement
+/// interrompu, et accepte une réinstallation faite par-dessus (zones neuves des deux langues).
+/// Appelé aussi avant chaque partie, pour réparer les jeux déjà passés en français.
+pub fn restore_bo3_zones(game_dir: &Path) -> std::io::Result<()> {
     use std::fs;
     let zone = game_dir.join("zone");
-    if !zone.is_dir() {
+    let kept = bo3_kept(game_dir);
+    if !zone.is_dir() || !kept.is_dir() {
         return Ok(());
     }
-    let kept = bo3_kept(game_dir);
     let (snd_fr, snd_en, snd_kept) = (zone.join("snd").join("fr"), zone.join("snd").join("en"), kept.join(SND_KEPT));
     let mut moved = 0;
-    if lang == "fr" {
-        fs::create_dir_all(&kept)?;
-        for (name, fr) in files_of(&zone)? {
-            let Some(rest) = strip_lang(&name, "fr") else { continue };
-            let (en, en_kept) = (zone.join(format!("en_{rest}")), kept.join(format!("en_{rest}")));
-            if en.exists() {
-                // fr_ encore là : en_ est la vraie zone anglaise (une ancienne copie à côté est périmée).
-                if en_kept.exists() {
-                    fs::remove_file(&en_kept)?;
-                }
-                fs::rename(&en, &en_kept)?;
-            }
-            fs::rename(&fr, &en)?;
-            moved += 1;
+    for (name, en_kept) in files_of(&kept)? {
+        let Some(rest) = strip_lang(&name, "en") else { continue };
+        let (en, fr) = (zone.join(format!("en_{rest}")), zone.join(format!("fr_{rest}")));
+        if fr.exists() && en.exists() {
+            // Réinstallé par-dessus : les deux langues sont déjà en place.
+            fs::remove_file(&en_kept)?;
+            continue;
         }
-        if snd_fr.is_dir() {
+        if en.exists() {
+            fs::rename(&en, &fr)?;
+        }
+        fs::rename(&en_kept, &en)?;
+        moved += 1;
+    }
+    if snd_kept.is_dir() {
+        if snd_fr.is_dir() && snd_en.is_dir() {
+            fs::remove_dir_all(&snd_kept)?;
+        } else {
             if snd_en.is_dir() {
-                if snd_kept.exists() {
-                    fs::remove_dir_all(&snd_kept)?;
-                }
-                fs::rename(&snd_en, &snd_kept)?;
+                // Banques passées en `*.en.*` par la version de test : elles reprennent `*.fr.*`.
+                moved += rename_snd_banks(&snd_en, "en", "fr")?;
+                fs::rename(&snd_en, &snd_fr)?;
             }
-            fs::rename(&snd_fr, &snd_en)?;
+            fs::rename(&snd_kept, &snd_en)?;
         }
-        // Aussi pour un jeu passé en français par une version qui ne renommait que le dossier.
-        moved += rename_snd_banks(&snd_en, "fr", "en")?;
-    } else {
-        if kept.is_dir() {
-            for (name, en_kept) in files_of(&kept)? {
-                let Some(rest) = strip_lang(&name, "en") else { continue };
-                let (en, fr) = (zone.join(format!("en_{rest}")), zone.join(format!("fr_{rest}")));
-                if fr.exists() && en.exists() {
-                    // Réinstallé par-dessus : les deux langues sont déjà en place.
-                    fs::remove_file(&en_kept)?;
-                    continue;
-                }
-                if en.exists() {
-                    fs::rename(&en, &fr)?;
-                }
-                fs::rename(&en_kept, &en)?;
-                moved += 1;
-            }
-        }
-        if snd_kept.is_dir() {
-            if snd_fr.is_dir() && snd_en.is_dir() {
-                fs::remove_dir_all(&snd_kept)?;
-            } else {
-                if snd_en.is_dir() {
-                    moved += rename_snd_banks(&snd_en, "en", "fr")?;
-                    fs::rename(&snd_en, &snd_fr)?;
-                }
-                fs::rename(&snd_kept, &snd_en)?;
-            }
-        }
-        let _ = fs::remove_dir(&kept);
     }
-    // Textes de la fenêtre d'erreur du jeu, comme le « Language Switcher » fourni avec.
-    let switcher = game_dir.join("_Language Switcher").join(if lang == "fr" { "French" } else { "English" }).join("localization.txt");
-    if switcher.is_file() {
-        fs::copy(&switcher, game_dir.join("localization.txt"))?;
-    }
+    let _ = fs::remove_dir(&kept);
     if moved > 0 {
-        tracing::info!("Black Ops III en « {lang} » ({moved} zone(s) renommée(s))");
+        tracing::info!("Black Ops III : {moved} zone(s) remise(s) sous leur vrai nom");
     }
     Ok(())
 }
@@ -628,80 +614,97 @@ mod tests {
         gd
     }
 
-    #[test]
-    fn bo3_switches_language_back_and_forth() {
-        let gd = bo3_dir();
+    /// Toutes les zones et banques sous leur vrai nom, rien de mis de côté.
+    fn assert_bo3_untouched(gd: &Path) {
         let z = gd.join("zone");
-        assert_eq!(bo3_language(&gd), "en");
-        set_bo3_language(&gd, "fr").unwrap();
-        assert_eq!(bo3_language(&gd), "fr");
-        assert_eq!(read(&z.join("en_core_pre_gfx.ff")), "français");
-        assert_eq!(read(&z.join("en_base.xpak")), "français");
-        assert!(!z.join("fr_core_pre_gfx.ff").exists());
-        // Les banques prennent aussi le nom anglais : le jeu ne cherche que des `*.en.*`.
-        assert_eq!(read(&z.join("snd/en/core.en.sabl")), "français");
-        assert!(!z.join("snd/en/core.fr.sabl").exists());
-        assert!(!z.join("snd/fr").exists());
-        assert_eq!(read(&z.join("mp_common.ff")), "commun");
-        assert_eq!(read(&gd.join("localization.txt")), "french\r\n");
-        // Deux fois de suite : rien ne bouge.
-        set_bo3_language(&gd, "fr").unwrap();
-        assert_eq!(read(&z.join("en_core_pre_gfx.ff")), "français");
-
-        set_bo3_language(&gd, "en").unwrap();
-        assert_eq!(bo3_language(&gd), "en");
-        assert_eq!(read(&z.join("en_core_pre_gfx.ff")), "anglais");
-        assert_eq!(read(&z.join("fr_core_pre_gfx.ff")), "français");
-        assert_eq!(read(&z.join("snd/en/core.en.sabl")), "anglais");
-        assert_eq!(read(&z.join("snd/fr/core.fr.sabl")), "français");
-        assert_eq!(read(&gd.join("localization.txt")), "english\r\n");
-        assert!(!bo3_kept(&gd).exists());
-        set_bo3_language(&gd, "en").unwrap();
-        assert_eq!(read(&z.join("en_core_pre_gfx.ff")), "anglais");
-        std::fs::remove_dir_all(gd).unwrap();
-    }
-
-    #[test]
-    fn bo3_french_sound_banks_from_an_older_switch_are_renamed() {
-        // Passé en français par la 1.0.0 : dossier renommé, banques encore en `*.fr.*`.
-        let gd = bo3_dir();
-        let z = gd.join("zone");
-        set_bo3_language(&gd, "fr").unwrap();
-        std::fs::rename(z.join("snd/en/core.en.sabl"), z.join("snd/en/core.fr.sabl")).unwrap();
-        set_bo3_language(&gd, "fr").unwrap();
-        assert_eq!(read(&z.join("snd/en/core.en.sabl")), "français");
-        assert!(!z.join("snd/en/core.fr.sabl").exists());
-        // Et retour à l'anglais depuis cet ancien état.
-        std::fs::rename(z.join("snd/en/core.en.sabl"), z.join("snd/en/core.fr.sabl")).unwrap();
-        set_bo3_language(&gd, "en").unwrap();
-        assert_eq!(read(&z.join("snd/en/core.en.sabl")), "anglais");
-        assert_eq!(read(&z.join("snd/fr/core.fr.sabl")), "français");
-        std::fs::remove_dir_all(gd).unwrap();
-    }
-
-    #[test]
-    fn bo3_language_survives_a_reinstall_and_an_interruption() {
-        let gd = bo3_dir();
-        let z = gd.join("zone");
-        set_bo3_language(&gd, "fr").unwrap();
-        // Réinstallation par-dessus : les archives reposent les deux langues.
-        put(&z.join("en_core_pre_gfx.ff"), "anglais");
-        put(&z.join("fr_core_pre_gfx.ff"), "français");
-        put(&z.join("snd/fr/core.fr.sabl"), "français");
-        set_bo3_language(&gd, "fr").unwrap();
-        assert_eq!(read(&z.join("en_core_pre_gfx.ff")), "français");
-        assert_eq!(read(&bo3_kept(&gd).join("en_core_pre_gfx.ff")), "anglais");
-        set_bo3_language(&gd, "en").unwrap();
         assert_eq!(read(&z.join("en_core_pre_gfx.ff")), "anglais");
         assert_eq!(read(&z.join("fr_core_pre_gfx.ff")), "français");
         assert_eq!(read(&z.join("en_base.xpak")), "anglais");
+        assert_eq!(read(&z.join("fr_base.xpak")), "français");
+        assert_eq!(read(&z.join("snd/en/core.en.sabl")), "anglais");
+        assert_eq!(read(&z.join("snd/fr/core.fr.sabl")), "français");
+        assert_eq!(read(&z.join("mp_common.ff")), "commun");
+        assert!(!bo3_kept(gd).exists());
+    }
+
+    /// Passage au français tel que le faisaient la 1.0 (`banks` faux) et la version de test
+    /// du rapport 20261117-130619-1-10625 (`banks` vrai).
+    fn old_french_switch(gd: &Path, banks: bool) {
+        let (z, kept) = (gd.join("zone"), bo3_kept(gd));
+        std::fs::create_dir_all(&kept).unwrap();
+        for rest in ["core_pre_gfx.ff", "base.xpak"] {
+            std::fs::rename(z.join(format!("en_{rest}")), kept.join(format!("en_{rest}"))).unwrap();
+            std::fs::rename(z.join(format!("fr_{rest}")), z.join(format!("en_{rest}"))).unwrap();
+        }
+        std::fs::rename(z.join("snd/en"), kept.join(SND_KEPT)).unwrap();
+        std::fs::rename(z.join("snd/fr"), z.join("snd/en")).unwrap();
+        if banks {
+            std::fs::rename(z.join("snd/en/core.fr.sabl"), z.join("snd/en/core.en.sabl")).unwrap();
+        }
+    }
+
+    #[test]
+    fn bo3_switches_language_back_and_forth() {
+        let gd = bo3_dir();
+        put(&gd.join("localization.txt"), "english\r\n");
+        assert_eq!(bo3_language(&gd), "en");
+        set_bo3_language(&gd, "fr").unwrap();
+        assert_eq!(bo3_language(&gd), "fr");
+        assert_eq!(read(&gd.join("localization.txt")), "french\r\n");
+        // Le jeu choisit seul ses zones `fr_*` : aucune n'est renommée.
+        assert_bo3_untouched(&gd);
+        set_bo3_language(&gd, "fr").unwrap();
+        assert_eq!(bo3_language(&gd), "fr");
+
+        set_bo3_language(&gd, "en").unwrap();
+        assert_eq!(bo3_language(&gd), "en");
+        assert_eq!(read(&gd.join("localization.txt")), "english\r\n");
+        assert_bo3_untouched(&gd);
+        std::fs::remove_dir_all(gd).unwrap();
+    }
+
+    #[test]
+    fn bo3_zones_renamed_by_older_versions_are_restored() {
+        for banks in [false, true] {
+            // Changement de langue depuis l'ancien état.
+            let gd = bo3_dir();
+            old_french_switch(&gd, banks);
+            set_bo3_language(&gd, "fr").unwrap();
+            assert_bo3_untouched(&gd);
+            assert_eq!(bo3_language(&gd), "fr");
+            std::fs::remove_dir_all(gd).unwrap();
+
+            // Ou simple lancement : `restore_bo3_zones`, sans toucher à la langue.
+            let gd = bo3_dir();
+            old_french_switch(&gd, banks);
+            restore_bo3_zones(&gd).unwrap();
+            assert_bo3_untouched(&gd);
+            restore_bo3_zones(&gd).unwrap();
+            assert_bo3_untouched(&gd);
+            std::fs::remove_dir_all(gd).unwrap();
+        }
+    }
+
+    #[test]
+    fn bo3_restore_survives_a_reinstall_and_an_interruption() {
+        let gd = bo3_dir();
+        let z = gd.join("zone");
+        old_french_switch(&gd, true);
+        // Réinstallation par-dessus : les archives reposent les deux langues.
+        put(&z.join("en_core_pre_gfx.ff"), "anglais");
+        put(&z.join("fr_core_pre_gfx.ff"), "français");
+        put(&z.join("en_base.xpak"), "anglais");
+        put(&z.join("fr_base.xpak"), "français");
+        put(&z.join("snd/en/core.en.sabl"), "anglais");
+        put(&z.join("snd/fr/core.fr.sabl"), "français");
+        restore_bo3_zones(&gd).unwrap();
+        assert_bo3_untouched(&gd);
 
         // Coupé en plein passage au français : zone anglaise rangée, française pas encore renommée.
         std::fs::create_dir_all(bo3_kept(&gd)).unwrap();
         std::fs::rename(z.join("en_base.xpak"), bo3_kept(&gd).join("en_base.xpak")).unwrap();
-        set_bo3_language(&gd, "en").unwrap();
-        assert_eq!(read(&z.join("en_base.xpak")), "anglais");
-        assert_eq!(read(&z.join("fr_base.xpak")), "français");
+        restore_bo3_zones(&gd).unwrap();
+        assert_bo3_untouched(&gd);
         std::fs::remove_dir_all(gd).unwrap();
     }
 
