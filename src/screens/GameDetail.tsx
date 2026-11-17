@@ -30,9 +30,12 @@ interface Props {
   favoriteError: string | null;
   onBack: () => void;
   onError: (e: unknown) => Promise<string>;
+  /** Lancer le jeu dès qu'il est prêt (raccourci Steam). */
+  autoPlay?: boolean;
+  onAutoPlayed?: () => void;
 }
 
-export function GameDetail({ game, platform, target, installs, favorite, onToggleFavorite, favoriteError, onBack, onError }: Props) {
+export function GameDetail({ game, platform, target, installs, favorite, onToggleFavorite, favoriteError, onBack, onError, autoPlay, onAutoPlayed }: Props) {
   const [tab, setTab] = useState<Tab>("infos");
   // Nouveautés de la recomp ou de l'émulateur : l'onglet n'apparaît que s'il y en a.
   const [changelog, setChangelog] = useState<Changelog | null>(null);
@@ -122,7 +125,7 @@ export function GameDetail({ game, platform, target, installs, favorite, onToggl
               </button>
             )}
           </div>
-          <InstallPanel game={game} target={target} installs={installs} onError={onError} />
+          <InstallPanel game={game} target={target} installs={installs} onError={onError} autoPlay={autoPlay} onAutoPlayed={onAutoPlayed} />
         </aside>
 
         <section className="gd-main n-panel">

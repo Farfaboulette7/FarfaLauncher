@@ -266,6 +266,8 @@
   gap: 4px 16px;
 }
 .gd-actions .gd-inst-actions .n-link { font-size: var(--fs-xs); }
+/* Confirmation de « Ajouter à Steam » : sur sa propre ligne, après les liens. */
+.gd-steam-notice { order: 99; flex-basis: 100%; margin: 4px 0 0; }
 .gd-progress { display: flex; flex-direction: column; gap: 8px; }
 .gd-progress-label {
   font-size: var(--fs-sm);

@@ -185,6 +185,8 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
   const [selectedId, setSelectedId] = useState<number | null>(null);
   /** Statistiques ouvertes : joueur (`null` : soi), `undefined` : fermées. */
   const [statsFor, setStatsFor] = useState<number | null | undefined>(undefined);
+  /** Jeu à lancer dès l'ouverture de sa fiche (raccourci Steam). */
+  const [autoPlayId, setAutoPlayId] = useState<number | null>(null);
   const [seen, setSeen] = useState(loadSeen);
   const [showSettings, setShowSettings] = useState(false);
   const [hack, setHack] = useState<Hack | null>(null);
@@ -307,6 +309,32 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
 
   const allGames = useMemo(() => snapshot?.games ?? [], [snapshot]);
   const known = useCallback((id: number) => allGames.find((g) => g.id === id) ?? extra.get(id), [allGames, extra]);
+
+  // Raccourci Steam (`--jouer <id>`) : la fiche du jeu s'ouvre et le jeu se lance. Au démarrage
+  // (launcher ouvert par Steam), puis à chaque raccourci lancé pendant que le launcher est ouvert.
+  const knownLatest = useRef(known);
+  knownLatest.current = known;
+  useEffect(() => {
+    const playFromSteam = (id: number) => {
+      if (!knownLatest.current(id)) {
+        backend
+          .gamesByIds([id])
+          .then(addExtra)
+          .catch(() => undefined);
+      }
+      setShowSettings(false);
+      setStatsFor(undefined);
+      setAutoPlayId(id);
+      setSelectedId(id);
+    };
+    void backend.takePlayRequest().then((id) => id !== null && playFromSteam(id)).catch(() => undefined);
+    const off = listen<number>("play-request", () => {
+      void backend.takePlayRequest().then((id) => id !== null && playFromSteam(id)).catch(() => undefined);
+    });
+    return () => {
+      void off.then((f) => f());
+    };
+  }, [addExtra]);
   /** Console d'une plateforme : son slug, ou « Ordinateur » pour les jeux PC. */
   const keyOf = useCallback((p: Platform) => (p.name === PC_PLATFORM ? PC_PLATFORM : p.slug), []);
   const pcPlatforms = useMemo(() => new Set((snapshot?.platforms ?? []).filter((p) => p.name === PC_PLATFORM).map((p) => p.id)), [snapshot]);
@@ -636,8 +664,13 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
         favorite={favorites.ids.has(selected.id)}
         onToggleFavorite={favorites.offline || favorites.needsRelogin ? null : () => favorites.toggle(selected.id)}
         favoriteError={favorites.error}
-        onBack={closeGame}
+        onBack={() => {
+          setAutoPlayId(null);
+          closeGame();
+        }}
         onError={handleError}
+        autoPlay={autoPlayId === selected.id}
+        onAutoPlayed={() => setAutoPlayId(null)}
       />,
     );
   }

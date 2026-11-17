@@ -36,6 +36,7 @@ mod secrets;
 mod settings;
 mod shaders;
 mod stats;
+mod steam;
 mod state;
 mod switch_content;
 mod switch_saves;
@@ -52,6 +53,8 @@ use tauri::Manager;
 pub fn run() {
     external::prepare_linux();
     tauri::Builder::default()
+        // En premier : un second lancement (raccourci Steam) passe la main au launcher ouvert.
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| commands::steam::on_second_instance(app, &args)))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -88,6 +91,7 @@ pub fn run() {
             app.manage(commands::update::PendingUpdate::default());
             gamepad::start(app.handle().clone());
             commands::presence::start(app.handle());
+            commands::steam::on_start(&std::env::args().collect::<Vec<_>>());
             commands::stats::sync_later(app.handle(), 20);
             Ok(())
         })
@@ -109,6 +113,9 @@ pub fn run() {
             commands::presence::set_presence_hidden,
             commands::presence::friend_avatar,
             commands::stats::player_stats,
+            commands::steam::take_play_request,
+            commands::steam::steam_info,
+            commands::steam::add_to_steam,
             commands::stats::stats_ranking,
             commands::stats::game_ranking,
             commands::stats::set_stats_hidden,

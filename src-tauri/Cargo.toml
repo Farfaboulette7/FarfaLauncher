@@ -19,7 +19,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 #   compilé avec `--no-default-features --bin farfalauncherdeck`.
 [features]
 default = ["gui"]
-gui = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-opener", "dep:tauri-plugin-dialog", "dep:tauri-plugin-updater", "dep:tauri-plugin-process", "dep:keyring"]
+gui = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-opener", "dep:tauri-plugin-dialog", "dep:tauri-plugin-updater", "dep:tauri-plugin-process", "dep:tauri-plugin-single-instance", "dep:keyring"]
 
 [[bin]]
 name = "farfalauncher"
@@ -45,6 +45,8 @@ futures-util = "0.3"
 url = "2"
 psl = "2"
 sha1 = "0.10"
+# Identifiant des raccourcis Steam (steam.rs).
+crc32fast = "1"
 md-5 = "0.10"
 chd = "0.4"
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs", "deflate64", "bzip2", "lzma", "xz", "zstd", "time"] }
@@ -61,6 +63,8 @@ tracing-appender = "0.2"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"], optional = true }
 tauri-plugin-updater = { version = "2", optional = true }
 tauri-plugin-process = { version = "2", optional = true }
+# « Ajouter à Steam » : un raccourci relance le launcher déjà ouvert au lieu d'en ouvrir un second.
+tauri-plugin-single-instance = { version = "2", optional = true }
 sysinfo = { version = "0.39.6", default-features = false, features = ["system", "disk"] }
 # Manettes : SDL3 compilé en statique, comme la plupart des émulateurs et recomps
 # (mêmes noms et identifiants pour attribuer les joueurs). Voir src/gamepad.rs.

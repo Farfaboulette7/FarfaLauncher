@@ -135,10 +135,11 @@ pub async fn play_game(
                 save_error: f.save_error,
                 game: f.game,
                 crashed: crash.is_some(),
-                crash,
+                crash: crash.clone(),
                 ask_report,
             },
         );
+        crate::commands::steam::after_game(&app, rom_id, crash.is_some());
     });
     Ok(())
 }

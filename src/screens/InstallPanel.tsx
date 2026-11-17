@@ -73,10 +73,56 @@ interface Props {
   target: Target | null;
   installs: InstallsState;
   onError: (e: unknown) => Promise<string>;
+  /** Lancer le jeu dès qu'il est prêt (raccourci Steam). */
+  autoPlay?: boolean;
+  onAutoPlayed?: () => void;
+}
+
+/** « Ajouter à Steam » : raccourci qui lance le jeu par le launcher, avec ses images. */
+function SteamLink({ romId, onError }: { romId: number; onError: (e: unknown) => Promise<string> }) {
+  const [info, setInfo] = useState<{ available: boolean; added: boolean } | null>(null);
+  const [state, setState] = useState<"idle" | "adding" | "done">("idle");
+  const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    backend
+      .steamInfo(romId)
+      .then((i) => alive && setInfo(i))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [romId]);
+  if (!info?.available) return null;
+  async function add() {
+    setState("adding");
+    setNotice(null);
+    try {
+      const r = await backend.addToSteam(romId);
+      setState("done");
+      setInfo({ available: true, added: true });
+      setNotice(
+        `${r.updated ? "Raccourci Steam mis à jour" : "Ajouté à Steam"} ✓ ${
+          r.steamRunning ? "Redémarrez Steam (Steam → Quitter, puis rouvrez-le) pour le voir." : "Il apparaîtra à la prochaine ouverture de Steam."
+        }`,
+      );
+    } catch (e) {
+      setState("idle");
+      setNotice(await onError(e));
+    }
+  }
+  return (
+    <>
+      <button className="n-link" disabled={state === "adding"} onClick={() => void add()} title="Raccourci non-Steam qui lance le jeu par FaRFa project, avec sa jaquette">
+        {state === "adding" ? "Ajout à Steam…" : info.added ? "Mettre à jour le raccourci Steam" : "Ajouter à Steam"}
+      </button>
+      {notice && <p className="n-notice gd-steam-notice">{notice}</p>}
+    </>
+  );
 }
 
 
-export function InstallPanel({ game: base, target, installs, onError }: Props) {
+export function InstallPanel({ game: base, target, installs, onError, autoPlay, onAutoPlayed }: Props) {
   const inst = installs.installed.get(base.id);
   /** Serveur injoignable : jouer oui, installer ou mettre à jour non. */
   const offline = useOffline();
@@ -184,6 +230,14 @@ export function InstallPanel({ game: base, target, installs, onError }: Props) {
     if (err) setMessage(err);
     else if (choice === "server") setSaveNotice("Sauvegarde du serveur récupérée (l'ancienne est gardée dans .farfalauncher/backups).");
   }
+
+  // Raccourci Steam : le jeu se lance dès qu'il est prêt (installé, ni en cours ni occupé).
+  useEffect(() => {
+    if (!autoPlay || !inst?.executable || progress || runningSince !== undefined || launching || dialog !== null) return;
+    onAutoPlayed?.();
+    onPlay();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoPlay, inst, progress, runningSince, launching, dialog]);
 
   /** « Jouer » : un Call of Duty demande d'abord son mode. */
   function onPlay() {
@@ -528,6 +582,7 @@ export function InstallPanel({ game: base, target, installs, onError }: Props) {
                 Dossier des sauvegardes…
               </button>
             )}
+            <SteamLink romId={game.id} onError={onError} />
             {!installedWithEmulator && (
               <button className="n-link" onClick={moveGame}>
                 {inst.shared ? "Déplacer la recomp…" : "Déplacer le jeu…"}

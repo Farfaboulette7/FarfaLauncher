@@ -750,6 +750,10 @@ export const backend = {
   statsRanking: () => invoke<RankingRow[] | null>("stats_ranking"),
   gameRanking: (romId: number) => invoke<RankingRow[] | null>("game_ranking", { romId }),
   setStatsHidden: (hidden: boolean) => invoke<boolean>("set_stats_hidden", { hidden }),
+  /** Jeu demandé par un raccourci Steam (`--jouer <id>`), une seule fois. */
+  takePlayRequest: () => invoke<number | null>("take_play_request"),
+  steamInfo: (romId: number) => invoke<{ available: boolean; added: boolean }>("steam_info", { romId }),
+  addToSteam: (romId: number) => invoke<{ appid: number; steamRunning: boolean; updated: boolean }>("add_to_steam", { romId }),
   reportsSeen: () => invoke<Record<string, number>>("reports_seen"),
   markReportsSeen: (seen: Record<string, number>) => invoke<void>("mark_reports_seen", { seen }),
   replyReport: (id: string, text: string) => invoke<{ messages: ReportMessage[]; status: string }>("reply_report", { id, text }),
