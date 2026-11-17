@@ -1,0 +1,125 @@
+# Version de test d'une correction, pour un seul joueur : à chaque tag test-<rapport>-<n>
+# (poussé par la surveillance des rapports, outils/surveille-rapports), compile Windows et
+# Linux (AppImage), signe les paquets et publie une pré-release avec son latest.json.
+#
+# Le joueur l'installe depuis la discussion de son signalement (« Installer la version de
+# test », commands/update.rs : install_test_version). Elle garde le numéro de version du
+# launcher dont elle part, et ne touche ni à la dernière release ni au canal bêta : la
+# prochaine version publiée la remplace normalement.
+name: Version de test
+
+on:
+  push:
+    tags: ["test-*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create.outputs.result }}
+    steps:
+      - name: Créer la pré-release (brouillon)
+        id: create
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = context.ref.replace('refs/tags/', '');
+            const { data } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: tag,
+              name: `Version de test ${tag}`,
+              body: 'Version de test d\'une correction, pour le joueur qui a signalé le problème. Elle s\'installe depuis la discussion du signalement dans le launcher.',
+              draft: true,
+              prerelease: true,
+              make_latest: 'false',
+            });
+            return data.id;
+
+  build:
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [windows-latest, ubuntu-22.04]
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Dépendances système (Linux)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev libudev-dev pkg-config libxss-dev libxkbcommon-dev libwayland-dev libegl1-mesa-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev libxtst-dev libasound2-dev libpulse-dev libdrm-dev libgbm-dev
+          sudo apt-get install -y gstreamer1.0-plugins-base gstreamer1.0-plugins-good
+
+      - run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+
+  publish-release:
+    needs: [create-release, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publier la pré-release
+        uses: actions/github-script@v7
+        env:
+          release_id: ${{ needs.create-release.outputs.release_id }}
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const id = Number(process.env.release_id);
+            const tag = context.ref.replace('refs/tags/', '');
+            const assets = await github.paginate(github.rest.repos.listReleaseAssets, { owner, repo, release_id: id });
+            for (const a of assets) {
+              if (a.name.endsWith('.sig')) {
+                await github.rest.repos.deleteReleaseAsset({ owner, repo, asset_id: a.id });
+              }
+            }
+            // latest.json : les adresses doivent viser cette release, pas « releases/latest ».
+            const latest = assets.find((a) => a.name === 'latest.json');
+            if (latest) {
+              const { data: bytes } = await github.request('GET /repos/{owner}/{repo}/releases/assets/{asset_id}', {
+                owner, repo, asset_id: latest.id, headers: { accept: 'application/octet-stream' },
+              });
+              const manifest = JSON.parse(Buffer.from(bytes).toString('utf8'));
+              for (const p of Object.values(manifest.platforms ?? {})) {
+                if (typeof p.url === 'string') {
+                  p.url = p.url.replace('/releases/latest/download/', `/releases/download/${tag}/`);
+                }
+              }
+              await github.rest.repos.deleteReleaseAsset({ owner, repo, asset_id: latest.id });
+              await github.rest.repos.uploadReleaseAsset({
+                owner, repo, release_id: id, name: 'latest.json',
+                data: Buffer.from(JSON.stringify(manifest, null, 2)),
+                headers: { 'content-type': 'application/json' },
+              });
+            } else {
+              core.setFailed('Pas de latest.json : la version de test ne pourra pas s\'installer depuis le launcher.');
+            }
+            await github.rest.repos.updateRelease({ owner, repo, release_id: id, draft: false, make_latest: 'false' });

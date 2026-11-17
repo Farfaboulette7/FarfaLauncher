@@ -525,6 +525,10 @@ pub async fn prepare_cod(
             if let Err(e) = cod::repair_bo3_zone(&gd) {
                 tracing::warn!("zone/ de Black Ops III non rangé: {e}");
             }
+            // Zones renommées par les versions 1.0 et 1.1 bêta : le jeu plantait en français.
+            if let Err(e) = cod::restore_bo3_zones(&gd) {
+                tracing::warn!("zones de Black Ops III non remises en place: {e}");
+            }
             Ok(())
         })
         .await?;

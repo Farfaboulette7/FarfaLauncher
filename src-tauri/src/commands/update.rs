@@ -98,6 +98,35 @@ pub async fn install_update(app: AppHandle) -> AppResult<()> {
         .map_err(|e| log_err(AppError::Download, "installation de la mise à jour", e))
 }
 
+/// Adresse du `latest.json` d'une version de test de correction (release `test-<rapport>-<n>`,
+/// construite par `test.yml`). Seuls les noms produits par le support sont acceptés.
+pub fn test_endpoint(tag: &str) -> Option<String> {
+    let ok = tag.starts_with("test-") && tag.len() <= 80 && tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    ok.then(|| format!("https://github.com/Farfaboulette7/FarfaLauncher/releases/download/{tag}/latest.json"))
+}
+
+/// Installe la version de test d'un signalement, proposée dans la discussion avec le support.
+/// Elle porte le numéro de version du launcher dont elle part : on l'installe donc même sans
+/// numéro plus grand. La prochaine version publiée la remplace par le canal habituel.
+#[tauri::command]
+pub async fn install_test_version(app: AppHandle, tag: String) -> AppResult<()> {
+    let url = test_endpoint(&tag).ok_or(AppError::NotAvailable)?;
+    let url = url::Url::parse(&url).map_err(|e| log_err(AppError::Internal, "adresse de la version de test", e))?;
+    let updater = app
+        .updater_builder()
+        .endpoints(vec![url])
+        .and_then(|b| b.version_comparator(|_, _| true).build())
+        .map_err(|e| log_err(AppError::Internal, "module de mise à jour", e))?;
+    let update = updater
+        .check()
+        .await
+        .map_err(|e| log_err(AppError::ServerUnreachable, "version de test", e))?
+        .ok_or(AppError::NotAvailable)?;
+    tracing::info!("version de test {tag} : {} → {}", update.current_version, update.version);
+    *app.state::<PendingUpdate>().0.lock().unwrap() = Some(update);
+    install_update(app).await
+}
+
 /// Canal choisi : `true` pour recevoir les versions de test.
 #[tauri::command]
 pub fn beta_channel(state: State<'_, AppState>) -> bool {
@@ -122,5 +151,16 @@ mod tests {
         // L'adresse stable est celle des launchers déjà installés (tauri.conf.json).
         let conf = include_str!("../../tauri.conf.json");
         assert!(conf.contains(STABLE));
+    }
+
+    #[test]
+    fn test_versions_only_from_support_tags() {
+        assert_eq!(
+            test_endpoint("test-20261117-130619-1-10625-1").as_deref(),
+            Some("https://github.com/Farfaboulette7/FarfaLauncher/releases/download/test-20261117-130619-1-10625-1/latest.json")
+        );
+        assert_eq!(test_endpoint("v1.1.0"), None);
+        assert_eq!(test_endpoint("test-../../x"), None);
+        assert_eq!(test_endpoint("test-a/b"), None);
     }
 }

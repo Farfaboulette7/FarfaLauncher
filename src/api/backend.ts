@@ -464,6 +464,8 @@ export interface MyReport {
   corrigeDans: string | null;
   /** Échanges après la première réponse (absent sur un gestionnaire plus ancien). */
   messages?: ReportMessage[];
+  /** Version de test de la correction : `tag` de sa release, `prete` une fois compilée. */
+  versionTest?: { tag: string; prete: boolean } | null;
   /** Dernière nouvelle (secondes Unix). */
   updatedAt: number;
 }
@@ -699,6 +701,8 @@ export const backend = {
   checkUpdate: () => invoke<UpdateInfo | null>("check_update"),
   /** Télécharge et installe la version trouvée par `checkUpdate` (progression : UPDATE_PROGRESS_EVENT). */
   installUpdate: () => invoke<void>("install_update"),
+  /** Installe la version de test d'un signalement (progression : UPDATE_PROGRESS_EVENT). */
+  installTestVersion: (tag: string) => invoke<void>("install_test_version", { tag }),
   betaChannel: () => invoke<boolean>("beta_channel"),
   setBetaChannel: (beta: boolean) => invoke<void>("set_beta_channel", { beta }),
   /** `dest` : dossier où créer celui du jeu (sinon le dossier des jeux des paramètres). */

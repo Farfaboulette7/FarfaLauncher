@@ -1,6 +1,9 @@
 import { KeyboardEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
-import { backend, errorMessage, MyReport } from "../api/backend";
+import { listen } from "@tauri-apps/api/event";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { backend, errorMessage, formatSize, MyReport, UPDATE_PROGRESS_EVENT, UpdateProgress } from "../api/backend";
+import { logToFile } from "./ErrorBoundary";
 import { launcherNotes, NoteLine } from "../notes";
 import { Dialog } from "./Dialog";
 import { AllRequests, MyRequests, useGameRequests } from "./GameRequests";
@@ -84,6 +87,47 @@ function Bubble({ me, at, children }: { me: boolean; at?: number | null; childre
       </div>
       <div className="chat-bubble">{children}</div>
     </li>
+  );
+}
+
+/** Version de test de la correction : l'installer, puis dire au support si c'est réglé. */
+function TestVersion({ tag, ready }: { tag: string; ready: boolean }) {
+  const [state, setState] = useState<"idle" | "busy" | "error">("idle");
+  const [done, setDone] = useState(0);
+
+  async function install() {
+    setState("busy");
+    const stop = await listen<UpdateProgress>(UPDATE_PROGRESS_EVENT, ({ payload }) => {
+      if (payload.event === "progress") setDone(payload.done);
+    });
+    try {
+      await backend.installTestVersion(tag);
+      // Sous Windows, l'installateur ferme déjà le launcher ; ailleurs on redémarre.
+      await relaunch();
+    } catch (e) {
+      logToFile("error", `version de test ${tag}: ${JSON.stringify(e)}`);
+      setState("error");
+    } finally {
+      stop();
+    }
+  }
+
+  return (
+    <div className="chat-test">
+      {ready ? (
+        <>
+          <p>Une version de test du launcher avec la correction est prête. Installez-la, réessayez le jeu, puis dites-nous ici si c'est réglé.</p>
+          <button className="n-btn n-btn--sm" onClick={install} disabled={state === "busy"}>
+            {state === "busy" ? (done > 0 ? `Téléchargement… ${formatSize(done)}` : "Installation…") : "Installer la version de test"}
+          </button>
+          {state === "error" && <p className="n-alert">L'installation a échoué. Réessayez dans un moment.</p>}
+        </>
+      ) : (
+        <p className="n-hint">
+          <span className="n-spinner" /> Une version de test avec la correction est en préparation (une vingtaine de minutes).
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -179,6 +223,14 @@ function Conversation({
             <p>{m.texte}</p>
           </Bubble>
         ))}
+        {report.versionTest && !report.corrigeDans && report.status !== "corrigé" && report.status !== "clos" && (
+          <li className="chat-msg is-support">
+            <div className="chat-who">Support</div>
+            <div className="chat-bubble">
+              <TestVersion tag={report.versionTest.tag} ready={report.versionTest.prete} />
+            </div>
+          </li>
+        )}
         {thinking && (
           <li className="chat-msg is-support">
             <div className="chat-who">Support</div>
