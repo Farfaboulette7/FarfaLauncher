@@ -363,6 +363,29 @@ fn strip_lang<'a>(name: &'a str, lang: &str) -> Option<&'a str> {
     head.eq_ignore_ascii_case(&format!("{lang}_")).then(|| &name[3..])
 }
 
+/// Banques de sons d'un dossier `snd/<langue>` : `core.fr.sabl` devient `core.en.sabl`
+/// (`from` → `to`). Le jeu, qui se croit en anglais, ne cherche que des `*.en.*` dans
+/// `snd/en` : sans ce renommage, il ne trouve aucune banque et plante au démarrage.
+fn rename_snd_banks(dir: &Path, from: &str, to: &str) -> std::io::Result<usize> {
+    if !dir.is_dir() {
+        return Ok(0);
+    }
+    let (from, to) = (format!(".{from}."), format!(".{to}."));
+    let mut n = 0;
+    for (name, path) in files_of(dir)? {
+        let lower = name.to_ascii_lowercase();
+        let Some(at) = lower.find(&from) else { continue };
+        let renamed = format!("{}{to}{}", &name[..at], &name[at + from.len()..]);
+        let dest = dir.join(&renamed);
+        if dest.exists() {
+            continue;
+        }
+        std::fs::rename(&path, &dest)?;
+        n += 1;
+    }
+    Ok(n)
+}
+
 fn files_of(dir: &Path) -> std::io::Result<Vec<(String, PathBuf)>> {
     let mut out = Vec::new();
     for entry in std::fs::read_dir(dir)? {
@@ -409,6 +432,8 @@ pub fn set_bo3_language(game_dir: &Path, lang: &str) -> std::io::Result<()> {
             }
             fs::rename(&snd_fr, &snd_en)?;
         }
+        // Aussi pour un jeu passé en français par une version qui ne renommait que le dossier.
+        moved += rename_snd_banks(&snd_en, "fr", "en")?;
     } else {
         if kept.is_dir() {
             for (name, en_kept) in files_of(&kept)? {
@@ -431,6 +456,7 @@ pub fn set_bo3_language(game_dir: &Path, lang: &str) -> std::io::Result<()> {
                 fs::remove_dir_all(&snd_kept)?;
             } else {
                 if snd_en.is_dir() {
+                    moved += rename_snd_banks(&snd_en, "en", "fr")?;
                     fs::rename(&snd_en, &snd_fr)?;
                 }
                 fs::rename(&snd_kept, &snd_en)?;
@@ -612,7 +638,9 @@ mod tests {
         assert_eq!(read(&z.join("en_core_pre_gfx.ff")), "français");
         assert_eq!(read(&z.join("en_base.xpak")), "français");
         assert!(!z.join("fr_core_pre_gfx.ff").exists());
-        assert_eq!(read(&z.join("snd/en/core.fr.sabl")), "français");
+        // Les banques prennent aussi le nom anglais : le jeu ne cherche que des `*.en.*`.
+        assert_eq!(read(&z.join("snd/en/core.en.sabl")), "français");
+        assert!(!z.join("snd/en/core.fr.sabl").exists());
         assert!(!z.join("snd/fr").exists());
         assert_eq!(read(&z.join("mp_common.ff")), "commun");
         assert_eq!(read(&gd.join("localization.txt")), "french\r\n");
@@ -630,6 +658,24 @@ mod tests {
         assert!(!bo3_kept(&gd).exists());
         set_bo3_language(&gd, "en").unwrap();
         assert_eq!(read(&z.join("en_core_pre_gfx.ff")), "anglais");
+        std::fs::remove_dir_all(gd).unwrap();
+    }
+
+    #[test]
+    fn bo3_french_sound_banks_from_an_older_switch_are_renamed() {
+        // Passé en français par la 1.0.0 : dossier renommé, banques encore en `*.fr.*`.
+        let gd = bo3_dir();
+        let z = gd.join("zone");
+        set_bo3_language(&gd, "fr").unwrap();
+        std::fs::rename(z.join("snd/en/core.en.sabl"), z.join("snd/en/core.fr.sabl")).unwrap();
+        set_bo3_language(&gd, "fr").unwrap();
+        assert_eq!(read(&z.join("snd/en/core.en.sabl")), "français");
+        assert!(!z.join("snd/en/core.fr.sabl").exists());
+        // Et retour à l'anglais depuis cet ancien état.
+        std::fs::rename(z.join("snd/en/core.en.sabl"), z.join("snd/en/core.fr.sabl")).unwrap();
+        set_bo3_language(&gd, "en").unwrap();
+        assert_eq!(read(&z.join("snd/en/core.en.sabl")), "anglais");
+        assert_eq!(read(&z.join("snd/fr/core.fr.sabl")), "français");
         std::fs::remove_dir_all(gd).unwrap();
     }
 
