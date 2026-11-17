@@ -586,6 +586,22 @@ export interface MusicTrack {
   eightBit: MusicVariant;
 }
 
+/** Présence d'un ami (FarfaRomManager, `/api/presence/amis`). */
+export interface Friend {
+  id: number;
+  username: string;
+  avatar: boolean;
+  status: "en jeu" | "en ligne" | "hors ligne";
+  game: { romId: number; name: string } | null;
+  /** Début de la partie ou de la présence (Unix, secondes). */
+  since: number | null;
+  lastSeen: number | null;
+}
+export interface Friends {
+  hidden: boolean;
+  amis: Friend[];
+}
+
 export type GameRequestStatus = "nouveau" | "accepté" | "refusé" | "ajouté";
 /** Demande de jeu envoyée au gestionnaire. */
 export interface GameRequest {
@@ -692,6 +708,11 @@ export const backend = {
   allGameRequests: () => invoke<GameRequest[] | null>("all_game_requests"),
   updateGameRequest: (id: string, status: GameRequestStatus, response: string) =>
     invoke<GameRequest>("update_game_request", { id, status, response }),
+  /** Amis et leur présence ; `null` : gestionnaire sans la présence. */
+  friends: () => invoke<Friends | null>("friends"),
+  presenceHidden: () => invoke<boolean>("presence_hidden"),
+  setPresenceHidden: (hidden: boolean) => invoke<boolean>("set_presence_hidden", { hidden }),
+  friendAvatar: (id: number) => invoke<string>("friend_avatar", { id }),
   reportsSeen: () => invoke<Record<string, number>>("reports_seen"),
   markReportsSeen: (seen: Record<string, number>) => invoke<void>("mark_reports_seen", { seen }),
   replyReport: (id: string, text: string) => invoke<{ messages: ReportMessage[]; status: string }>("reply_report", { id, text }),

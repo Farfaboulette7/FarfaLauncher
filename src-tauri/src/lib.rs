@@ -25,6 +25,7 @@ mod pc;
 mod play;
 mod report;
 mod platform;
+mod presence;
 mod romm;
 mod runtimes;
 mod save_store;
@@ -85,7 +86,14 @@ pub fn run() {
             app.manage(state);
             app.manage(commands::update::PendingUpdate::default());
             gamepad::start(app.handle().clone());
+            commands::presence::start(app.handle());
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Fenêtre principale fermée : les amis voient tout de suite le joueur hors ligne.
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
+                commands::presence::leave(window.app_handle());
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::open_logs,
@@ -94,6 +102,10 @@ pub fn run() {
             commands::requests::send_game_request,
             commands::requests::all_game_requests,
             commands::requests::update_game_request,
+            commands::presence::friends,
+            commands::presence::presence_hidden,
+            commands::presence::set_presence_hidden,
+            commands::presence::friend_avatar,
             commands::update::install_update,
             commands::update::beta_channel,
             commands::update::set_beta_channel,

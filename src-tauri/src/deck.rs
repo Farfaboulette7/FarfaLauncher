@@ -558,12 +558,36 @@ async fn play(state: &AppState, id: i64) -> AppResult<Value> {
     let crate::play::Started { running, started, shader_job, .. } = started;
     let _ = GAME_STOP.set(running.stop_flag());
     spawn_watcher(id, started.unix_timestamp());
+    let presence = presence_while_playing(state, id);
     let (learned, crash) = tokio::task::spawn_blocking(move || running.wait_outcome(|| {})).await.unwrap_or((None, None));
+    if let Some((task, client)) = presence {
+        task.abort();
+        // Partie finie : le Deck n'a pas de launcher ouvert, le joueur passe hors ligne.
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(3), client.send(client.delete("api/presence", &json!({})))).await;
+    }
     let crashed = crash.is_some();
     let finished = crate::play::finish(state, id, started, learned, shader_job).await;
     // Fin de partie traitée ici : le veilleur n'a plus que la synchronisation à vérifier.
     let _ = std::fs::write(session_marker(state, id, started.unix_timestamp()), b"");
     Ok(json!({ "finished": finished, "crashed": crashed, "crash": crash }))
+}
+
+/// Présence des amis pendant la partie : « en jeu » toutes les 60 s (sauf « Apparaître hors
+/// ligne » ou hors ligne). Si Steam arrête ce programme, le gestionnaire l'oublie après 3 min.
+fn presence_while_playing(state: &AppState, id: i64) -> Option<(tokio::task::JoinHandle<()>, crate::romm::client::RommClient)> {
+    if state.settings().presence_hidden {
+        return None;
+    }
+    let client = crate::presence::manager(state).ok()?;
+    let body = crate::presence::body(Some(crate::presence::game_ref(state, id)));
+    let c = client.clone();
+    let task = tokio::spawn(async move {
+        loop {
+            crate::presence::post(&c, &body).await;
+            tokio::time::sleep(std::time::Duration::from_secs(crate::presence::INTERVAL_SECS)).await;
+        }
+    });
+    Some((task, client))
 }
 
 /// Partie dont `jouer` a terminé lui-même le traitement (temps de jeu enregistré).

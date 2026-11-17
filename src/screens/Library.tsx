@@ -40,6 +40,7 @@ import { OfflineContext } from "../offline";
 import { Downloads } from "../components/Downloads";
 import { RequestGameButton } from "../components/GameRequests";
 import { MusicMenu } from "../components/MusicMenu";
+import { FriendsMenu } from "../components/FriendsMenu";
 
 type Tab = "recent" | "library" | "favorites";
 /** Filtre de la bibliothèque, des favoris et de la recherche. */
@@ -676,6 +677,14 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
               </button>
             )}
             <Downloads installs={installs} nameOf={(id) => known(id)?.name ?? `Jeu ${id}`} />
+            <FriendsMenu
+              offline={session.offline}
+              onOpenGame={(id, el) => {
+                if (!known(id)) return false;
+                openGame(id, el);
+                return true;
+              }}
+            />
             <ReportsInbox offline={session.offline} />
             <MusicMenu />
             <button

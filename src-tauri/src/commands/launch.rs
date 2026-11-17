@@ -91,6 +91,7 @@ pub async fn play_game(
     let play::Started { running, started, shader_job, game: st } = started;
     state.playing.lock().unwrap().insert(rom_id, crate::ingame::Playing { started: std::time::Instant::now(), stop: running.stop_flag(), control: running.control() });
     let _ = app.emit("game-started", rom_id);
+    crate::commands::presence::notify(&app);
     crate::ingame::prepare(&app);
     gamepad::game_started();
     let ended_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -109,6 +110,7 @@ pub async fn play_game(
         let state = app.state::<AppState>();
         state.running.lock().unwrap().remove(&rom_id);
         state.playing.lock().unwrap().remove(&rom_id);
+        crate::commands::presence::notify(&app);
         if state.playing.lock().unwrap().is_empty() {
             crate::ingame::close(&app);
         }

@@ -9,6 +9,7 @@ pub mod sounds;
 pub mod system;
 pub mod update;
 pub mod report;
+pub mod presence;
 pub mod requests;
 pub mod window;
 

@@ -1,0 +1,61 @@
+/* Panneau « Amis » (FriendsMenu.tsx) : même allure que le menu de la musique. */
+.friends-menu { position: relative; }
+.friends-menu-btn { position: relative; }
+.friends-count { position: absolute; top: -7px; right: -7px; min-width: 18px; text-align: center; }
+.friends-panel {
+  position: absolute;
+  z-index: 120;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 320px;
+  max-height: min(70vh, 560px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--nier-surface);
+  border: var(--nier-line) solid var(--nier-low);
+  box-shadow: var(--nier-drop) var(--nier-drop) 0 var(--nier-shadow);
+  font-size: var(--fs-sm);
+  color: var(--nier-low);
+  transform-origin: top right;
+  animation: friends-panel-in var(--nier-normal, 180ms) var(--nier-ease, ease-out) both;
+}
+.friends-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.friends-title { letter-spacing: var(--nier-tracking-wide); text-transform: uppercase; }
+.friends-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 4px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  min-height: 0;
+}
+.friend { display: grid; grid-template-columns: 36px minmax(0, 1fr); align-items: center; gap: 10px; }
+.friend.is-offline { opacity: 0.6; }
+.friend-avatar { width: 36px; height: 36px; object-fit: cover; }
+.friend-avatar.is-letter {
+  display: grid;
+  place-items: center;
+  border: var(--nier-line) solid var(--nier-low);
+  letter-spacing: 0;
+}
+.friend-text { display: flex; flex-direction: column; min-width: 0; }
+.friend-name { display: flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.friend-dot { width: 7px; height: 7px; flex: none; border: var(--nier-line) solid var(--nier-low); }
+.friend.is-online .friend-dot { background: var(--nier-low); }
+.friend.is-playing .friend-dot { background: var(--nier-ok); border-color: var(--nier-ok); }
+.friend-game { align-self: flex-start; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.friend-status { font-size: var(--fs-xs); opacity: 0.8; }
+.friends-check { display: flex; align-items: center; gap: 8px; padding-top: 8px; border-top: var(--nier-line) solid var(--nier-low-trans); cursor: pointer; }
+.friends-check input { accent-color: var(--nier-low); }
+.friends-hint { margin: 0; font-size: var(--fs-xs); }
+@keyframes friends-panel-in {
+  from { opacity: 0; transform: translateY(-6px) scaleY(0.92); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .friends-panel { animation: none; }
+}
