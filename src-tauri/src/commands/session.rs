@@ -18,13 +18,15 @@ pub struct SessionInfo {
     /// Connecté mais serveur injoignable : on affiche le cache.
     pub offline: bool,
     pub username: Option<String>,
+    /// Image de profil du compte RomM (servie par `image_path`), s'il en a une.
+    pub avatar_url: Option<String>,
     /// Raison d'une déconnexion forcée (token révoqué, compte supprimé…).
     pub notice: Option<String>,
 }
 
 impl SessionInfo {
     fn disconnected(server_url: Option<String>, notice: Option<String>) -> Self {
-        Self { server_url, connected: false, offline: false, username: None, notice }
+        Self { server_url, connected: false, offline: false, username: None, avatar_url: None, notice }
     }
 }
 
@@ -42,7 +44,8 @@ pub async fn session_status(state: State<'_, AppState>) -> AppResult<SessionInfo
         Ok(me) => {
             state.set_client(Some(client));
             state.set_offline(false);
-            Ok(SessionInfo { server_url: Some(server_url), connected: true, offline: false, username: Some(me.username), notice: None })
+            let avatar_url = me.avatar_url(&server_url);
+            Ok(SessionInfo { server_url: Some(server_url), connected: true, offline: false, username: Some(me.username), avatar_url, notice: None })
         }
         Err(e @ (AppError::AuthInvalid | AppError::Forbidden)) => {
             tracing::warn!("token refusé au démarrage ({}), suppression", e.code());
@@ -53,7 +56,7 @@ pub async fn session_status(state: State<'_, AppState>) -> AppResult<SessionInfo
         Err(AppError::ServerUnreachable | AppError::Server) => {
             state.set_client(Some(client));
             state.set_offline(true);
-            Ok(SessionInfo { server_url: Some(server_url), connected: true, offline: true, username: None, notice: None })
+            Ok(SessionInfo { server_url: Some(server_url), connected: true, offline: true, username: None, avatar_url: None, notice: None })
         }
         Err(e) => Err(e),
     }
@@ -174,7 +177,8 @@ async fn finish_login(state: &AppState, server_url: &str, token: String) -> AppR
     state.set_client(Some(client));
     state.set_offline(false);
     tracing::info!("connecté en tant que {}", me.username);
-    Ok(SessionInfo { server_url: Some(server_url.to_string()), connected: true, offline: false, username: Some(me.username), notice: None })
+    let avatar_url = me.avatar_url(server_url);
+    Ok(SessionInfo { server_url: Some(server_url.to_string()), connected: true, offline: false, username: Some(me.username), avatar_url, notice: None })
 }
 
 /// Délai d'attente du test de connexion : court, il revient toutes les 20 à 60 s.

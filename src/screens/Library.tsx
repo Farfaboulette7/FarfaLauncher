@@ -21,7 +21,7 @@ import {
   UpdateInfo,
   Target,
 } from "../api/backend";
-import { useFirstImage } from "../hooks/useCachedImage";
+import { useCachedImage, useFirstImage } from "../hooks/useCachedImage";
 import { BoxArt } from "../components/BoxArt";
 import { Marquee } from "../components/Marquee";
 import { loadSounds, play as playSound } from "../sounds";
@@ -38,6 +38,8 @@ import { FullscreenButton } from "../components/FullscreenButton";
 import { ReportsInbox } from "../components/ReportsInbox";
 import { OfflineContext } from "../offline";
 import { Downloads } from "../components/Downloads";
+import { RequestGameButton } from "../components/GameRequests";
+import { MusicMenu } from "../components/MusicMenu";
 
 type Tab = "recent" | "library" | "favorites";
 /** Filtre de la bibliothèque, des favoris et de la recherche. */
@@ -304,6 +306,12 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
   /** Console d'une plateforme : son slug, ou « Ordinateur » pour les jeux PC. */
   const keyOf = useCallback((p: Platform) => (p.name === PC_PLATFORM ? PC_PLATFORM : p.slug), []);
   const pcPlatforms = useMemo(() => new Set((snapshot?.platforms ?? []).filter((p) => p.name === PC_PLATFORM).map((p) => p.id)), [snapshot]);
+  /** Nom de la console d'un jeu (garde-fou des demandes de jeux). */
+  /** Image de profil du compte RomM, à côté du pseudo. */
+  const avatar = useCachedImage(session.avatarUrl);
+  const platformName = useCallback((id: number) => snapshot?.platforms.find((p) => p.id === id)?.name ?? "?", [snapshot]);
+  /** Noms des consoles du serveur, proposés dans une demande de jeu. */
+  const consoleNames = useMemo(() => Array.from(new Set((snapshot?.platforms ?? []).map((p) => p.name))).sort((a, b) => a.localeCompare(b, "fr")), [snapshot]);
   const gameKey = useCallback((g: Game) => (g.pc || pcPlatforms.has(g.platformId) ? PC_PLATFORM : g.console), [pcPlatforms]);
   const groups = useMemo(() => {
     const byKey = new Map<string, ConsoleGroup>();
@@ -655,29 +663,44 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
             ))}
           </nav>
         </div>
+        {/* Colonne de droite : le joueur, puis ses actions (même hauteur que les onglets en face). */}
         <div className="lib-status">
-          <span className="lib-user">{session.offline ? "Hors ligne" : session.username}</span>
-          {update && (
-            <button className="n-btn lib-update" onClick={onUpdate} title={`Installer la version ${update.version} (le launcher redémarre)`}>
-              Mettre à jour ({update.version})
+          <span className={`lib-user${session.offline ? " is-offline" : ""}`}>
+            {avatar.src && !session.offline && <img className="lib-avatar" src={avatar.src} alt="" draggable={false} />}
+            {session.offline ? "Hors ligne" : session.username}
+          </span>
+          <div className="lib-actions">
+            {update && (
+              <button className="n-btn n-btn--sm lib-update" onClick={onUpdate} title={`Installer la version ${update.version} (le launcher redémarre)`}>
+                Mettre à jour ({update.version})
+              </button>
+            )}
+            <Downloads installs={installs} nameOf={(id) => known(id)?.name ?? `Jeu ${id}`} />
+            <ReportsInbox offline={session.offline} />
+            <MusicMenu />
+            <button
+              className="n-btn n-icon-btn"
+              title={loading ? "Chargement…" : "Rafraîchir la bibliothèque"}
+              aria-label="Rafraîchir la bibliothèque"
+              onClick={() => {
+                refresh();
+                reloadFavorites();
+              }}
+              disabled={loading || session.offline}
+            >
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" className={loading ? "is-spinning" : undefined}>
+                <path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+              </svg>
             </button>
-          )}
-          <Downloads installs={installs} nameOf={(id) => known(id)?.name ?? `Jeu ${id}`} />
-          <ReportsInbox offline={session.offline} />
-          <button
-            className="n-btn"
-            onClick={() => {
-              refresh();
-              reloadFavorites();
-            }}
-            disabled={loading || session.offline}
-          >
-            {loading ? "Chargement…" : "Rafraîchir"}
-          </button>
-          <FullscreenButton />
-          <button className="n-btn" onClick={() => setShowSettings(true)}>
-            Paramètres
-          </button>
+            <FullscreenButton />
+            <button className="n-btn n-icon-btn" title="Paramètres" aria-label="Paramètres" onClick={() => setShowSettings(true)}>
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                <path d="M4 7h10M18 7h2M4 17h2M10 17h10" fill="none" stroke="currentColor" strokeWidth="1.8" />
+                <rect x="14" y="5" width="4" height="4" fill="none" stroke="currentColor" strokeWidth="1.8" />
+                <rect x="6" y="15" width="4" height="4" fill="none" stroke="currentColor" strokeWidth="1.8" />
+              </svg>
+            </button>
+          </div>
         </div>
       </header>
       <div className="n-rule lib-rule" />
@@ -697,13 +720,16 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
           )}
           <h2 className="n-section-title lib-view-title">{viewTitle(tab, group)}</h2>
         </div>
-        <input
-          className="n-input lib-search n-input--soft"
-          type="search"
-          placeholder="Rechercher un jeu…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
+        <div className="lib-search-wrap">
+          <input
+            className="n-input lib-search n-input--soft"
+            type="search"
+            placeholder="Rechercher un jeu…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          <RequestGameButton offline={!!session.offline} consoles={consoleNames} platformName={platformName} />
+        </div>
         <span className="n-hint lib-count">
           {(searching || letterLoading) && <span className="n-spinner" />}
           {snapshot && !showPlatforms && `${shownGames.length} jeu${shownGames.length > 1 ? "x" : ""}${page?.hasMore && !letter ? "+" : ""}`}

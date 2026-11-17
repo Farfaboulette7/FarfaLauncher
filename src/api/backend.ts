@@ -28,6 +28,8 @@ export interface SessionInfo {
   connected: boolean;
   offline: boolean;
   username: string | null;
+  /** Image de profil du compte RomM (à charger avec useCachedImage). */
+  avatarUrl?: string | null;
   notice: string | null;
 }
 
@@ -584,6 +586,24 @@ export interface MusicTrack {
   eightBit: MusicVariant;
 }
 
+export type GameRequestStatus = "nouveau" | "accepté" | "refusé" | "ajouté";
+/** Demande de jeu envoyée au gestionnaire. */
+export interface GameRequest {
+  id: string;
+  name: string;
+  console: string;
+  link: string;
+  message: string;
+  status: GameRequestStatus;
+  /** Réponse de l'administrateur au joueur. */
+  response: string;
+  /** Secondes Unix. */
+  createdAt: number;
+  updatedAt: number;
+  /** Compte qui l'a envoyée (liste de l'administrateur). */
+  username?: string | null;
+}
+
 /** Nouvelle version du launcher, trouvée sur le canal choisi (stable ou bêta). */
 export interface UpdateInfo {
   version: string;
@@ -665,6 +685,13 @@ export const backend = {
   reportFiles: (romId: number) => invoke<string[]>("report_files", { romId }),
   sendReport: (romId: number, description: string, afterCrash: boolean) => invoke<string>("send_report", { romId, description, afterCrash }),
   myReports: () => invoke<MyReport[]>("my_reports"),
+  myGameRequests: () => invoke<GameRequest[]>("my_game_requests"),
+  sendGameRequest: (name: string, console: string, link: string, message: string) =>
+    invoke<GameRequest>("send_game_request", { name, console, link, message }),
+  /** Toutes les demandes (administrateur) ; `null` pour un autre compte. */
+  allGameRequests: () => invoke<GameRequest[] | null>("all_game_requests"),
+  updateGameRequest: (id: string, status: GameRequestStatus, response: string) =>
+    invoke<GameRequest>("update_game_request", { id, status, response }),
   reportsSeen: () => invoke<Record<string, number>>("reports_seen"),
   markReportsSeen: (seen: Record<string, number>) => invoke<void>("mark_reports_seen", { seen }),
   replyReport: (id: string, text: string) => invoke<{ messages: ReportMessage[]; status: string }>("reply_report", { id, text }),

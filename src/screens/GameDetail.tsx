@@ -7,6 +7,7 @@ import { useCachedImage } from "../hooks/useCachedImage";
 import { BoxArt } from "../components/BoxArt";
 import { Marquee } from "../components/Marquee";
 import { FullscreenButton } from "../components/FullscreenButton";
+import { MusicMenu } from "../components/MusicMenu";
 import { ReportsInbox } from "../components/ReportsInbox";
 import { noteLines } from "../notes";
 import { useReveal } from "../reveal";
@@ -86,9 +87,10 @@ export function GameDetail({ game, platform, target, installs, favorite, onToggl
           </div>
           <div className="gd-header-actions">
             <ReportsInbox offline={false} />
+            <MusicMenu />
             <FullscreenButton />
             <button
-              className="n-btn gd-fav"
+              className="n-btn n-btn--sm gd-fav"
               aria-pressed={favorite}
               disabled={!onToggleFavorite}
               title={onToggleFavorite ? undefined : (favoriteError ?? "Favoris indisponibles hors ligne")}

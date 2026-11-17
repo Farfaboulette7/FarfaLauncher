@@ -185,17 +185,42 @@ async fn start_refresh(app: &AppHandle, state: &AppState) -> AppResult<LibrarySn
     Ok(snapshot)
 }
 
+/// Chemin à demander au serveur pour une image : ressource statique (`/assets/…`) ou avatar
+/// d'un compte (`/api/users/<id>/avatar`) ; `None` pour toute autre adresse.
+fn server_image_path(base: &str, url: &str) -> Option<String> {
+    let rest = url.strip_prefix(base)?.strip_prefix('/')?;
+    if rest.starts_with("assets/") {
+        return Some(rest.to_string());
+    }
+    let id = rest.strip_prefix("api/users/")?.split_once("/avatar")?.0;
+    (!id.is_empty() && id.chars().all(|c| c.is_ascii_digit())).then(|| format!("api/users/{id}/avatar"))
+}
+
+#[cfg(test)]
+mod image_tests {
+    use super::server_image_path;
+
+    #[test]
+    fn only_server_images() {
+        let b = "https://romm.example.org";
+        assert_eq!(server_image_path(b, "https://romm.example.org/assets/romm/resources/a.png").as_deref(), Some("assets/romm/resources/a.png"));
+        assert_eq!(server_image_path(b, "https://romm.example.org/api/users/3/avatar?v=2026").as_deref(), Some("api/users/3/avatar"));
+        assert_eq!(server_image_path(b, "https://romm.example.org/api/users/me"), None);
+        assert_eq!(server_image_path(b, "https://romm.example.org/api/users/../x/avatar"), None);
+        assert_eq!(server_image_path(b, "https://ailleurs.org/assets/a.png"), None);
+    }
+}
+
 /// Chemin local (en cache) d'une image du serveur.
 #[tauri::command]
 pub async fn image_path(state: State<'_, AppState>, url: String) -> AppResult<String> {
     let client = state.client()?;
-    // N'accepte que des ressources statiques du serveur configuré.
-    let prefix = format!("{}/assets/", client.base());
-    let Some(rest) = url.strip_prefix(&prefix) else {
+    // N'accepte que des ressources statiques du serveur configuré, ou l'avatar d'un compte.
+    let Some(path) = server_image_path(client.base(), &url) else {
         tracing::warn!("image hors serveur refusée");
         return Err(AppError::Internal);
     };
-    let path = cache::cached_download(&client, &state.cache_dir.join("images"), &url, &format!("assets/{rest}"), None).await?;
+    let path = cache::cached_download(&client, &state.cache_dir.join("images"), &url, &path, None).await?;
     Ok(path.to_string_lossy().into_owned())
 }
 

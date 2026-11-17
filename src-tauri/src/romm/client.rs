@@ -107,6 +107,10 @@ impl RommClient {
         self.authed(self.http.post(self.url(path)).json(body).timeout(API_TIMEOUT))
     }
 
+    pub fn patch<B: Serialize + ?Sized>(&self, path: &str, body: &B) -> RequestBuilder {
+        self.authed(self.http.patch(self.url(path)).json(body).timeout(API_TIMEOUT))
+    }
+
     pub fn delete<B: Serialize + ?Sized>(&self, path: &str, body: &B) -> RequestBuilder {
         self.authed(self.http.delete(self.url(path)).json(body).timeout(API_TIMEOUT))
     }

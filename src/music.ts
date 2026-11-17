@@ -17,6 +17,8 @@ const LAST_TRACK_KEY = "farfa.music.last";
 const CROSSFADE = 0.8; // secondes
 const MUTE_FADE = 1.5;
 const TRACK_FADE = 1.5;
+/** Volume de départ (curseur à 12 %) : une musique de fond, qui ne surprend pas au premier lancement. */
+const DEFAULT_VOLUME = 0.12;
 /** Niveau maximal (curseur à 100 %) : la musique reste un fond discret. */
 const BASE_LEVEL = 0.5;
 const PAUSE_FADE = 0.6;
@@ -38,9 +40,9 @@ interface Playing {
 function readSettings(): MusicSettings {
   try {
     const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "{}");
-    return { enabled: s.enabled !== false, volume: typeof s.volume === "number" ? s.volume : 0.2 };
+    return { enabled: s.enabled !== false, volume: typeof s.volume === "number" ? s.volume : DEFAULT_VOLUME };
   } catch {
-    return { enabled: true, volume: 0.2 };
+    return { enabled: true, volume: DEFAULT_VOLUME };
   }
 }
 

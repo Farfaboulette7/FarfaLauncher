@@ -86,3 +86,14 @@
 .dialog.n-panel.inbox-dialog { width: min(640px, 100%); height: min(640px, 100%); }
 .inbox-dialog .dialog-body { flex: 1 1 auto; min-height: 0; }
 .inbox-dialog .inbox-tabs { flex: none; }
+
+/* Demandes de jeux (GameRequests.tsx) : formulaire et actions de l'administrateur. */
+.requests-form label,
+.requests-field { display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-sm); }
+.requests-actions { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 6px; }
+.requests-link { overflow-wrap: anywhere; user-select: text; }
+.inbox-item textarea { width: 100%; margin-top: 8px; }
+.requests-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; justify-content: flex-end; }
+.requests-matches { margin: 0; padding-left: 18px; }
+.requests-admin { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.requests-admin label { display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-sm); }

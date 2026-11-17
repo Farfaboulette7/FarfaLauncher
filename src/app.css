@@ -46,3 +46,38 @@ html.pad-nav :focus {
 }
 /* Bandeau « Hors ligne » remonté au-dessus des indications. */
 html.pad-nav .offline-banner { bottom: 60px; }
+
+/* Liste déroulante YoRHa (components/Choice.tsx). */
+.choice { position: relative; }
+.choice-btn { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; text-align: left; cursor: pointer; }
+.choice-placeholder { color: var(--nier-mid); }
+.choice-arrow { flex: none; font-size: 0.8em; }
+.choice-list {
+  position: absolute;
+  z-index: 20;
+  left: 0;
+  right: 0;
+  top: calc(100% + 2px);
+  max-height: 260px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  background: var(--nier-surface);
+  border: var(--nier-line) solid var(--nier-low);
+  box-shadow: var(--nier-drop) var(--nier-drop) 0 var(--nier-shadow);
+}
+.choice-opt {
+  width: 100%;
+  padding: 7px 14px;
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+  color: var(--nier-low);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.choice-opt:hover,
+.choice-opt:focus-visible { outline: none; background: var(--nier-low); color: var(--nier-high); }
+.choice-opt[aria-selected="true"] { font-weight: 600; }

@@ -57,6 +57,21 @@ pub struct Me {
     pub username: String,
     #[serde(default)]
     pub role: Option<String>,
+    /// Image de profil choisie dans RomM (absente : pas d'avatar).
+    #[serde(default)]
+    pub avatar_path: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
+}
+
+impl Me {
+    /// Adresse de l'avatar (`GET /api/users/<id>/avatar`, scope `assets.read`), avec la date
+    /// du compte : un nouvel avatar a une autre adresse, donc une autre entrée du cache.
+    pub fn avatar_url(&self, server_url: &str) -> Option<String> {
+        self.avatar_path.as_ref().filter(|p| !p.is_empty())?;
+        let version: String = self.updated_at.as_deref().unwrap_or("").chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+        Some(format!("{server_url}/api/users/{}/avatar?v={version}", self.id))
+    }
 }
 
 pub async fn me(client: &RommClient) -> AppResult<Me> {

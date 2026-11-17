@@ -3,6 +3,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { backend, errorMessage, MyReport } from "../api/backend";
 import { launcherNotes, NoteLine } from "../notes";
 import { Dialog } from "./Dialog";
+import { AllRequests, MyRequests, useGameRequests } from "./GameRequests";
 import "./ReportsInbox.css";
 
 /** Évènement envoyé par l'interface après l'envoi d'un rapport (la liste se recharge). */
@@ -22,7 +23,7 @@ const STATUS: Record<string, { label: string; tone: "wait" | "work" | "done" }> 
 /** Statuts où le support doit encore répondre. */
 const PENDING = ["nouveau", "en cours", "réponse"];
 
-type Tab = "news" | "reports";
+type Tab = "news" | "reports" | "requests" | "allRequests";
 type Support = { enLigne: boolean } | null;
 
 /** Nouveautés déjà ouvertes d'elles-mêmes pendant cette session (la boîte existe en deux endroits). */
@@ -224,10 +225,13 @@ export function ReportsInbox({ offline }: { offline: boolean }) {
   const [seen, setSeen] = useState<Record<string, number> | null>(null);
   const [version, setVersion] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<Tab>("reports");
+  const [tab, setTab] = useState<Tab>("news");
   const [selected, setSelected] = useState<string | null>(null);
   const [support, setSupport] = useState<Support>(null);
   const news = useMemo(() => (version ? launcherNotes(version) : []), [version]);
+  // Demandes de jeux : suivi du joueur, et toutes les demandes pour l'administrateur.
+  const requests = useGameRequests(offline);
+  const markRequestsSeen = requests.markSeen;
 
   const load = useCallback(() => {
     backend
@@ -288,13 +292,20 @@ export function ReportsInbox({ offline }: { offline: boolean }) {
     if (tab === "news" && newsUnread && version) markSeen({ [newsKey(version)]: Math.floor(Date.now() / 1000) });
     if (tab === "reports" && current && unread(current, seen)) markSeen({ [current.id]: current.updatedAt });
   }, [open, tab, current, seen, newsUnread, version, markSeen]);
+  useEffect(() => {
+    if (open && tab === "requests" && requests.unread > 0) markRequestsSeen();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, tab, requests.unread]);
 
   if (seen === null) return null;
   const reportsUnread = reports.filter((r) => unread(r, seen)).length;
-  const count = reportsUnread + (newsUnread ? 1 : 0);
+  const count = reportsUnread + (newsUnread ? 1 : 0) + requests.unread + requests.waiting;
 
   function show() {
-    setTab(newsUnread && !reportsUnread ? "news" : "reports");
+    setTab(
+      // Ce qui attend une lecture, dans l'ordre des onglets ; sinon le premier onglet.
+      newsUnread ? "news" : requests.waiting > 0 ? "allRequests" : requests.unread > 0 ? "requests" : reportsUnread > 0 ? "reports" : "news",
+    );
     setSelected(null);
     setOpen(true);
     load();
@@ -303,7 +314,7 @@ export function ReportsInbox({ offline }: { offline: boolean }) {
   return (
     <>
       <button
-        className="n-btn inbox-btn"
+        className="n-btn n-icon-btn inbox-btn"
         onClick={show}
         title={count > 0 ? `${count} message${count > 1 ? "s" : ""} non lu${count > 1 ? "s" : ""}` : "Messages"}
         aria-label="Messages"
@@ -325,17 +336,35 @@ export function ReportsInbox({ offline }: { offline: boolean }) {
           }
         >
           <nav className="inbox-tabs" role="tablist">
-            <button role="tab" className="inbox-tab" aria-selected={tab === "reports"} onClick={() => setTab("reports")}>
-              Mes signalements
-              {reportsUnread > 0 && <span className="n-new">{reportsUnread}</span>}
-            </button>
             <button role="tab" className="inbox-tab" aria-selected={tab === "news"} onClick={() => setTab("news")}>
               Nouvelles versions
               {newsUnread && <span className="n-new">NEW</span>}
             </button>
+            {requests.all && (
+              <button role="tab" className="inbox-tab" aria-selected={tab === "allRequests"} onClick={() => setTab("allRequests")}>
+                Toutes les demandes
+                {requests.waiting > 0 && <span className="n-new">{requests.waiting}</span>}
+              </button>
+            )}
+            <button role="tab" className="inbox-tab" aria-selected={tab === "requests"} onClick={() => setTab("requests")}>
+              Mes demandes
+              {requests.unread > 0 && <span className="n-new">{requests.unread}</span>}
+            </button>
+            <button role="tab" className="inbox-tab" aria-selected={tab === "reports"} onClick={() => setTab("reports")}>
+              Mes signalements
+              {reportsUnread > 0 && <span className="n-new">{reportsUnread}</span>}
+            </button>
           </nav>
 
-          {tab === "news" ? (
+          {tab === "requests" ? (
+            <section className="inbox-section" role="tabpanel">
+              <MyRequests requests={requests} />
+            </section>
+          ) : tab === "allRequests" ? (
+            <section className="inbox-section" role="tabpanel">
+              <AllRequests requests={requests} />
+            </section>
+          ) : tab === "news" ? (
             <section className="inbox-section" role="tabpanel">
               {news.length === 0 ? (
                 <p className="n-hint">Pas de nouveautés à afficher.</p>

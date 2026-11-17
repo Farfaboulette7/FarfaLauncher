@@ -159,36 +159,53 @@
   border-bottom: var(--nier-line) solid var(--nier-mid);
 }
 .lib-day-count { font-size: var(--fs-xs); color: var(--nier-mid); }
+/* En-tête en deux colonnes : à gauche le nom puis les onglets, à droite le joueur puis ses
+   actions. Les deux lignes se répondent : rien ne se chevauche, quelle que soit la largeur. */
 .lib-header {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 24px;
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  align-items: end;
+  column-gap: 24px;
   padding: 24px var(--gutter) 8px;
 }
 .lib-status {
-  flex: none;
+  justify-self: end;
   display: flex;
-  align-items: center;
-  gap: 12px;
-  padding-bottom: 8px;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  min-width: 0;
 }
-/* Quatre onglets et les boutons de droite doivent tenir sans se chevaucher. */
+.lib-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+/* Quatre onglets et les actions doivent tenir sans se chevaucher. */
 @media (max-width: 1500px) {
   .lib-tab { font-size: 16px; padding-inline: 10px; letter-spacing: 0.08rem; }
-  .lib-header { gap: 12px; }
-  .lib-status { gap: 8px; }
+  .lib-header { column-gap: 12px; }
 }
 .lib-user {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--fs-sm);
   letter-spacing: var(--nier-tracking-wide);
-  margin-right: 8px;
 }
+.lib-user.is-offline { color: var(--nier-alert); }
+.lib-user { display: inline-flex; align-items: center; gap: 8px; }
+.lib-avatar { width: 28px; height: 28px; flex: none; object-fit: contain; }
+.is-spinning { animation: lib-spin 1s linear infinite; }
+@keyframes lib-spin { to { transform: rotate(360deg); } }
 .lib-rule { margin: 0 var(--gutter); }
 /* Titre à gauche, recherche au centre, compteur à droite. */
 .lib-toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(220px, 420px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 560px) minmax(0, 1fr);
   align-items: center;
   gap: 20px;
   padding: 16px var(--gutter) 8px;
@@ -354,7 +371,7 @@
   bottom: 14px;
   transform: translateX(-50%);
   z-index: 90;
-  max-width: min(92vw, 860px);
+  max-width: min(46vw, 640px);
   padding: 8px 18px;
   font-size: var(--fs-xs);
   letter-spacing: var(--nier-tracking-wide);
@@ -407,3 +424,10 @@
 .lib-letter:focus-visible { background: var(--nier-high-mid); outline: none; }
 .lib-letter[aria-pressed="true"] { background: var(--nier-low); color: var(--nier-high); }
 .lib-letter:disabled { opacity: 0.3; cursor: default; }
+
+/* Recherche et, juste à côté, le lien discret « + Demander un jeu ». */
+.lib-search-wrap { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.lib-search-wrap .lib-search { flex: 1; min-width: 0; }
+.lib-request { flex: none; font-size: var(--fs-xs); white-space: nowrap; opacity: 0.75; }
+.lib-request:hover:not(:disabled),
+.lib-request:focus-visible { opacity: 1; }

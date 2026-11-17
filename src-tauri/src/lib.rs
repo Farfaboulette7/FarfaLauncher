@@ -90,6 +90,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::open_logs,
             commands::update::check_update,
+            commands::requests::my_game_requests,
+            commands::requests::send_game_request,
+            commands::requests::all_game_requests,
+            commands::requests::update_game_request,
             commands::update::install_update,
             commands::update::beta_channel,
             commands::update::set_beta_channel,

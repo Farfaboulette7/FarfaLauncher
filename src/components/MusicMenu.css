@@ -1,0 +1,34 @@
+/* Menu de la musique (MusicMenu.tsx) : panneau sous son bouton, aligné à droite. */
+.music-menu { position: relative; }
+.music-panel {
+  position: absolute;
+  z-index: 120;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--nier-surface);
+  border: var(--nier-line) solid var(--nier-low);
+  box-shadow: var(--nier-drop) var(--nier-drop) 0 var(--nier-shadow);
+  font-size: var(--fs-sm);
+  color: var(--nier-low);
+}
+.music-title { min-width: 0; overflow: hidden; letter-spacing: var(--nier-tracking-wide); }
+.music-next { align-self: flex-start; }
+.music-range { display: grid; grid-template-columns: 5.5em minmax(0, 1fr); align-items: center; gap: 10px; }
+.music-range input { width: 100%; accent-color: var(--nier-low); }
+/* Ouverture : le panneau glisse depuis le bouton en se dépliant (désactivé si le système réduit les animations). */
+.music-panel {
+  transform-origin: top right;
+  animation: music-panel-in var(--nier-normal, 180ms) var(--nier-ease, ease-out) both;
+}
+@keyframes music-panel-in {
+  from { opacity: 0; transform: translateY(-6px) scaleY(0.92); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .music-panel { animation: none; }
+}

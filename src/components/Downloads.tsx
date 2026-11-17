@@ -30,7 +30,7 @@ export function Downloads({ installs, nameOf }: { installs: InstallsState; nameO
   const queued = list.filter((p) => p.phase === "queued");
   return (
     <>
-      <button className="n-btn" onClick={() => setOpen(true)} title="File des téléchargements">
+      <button className="n-btn n-btn--sm" onClick={() => setOpen(true)} title="File des téléchargements">
         Téléchargements ({list.length})
       </button>
       {open && (

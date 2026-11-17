@@ -197,6 +197,12 @@ body::after {
   pointer-events: none;
   transition: inset var(--nier-normal) var(--nier-ease);
 }
+/* Bouton compact (barres d'en-tête) : même hauteur que les boutons-icônes. */
+.n-btn--sm { min-height: 38px; padding: 6px 14px; gap: 8px; font-size: var(--fs-sm); }
+.n-btn--sm::before { width: 8px; height: 8px; }
+/* Bouton-icône carré (messages, rafraîchir, plein écran, paramètres) : sans le carré des boutons à texte. */
+.n-icon-btn { position: relative; width: 38px; height: 38px; padding: 0; justify-content: center; }
+.n-icon-btn::before { display: none; }
 .n-btn:hover:not(:disabled),
 .n-btn:focus-visible,
 .n-btn[aria-pressed="true"] {

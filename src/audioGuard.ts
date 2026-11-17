@@ -7,6 +7,8 @@ import { logToFile } from "./components/ErrorBoundary";
 import { setMusicSettings } from "./music";
 import { setSoundSettings } from "./sounds";
 
+/** Linux de bureau (AppImage), où le moteur web passe par GStreamer. */
+const LINUX = /Linux/.test(navigator.userAgent) && !/Android/.test(navigator.userAgent);
 const PROBE_KEY = "farfa.audio.probe";
 const NOTICE_KEY = "farfa.audio.autoDisabled";
 /** Délai au bout duquel l'initialisation est jugée réussie (le moteur répond encore). */
@@ -34,6 +36,19 @@ function write(key: string, value: string | null) {
  * vient d'être coupé parce que le lancement précédent s'est figé.
  */
 export function beginAudio(): boolean {
+  // Le blocage ne vient que de GStreamer, sous Linux. Ailleurs, la marque restait aussi quand
+  // le launcher était fermé pendant les premières secondes (version de test…) et coupait le
+  // son à tort : on la retire, et un son coupé ainsi est remis.
+  if (!LINUX) {
+    write(PROBE_KEY, null);
+    if (read(NOTICE_KEY) === "1") {
+      write(NOTICE_KEY, null);
+      setSoundSettings({ enabled: true });
+      setMusicSettings({ enabled: true });
+      logToFile("info", "son coupé à tort par le filet de Linux : réactivé");
+    }
+    return true;
+  }
   if (read(PROBE_KEY) === "start") {
     write(PROBE_KEY, null);
     write(NOTICE_KEY, "1");
