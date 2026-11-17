@@ -567,6 +567,8 @@ async fn play(state: &AppState, id: i64) -> AppResult<Value> {
     }
     let crashed = crash.is_some();
     let finished = crate::play::finish(state, id, started, learned, shader_job).await;
+    // Statistiques entre amis : la session part aussi au gestionnaire (sans retenir plus de 10 s).
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), crate::stats::sync(state)).await;
     // Fin de partie traitée ici : le veilleur n'a plus que la synchronisation à vérifier.
     let _ = std::fs::write(session_marker(state, id, started.unix_timestamp()), b"");
     Ok(json!({ "finished": finished, "crashed": crashed, "crash": crash }))

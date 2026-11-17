@@ -1,0 +1,24 @@
+/* Statistiques entre amis (StatsDialog.tsx). */
+.stats-dialog.n-panel { width: min(560px, 100%); }
+.stats-tabs { display: flex; gap: 4px; }
+.stats-profile { display: flex; flex-direction: column; gap: 12px; }
+.stats-who { display: flex; align-items: center; gap: 12px; }
+.stats-who .friend-avatar { width: 44px; height: 44px; }
+.stats-name { flex: 1; font-size: var(--fs-lg, 1.2rem); letter-spacing: var(--nier-tracking-wide); }
+.stats-figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin: 0; }
+.stats-figures > div { padding: 8px 10px; border: var(--nier-line) solid var(--nier-low); }
+.stats-figures dt { font-size: var(--fs-xs); opacity: 0.8; }
+.stats-figures dd { margin: 2px 0 0; font-size: var(--fs-md, 1.05rem); }
+.stats-games, .stats-ranking { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.stats-game { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; align-items: baseline; }
+.stats-game-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.stats-game-time { font-size: var(--fs-sm); white-space: nowrap; }
+.stats-bar { grid-column: 1 / -1; height: 3px; background: var(--nier-low-trans); }
+.stats-bar > span { display: block; height: 100%; background: var(--nier-low); }
+.stats-ranking li { display: grid; grid-template-columns: 1.6em 36px minmax(0, 1fr) auto; align-items: center; gap: 10px; }
+.stats-rank { text-align: right; opacity: 0.8; }
+.stats-ranking-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.stats-own { display: flex; flex-direction: column; gap: 6px; }
+.stats-game-ranking { margin-top: 18px; }
+.stats-game-ranking .stats-ranking { max-width: 420px; }
+.stats-open { align-self: flex-start; }

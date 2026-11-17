@@ -1,3 +1,4 @@
+import { Choice } from "../components/Choice";
 import { useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -189,24 +190,21 @@ export function Settings({ session, installs, onBack, onLogout, onCacheCleared, 
               </div>
               {limit !== null && (
                 <>
-                  <label className="settings-check">
+                  <div className="settings-check">
                     Limite de débit des téléchargements
-                    <select
-                      className="n-input settings-limit"
-                      value={limit}
-                      onChange={(e) => {
-                        const mb = Number(e.target.value);
-                        setLimit(mb);
-                        act(() => backend.setDownloadLimit(mb), mb === 0 ? "Téléchargements sans limite." : `Téléchargements limités à ${mb} Mo/s.`);
-                      }}
-                    >
-                      {DOWNLOAD_LIMITS.map((mb) => (
-                        <option key={mb} value={mb}>
-                          {mb === 0 ? "Aucune" : `${mb} Mo/s`}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                    <span className="settings-limit">
+                      <Choice
+                        value={String(limit)}
+                        placeholder="Aucune"
+                        options={DOWNLOAD_LIMITS.map((mb) => ({ value: String(mb), label: mb === 0 ? "Aucune" : `${mb} Mo/s` }))}
+                        onChange={(v) => {
+                          const mb = Number(v);
+                          setLimit(mb);
+                          act(() => backend.setDownloadLimit(mb), mb === 0 ? "Téléchargements sans limite." : `Téléchargements limités à ${mb} Mo/s.`);
+                        }}
+                      />
+                    </span>
+                  </div>
                   <p className="n-hint">Pour laisser de la place aux autres sur la connexion. Elle s'applique aussi au téléchargement en cours.</p>
                 </>
               )}

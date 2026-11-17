@@ -24,7 +24,8 @@ function avatarOf(id: number): Promise<string | null> {
   return p;
 }
 
-function Avatar({ friend }: { friend: Friend }) {
+/** Avatar RomM d'un joueur (servi par le gestionnaire), ou l'initiale de son pseudo. */
+export function PlayerAvatar({ player: friend }: { player: { id: number; username: string; avatar: boolean } }) {
   const [src, setSrc] = useState<string | null>(null);
   useEffect(() => {
     if (!friend.avatar) return;
@@ -61,8 +62,11 @@ function statusLine(f: Friend): string {
 export function FriendsMenu({
   offline,
   onOpenGame,
+  onOpenStats,
 }: {
   offline: boolean;
+  /** Ouvre les statistiques d'un joueur (`null` : les siennes). */
+  onOpenStats: (id: number | null) => void;
   /** Ouvre la fiche d'un jeu de la bibliothèque ; `false` si le jeu n'y est pas. */
   onOpenGame: (romId: number, from: HTMLElement) => boolean;
 }) {
@@ -167,12 +171,19 @@ export function FriendsMenu({
             <ul className="friends-list">
               {amis.map((f) => (
                 <li key={f.id} className={`friend is-${f.status === "en jeu" ? "playing" : f.status === "en ligne" ? "online" : "offline"}`}>
-                  <Avatar friend={f} />
+                  <PlayerAvatar player={f} />
                   <span className="friend-text">
-                    <span className="friend-name">
+                    <button
+                      className="friend-name"
+                      title="Voir ses statistiques"
+                      onClick={() => {
+                        setOpen(false);
+                        onOpenStats(f.id);
+                      }}
+                    >
                       <span className="friend-dot" aria-hidden="true" />
                       {f.username}
-                    </span>
+                    </button>
                     {f.game && (
                       <button
                         className="n-link friend-game"
@@ -190,6 +201,15 @@ export function FriendsMenu({
               ))}
             </ul>
           )}
+          <button
+            className="n-link friends-stats"
+            onClick={() => {
+              setOpen(false);
+              onOpenStats(null);
+            }}
+          >
+            Mes statistiques et classement →
+          </button>
           <label className="friends-check">
             <input type="checkbox" checked={hidden} disabled={saving || data === null} onChange={(e) => void toggleHidden(e.target.checked)} />
             Apparaître hors ligne

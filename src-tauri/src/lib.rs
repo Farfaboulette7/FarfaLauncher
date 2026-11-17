@@ -35,6 +35,7 @@ mod saves;
 mod secrets;
 mod settings;
 mod shaders;
+mod stats;
 mod state;
 mod switch_content;
 mod switch_saves;
@@ -87,6 +88,7 @@ pub fn run() {
             app.manage(commands::update::PendingUpdate::default());
             gamepad::start(app.handle().clone());
             commands::presence::start(app.handle());
+            commands::stats::sync_later(app.handle(), 20);
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -106,6 +108,10 @@ pub fn run() {
             commands::presence::presence_hidden,
             commands::presence::set_presence_hidden,
             commands::presence::friend_avatar,
+            commands::stats::player_stats,
+            commands::stats::stats_ranking,
+            commands::stats::game_ranking,
+            commands::stats::set_stats_hidden,
             commands::update::install_update,
             commands::update::beta_channel,
             commands::update::set_beta_channel,

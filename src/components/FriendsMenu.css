@@ -44,12 +44,15 @@
 }
 .friend-text { display: flex; flex-direction: column; min-width: 0; }
 .friend-name { display: flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.friend-name { background: none; border: 0; padding: 0; color: inherit; font: inherit; letter-spacing: inherit; cursor: pointer; text-align: left; }
+.friend-name:hover, .friend-name:focus-visible { text-decoration: underline; }
+.friends-stats { align-self: flex-start; padding-top: 8px; border-top: var(--nier-line) solid var(--nier-low-trans); width: 100%; text-align: left; }
 .friend-dot { width: 7px; height: 7px; flex: none; border: var(--nier-line) solid var(--nier-low); }
 .friend.is-online .friend-dot { background: var(--nier-low); }
 .friend.is-playing .friend-dot { background: var(--nier-ok); border-color: var(--nier-ok); }
 .friend-game { align-self: flex-start; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
 .friend-status { font-size: var(--fs-xs); opacity: 0.8; }
-.friends-check { display: flex; align-items: center; gap: 8px; padding-top: 8px; border-top: var(--nier-line) solid var(--nier-low-trans); cursor: pointer; }
+.friends-check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
 .friends-check input { accent-color: var(--nier-low); }
 .friends-hint { margin: 0; font-size: var(--fs-xs); }
 @keyframes friends-panel-in {

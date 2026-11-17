@@ -6,6 +6,7 @@ pub mod saves;
 pub mod library;
 pub mod session;
 pub mod sounds;
+pub mod stats;
 pub mod system;
 pub mod update;
 pub mod report;

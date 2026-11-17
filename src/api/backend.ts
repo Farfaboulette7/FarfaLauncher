@@ -602,6 +602,38 @@ export interface Friends {
   amis: Friend[];
 }
 
+/** Temps de jeu d'un joueur sur un jeu (statistiques entre amis). */
+export interface StatsGame {
+  romId: number;
+  totalMs: number;
+  sessions: number;
+  /** Dernière partie (Unix, secondes) ; absent si le joueur apparaît hors ligne. */
+  last?: number;
+}
+export interface PlayerStats {
+  id: number;
+  username: string;
+  avatar: boolean;
+  totalMs: number;
+  sessions: number;
+  games: number;
+  /** 7 derniers jours ; `null` si le joueur apparaît hors ligne. */
+  weekMs: number | null;
+  top: StatsGame[];
+  recent: StatsGame[];
+  /** « Masquer mes statistiques » (son propre profil seulement). */
+  hidden: boolean;
+  me: boolean;
+}
+export interface RankingRow {
+  id: number;
+  username: string;
+  avatar: boolean;
+  totalMs: number;
+  games?: number;
+  sessions?: number;
+}
+
 export type GameRequestStatus = "nouveau" | "accepté" | "refusé" | "ajouté";
 /** Demande de jeu envoyée au gestionnaire. */
 export interface GameRequest {
@@ -713,6 +745,11 @@ export const backend = {
   presenceHidden: () => invoke<boolean>("presence_hidden"),
   setPresenceHidden: (hidden: boolean) => invoke<boolean>("set_presence_hidden", { hidden }),
   friendAvatar: (id: number) => invoke<string>("friend_avatar", { id }),
+  /** Profil d'un joueur (`null` : le sien) ; `null` en retour : masqué ou gestionnaire trop ancien. */
+  playerStats: (id: number | null) => invoke<PlayerStats | null>("player_stats", { id }),
+  statsRanking: () => invoke<RankingRow[] | null>("stats_ranking"),
+  gameRanking: (romId: number) => invoke<RankingRow[] | null>("game_ranking", { romId }),
+  setStatsHidden: (hidden: boolean) => invoke<boolean>("set_stats_hidden", { hidden }),
   reportsSeen: () => invoke<Record<string, number>>("reports_seen"),
   markReportsSeen: (seen: Record<string, number>) => invoke<void>("mark_reports_seen", { seen }),
   replyReport: (id: string, text: string) => invoke<{ messages: ReportMessage[]; status: string }>("reply_report", { id, text }),

@@ -441,3 +441,64 @@ body::after {
 .now-playing-title {
   font-weight: 400;
 }
+
+/* Cases à cocher et curseurs au style NieR : les contrôles natifs (blancs sous Windows) ne
+   suivent pas le thème. Même rendu sous WebView2 (Windows) et WebKitGTK (Linux). */
+input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  display: inline-grid;
+  place-content: center;
+  border: var(--nier-line) solid var(--nier-low);
+  background: var(--nier-high);
+  box-shadow: 2px 2px 0 var(--nier-shadow);
+  cursor: pointer;
+  transition: background var(--nier-fast) var(--nier-ease);
+}
+input[type="checkbox"]::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  background: var(--nier-low);
+  transform: scale(0);
+  transition: transform var(--nier-fast) var(--nier-ease);
+}
+input[type="checkbox"]:checked::before { transform: scale(1); }
+input[type="checkbox"]:hover { background: var(--nier-surface); }
+input[type="checkbox"]:focus-visible { outline: var(--nier-line) solid var(--nier-low); outline-offset: 3px; }
+input[type="checkbox"]:disabled { opacity: 0.5; cursor: default; }
+
+input[type="range"] {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 18px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 3px;
+  background: var(--nier-low-trans);
+  border: 0;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 16px;
+  margin-top: -6.5px;
+  border: 0;
+  border-radius: 0;
+  background: var(--nier-low);
+  box-shadow: 2px 2px 0 var(--nier-shadow);
+}
+input[type="range"]:hover::-webkit-slider-thumb { background: var(--nier-ink); }
+input[type="range"]:focus-visible { outline: var(--nier-line) solid var(--nier-low); outline-offset: 2px; }
+input[type="range"]:disabled { opacity: 0.5; cursor: default; }
+@media (prefers-reduced-motion: reduce) {
+  input[type="checkbox"], input[type="checkbox"]::before { transition: none; }
+}

@@ -9,6 +9,7 @@ import { Marquee } from "../components/Marquee";
 import { FullscreenButton } from "../components/FullscreenButton";
 import { MusicMenu } from "../components/MusicMenu";
 import { ReportsInbox } from "../components/ReportsInbox";
+import { GameRanking } from "../components/StatsDialog";
 import { noteLines } from "../notes";
 import { useReveal } from "../reveal";
 import "./GameDetail.css";
@@ -231,6 +232,7 @@ function InfoTab({ game, target, installs, onError }: { game: Game; target: Targ
           </dl>
         </section>
       </div>
+      <GameRanking romId={game.id} refreshKey={refreshKey} />
     </div>
   );
 }

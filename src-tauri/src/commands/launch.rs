@@ -121,6 +121,8 @@ pub async fn play_game(
             let _ = window.set_focus();
         }
         let f = play::finish(&state, rom_id, started, learned, shader_job).await;
+        // Session envoyée à RomM par `finish` : le gestionnaire la reçoit à son tour.
+        crate::commands::stats::sync_later(&app, 0);
         let ask_report = ask_report(crash.as_ref(), &state.settings().crash_prompt_off, rom_id);
         let _ = app.emit(
             "game-stopped",

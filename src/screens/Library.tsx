@@ -41,6 +41,7 @@ import { Downloads } from "../components/Downloads";
 import { RequestGameButton } from "../components/GameRequests";
 import { MusicMenu } from "../components/MusicMenu";
 import { FriendsMenu } from "../components/FriendsMenu";
+import { StatsDialog } from "../components/StatsDialog";
 
 type Tab = "recent" | "library" | "favorites";
 /** Filtre de la bibliothèque, des favoris et de la recherche. */
@@ -182,6 +183,8 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
   const [searching, setSearching] = useState(false);
   const [recentIds, setRecentIds] = useState<number[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  /** Statistiques ouvertes : joueur (`null` : soi), `undefined` : fermées. */
+  const [statsFor, setStatsFor] = useState<number | null | undefined>(undefined);
   const [seen, setSeen] = useState(loadSeen);
   const [showSettings, setShowSettings] = useState(false);
   const [hack, setHack] = useState<Hack | null>(null);
@@ -684,6 +687,7 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
                 openGame(id, el);
                 return true;
               }}
+              onOpenStats={setStatsFor}
             />
             <ReportsInbox offline={session.offline} />
             <MusicMenu />
@@ -712,6 +716,18 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
           </div>
         </div>
       </header>
+      {statsFor !== undefined && (
+        <StatsDialog
+          playerId={statsFor}
+          known={known}
+          onOpenGame={(id, el) => {
+            if (!known(id)) return false;
+            openGame(id, el);
+            return true;
+          }}
+          onClose={() => setStatsFor(undefined)}
+        />
+      )}
       <div className="n-rule lib-rule" />
 
       <div className="lib-toolbar">
