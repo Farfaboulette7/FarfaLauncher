@@ -28,10 +28,14 @@ import {
   SaveVersion,
   SharedShaders,
   Optimizations,
+  RecompOffer,
+  InstallWay,
   Target,
   TARGET_LABELS,
+  InstalledGame,
 } from "../api/backend";
 import { InstallsState } from "../hooks/useInstalls";
+import { InstallChoice, InstallMode, useInstallChoice } from "../hooks/useInstallChoice";
 import { Dialog } from "../components/Dialog";
 import { REPORT_SENT_EVENT } from "../components/ReportsInbox";
 import { LaunchOverlay } from "../components/LaunchOverlay";
@@ -126,13 +130,15 @@ export function InstallPanel({ game: base, target, installs, onError, autoPlay, 
   const inst = installs.installed.get(base.id);
   /** Serveur injoignable : jouer oui, installer ou mettre à jour non. */
   const offline = useOffline();
-  /** Émulateur choisi avant l'installation (`null` : le premier proposé). */
-  const [emulatorChoice, setEmulatorChoice] = useState<string | null>(null);
-  /** Recomp choisie avant l'installation, quand le jeu en a plusieurs (`null` : celle proposée). */
-  const [recompChoice, setRecompChoice] = useState<string | null>(null);
+  /** Recomp ou émulation, et laquelle : choisi dans l'onglet « Informations » (section Installation). */
+  const [choice] = useInstallChoice(base.id);
+  const mode = installMode(base, inst, choice);
+  const recompChoice = choice.recomp;
   const recompId = recompChoice ?? base.recompId ?? null;
-  const recompOffer = base.recomps?.find((r) => r.id === recompId) ?? null;
-  const game = withEffectiveEmulator(base, inst, emulatorChoice);
+  const recompOffer = recompList(base).find((r) => r.id === recompId) ?? null;
+  const game = withEffectiveEmulator(base, inst, choice.emulator);
+  /** Il y a un autre choix possible dans l'onglet « Informations ». */
+  const hasAlternative = recompList(base).length + (base.emulators?.length ?? 0) > 1;
   const progress = installs.progress.get(game.id);
   const error = installs.errors.get(game.id);
   const [message, setMessage] = useState<string | null>(null);
@@ -174,9 +180,6 @@ export function InstallPanel({ game: base, target, installs, onError, autoPlay, 
   const emulatorInst = game.emulator ? installs.installed.get(game.emulator.runtimeRomId) : undefined;
   const emulatorUpToDate = !!emulatorInst?.executable && emulatorInst.versionRaw === game.emulator?.versionKey;
   const installedWithEmulator = isEmulatorInstall(inst);
-  /** Jeu installé avec un émulateur alors qu'il a une recomp pour ce système (et inversement). */
-  const canSwitchToRecomp = installedWithEmulator && game.recomp && !game.pc && !game.runtime && isAvailable(game);
-  const canSwitchToEmulator = !!inst?.executable && !inst.shared && !inst.pc && game.recomp && emulatorReady(game);
   const pendingChoice = !!inst && !inst.executable && !progress;
   const runningSince = installs.running.get(game.id);
   // Dossier des mods du jeu installé : bouton pour l'ouvrir s'il existe.
@@ -381,31 +384,6 @@ export function InstallPanel({ game: base, target, installs, onError, autoPlay, 
               </button>
             )}
             {last && <p className="n-hint">{sessionSummary(last)}</p>}
-            {installedWithEmulator && !offline && runningSince === undefined && !busy && !launching && (
-              <EmulatorPicker
-                game={base}
-                current={game.emulator}
-                target={target}
-                hint="Changer d'émulateur garde la ROM ; chaque émulateur a ses propres sauvegardes."
-                onPick={(e) => installs.start(game.id, undefined, null, true, e.id)}
-              />
-            )}
-            {canSwitchToRecomp && runningSince === undefined && !busy && !launching && (
-              <>
-                <button className="n-btn n-btn--block gd-launcher" disabled={offline} title={offline ? OFFLINE_TITLE : undefined} onClick={() => installs.start(game.id, undefined, null, false)}>
-                  Passer à la recomp
-                </button>
-                <p className="n-hint">La ROM déjà téléchargée est reprise. La recomp a ses propres sauvegardes, celles de l'émulateur restent sur le serveur.</p>
-              </>
-            )}
-            {canSwitchToEmulator && runningSince === undefined && !busy && !launching && (
-              <>
-                <button className="n-btn n-btn--block gd-launcher" disabled={offline} title={offline ? OFFLINE_TITLE : undefined} onClick={() => installs.start(game.id, undefined, null, true, game.emulator?.id)}>
-                  Passer en émulation ({game.emulator?.name})
-                </button>
-                <p className="n-hint">La ROM est reprise et le dossier de la recomp reste sur le disque. L'émulateur a ses propres sauvegardes.</p>
-              </>
-            )}
             {update && runningSince === undefined && !busy && !launching && (
               <button className="n-btn n-btn--block gd-update" disabled={offline} title={offline ? OFFLINE_TITLE : undefined} onClick={() => installs.start(game.id, undefined, null, installedWithEmulator)}>
                 Mettre à jour ({inst.versionRaw ? inst.version : "?"} → {installedWithEmulator ? game.emulator?.version : game.serverVersion})
@@ -419,17 +397,15 @@ export function InstallPanel({ game: base, target, installs, onError, autoPlay, 
               Choisir l'exécutable
             </button>
           </>
-        ) : isAvailable(game) ? (
+        ) : mode === "recomp" && isAvailable(game) && recompOffer?.available !== false ? (
           <>
-            <RecompPicker game={base} current={recompId} onPick={setRecompChoice} />
             <button
               className="n-btn n-btn--primary n-btn--block"
               disabled={recompOffer ? !recompOffer.available : false}
               onClick={() => installs.start(game.id, installDir ?? undefined, game.pc?.proton ? protonChoice : null, false, null, recompId)}
             >
-              {(base.recomps?.length ?? 0) > 1 && recompOffer ? `Installer ${recompOffer.name}` : emulatorReady(game) ? "Installer la recomp" : "Installer"}
+              {(base.recomps?.length ?? 0) > 1 && recompOffer ? `Installer ${recompOffer.name}` : base.emulators?.length ? "Installer la recomp" : "Installer"}
             </button>
-            {recompOffer?.advice && (base.recomps?.length ?? 0) < 2 && emulatorReady(game) && <Advice text={recompOffer.advice} />}
             {game.pc?.proton && (
               <p className="n-hint">
                 Jeu Windows lancé avec Proton : {protonChoice ?? "version recommandée"}{" "}
@@ -460,18 +436,10 @@ export function InstallPanel({ game: base, target, installs, onError, autoPlay, 
                 )}
               </div>
             )}
-            {emulatorReady(game) && (
-              <EmulatorPicker game={base} current={game.emulator} target={target} onPick={(e) => setEmulatorChoice(e.id)} />
-            )}
-            {emulatorReady(game) && (
-              <button className="n-btn n-btn--block gd-launcher" onClick={() => installs.start(game.id, installDir ?? undefined, null, true, game.emulator?.id)}>
-                Installer avec {game.emulator?.name} ({formatSize(emulatorDownloadSize(game, emulatorUpToDate))})
-              </button>
-            )}
+            {hasAlternative && <p className="n-hint">{CHOICE_HINT}</p>}
           </>
-        ) : emulatorReady(game) ? (
+        ) : mode === "emulator" && emulatorReady(game) ? (
           <>
-            <EmulatorPicker game={base} current={game.emulator} target={target} onPick={(e) => setEmulatorChoice(e.id)} />
             <button className="n-btn n-btn--primary n-btn--block" onClick={() => installs.start(game.id, installDir ?? undefined, null, true, game.emulator?.id)}>
               Installer
             </button>
@@ -479,6 +447,7 @@ export function InstallPanel({ game: base, target, installs, onError, autoPlay, 
               {formatSize(emulatorDownloadSize(game, emulatorUpToDate))} · avec {game.emulator?.name}
               {emulatorUpToDate && " (déjà installé)"}
             </p>
+            {hasAlternative && <p className="n-hint">{CHOICE_HINT}</p>}
             {!emulatorInst?.executable && (
               <div className="gd-inst-actions">
                 <button className="n-link" onClick={chooseInstallDir}>
@@ -492,12 +461,25 @@ export function InstallPanel({ game: base, target, installs, onError, autoPlay, 
               </div>
             )}
           </>
-        ) : game.emulator?.available ? (
+        ) : mode === "recomp" && recompOffer && !recompOffer.available ? (
+          <>
+            <p className="n-alert" data-sound="none">
+              {recompOffer.name} n'est pas disponible pour votre système{target ? ` (${TARGET_LABELS[target]})` : ""}. {availableOn(recompOffer.systems)}
+            </p>
+            {hasAlternative && <p className="n-hint">{CHOICE_HINT}</p>}
+          </>
+        ) : mode === "emulator" && game.emulator?.available ? (
           <p className="n-notice">
             {game.emulator.name} a besoin d'éléments de configuration absents du serveur : {game.emulator.configMissing.join(", ")}.
           </p>
-        ) : game.pc || game.recomp ? (
-          <p className="n-alert" data-sound="none">Non disponible pour votre système{target ? ` (${TARGET_LABELS[target]})` : ""}.</p>
+        ) : game.pc || (mode === "recomp" && game.recomp) ? (
+          <>
+            <p className="n-alert" data-sound="none">
+              Non disponible pour votre système{target ? ` (${TARGET_LABELS[target]})` : ""}.{" "}
+              {game.pc ? "" : availableOn(recompOffer?.systems ?? game.archives.map((a) => a.target))}
+            </p>
+            {hasAlternative && <p className="n-hint">{CHOICE_HINT}</p>}
+          </>
         ) : (
           <p className="n-notice" data-sound="none">
             {game.emulator ? `Pas d'émulateur disponible pour votre système${target ? ` (${TARGET_LABELS[target]})` : ""}.` : "Pas d'émulateur disponible."}
@@ -708,6 +690,9 @@ export function InstallPanel({ game: base, target, installs, onError, autoPlay, 
           name={game.name}
           runtimeName={inst.shared?.runtimeName ?? null}
           emulator={installedWithEmulator}
+          others={(inst.ways ?? [])
+            .filter((w) => !w.active)
+            .map((w) => (w.kind === "emulator" ? base.emulators?.find((e) => e.id === w.id)?.name : recompList(base).find((r) => r.id === w.id)?.name) ?? w.id)}
           onClose={() => setDialog(null)}
           onConfirm={async (keepSaves) => {
             setDialog(null);
@@ -735,82 +720,251 @@ function Advice({ text }: { text: string }) {
   );
 }
 
-/** Choix de la recomp quand le jeu en a plusieurs. */
-function RecompPicker({ game, current, onPick }: { game: Game; current: string | null; onPick: (id: string) => void }) {
-  const all = game.recomps ?? [];
-  if (all.length < 2) return null;
-  const advised = all.find((r) => r.advice);
-  return (
-    <div className="gd-emulators">
-      <p className="n-hint">Recomp</p>
-      <div className="gd-emulators-list" role="radiogroup" aria-label="Recomp">
-        {all.map((r) => {
-          const on = r.id === current;
-          return (
-            <button
-              key={r.id}
-              role="radio"
-              aria-checked={on}
-              className={`n-btn gd-emulator${on ? " is-on" : ""}`}
-              disabled={!r.available}
-              title={r.available ? `${r.name} ${r.version}` : "Pas de version pour ce système"}
-              onClick={() => !on && onPick(r.id)}
-            >
-              {r.name}
-              {r.advice && <span className="gd-advice">Conseillé</span>}
-              {!r.available && <span className="gd-emulator-off"> (indisponible)</span>}
-            </button>
-          );
-        })}
-      </div>
-      {advised?.advice && <p className="n-hint gd-advice-line">{advised.advice}</p>}
-    </div>
-  );
+/** Rappel sous le bouton d'installation : le choix se fait dans l'onglet « Informations ». */
+const CHOICE_HINT = "Recomp ou émulation : à choisir dans Informations › Installation.";
+
+/** « Disponible pour : Windows. » */
+function availableOn(systems: Target[]): string {
+  return systems.length ? `Disponible pour : ${systems.map((s) => TARGET_LABELS[s]).join(", ")}.` : "Pas encore de version publiée.";
 }
 
-/** Choix de l'émulateur quand la console en a plusieurs. */
-function EmulatorPicker({
-  game,
-  current,
-  target,
-  hint,
-  onPick,
-}: {
-  game: Game;
-  current: EmulatorOffer | null;
-  target: Target | null;
-  hint?: string;
-  onPick: (e: EmulatorOffer) => void;
-}) {
-  const all = game.emulators ?? [];
-  if (all.length < 2) return null;
+/** Recomps du jeu, disponibles ou non sur ce système (la seule, quand il n'en a qu'une). */
+function recompList(game: Game): RecompOffer[] {
+  if (!game.recomp || game.pc) return [];
+  if (game.recomps?.length) return game.recomps;
+  return [
+    {
+      id: game.recompId ?? "recomp",
+      name: game.runtime?.name ?? "Recomp",
+      version: game.serverVersion ?? "",
+      available: isAvailable(game),
+      systems: game.archives.map((a) => a.target),
+      advice: null,
+    },
+  ];
+}
+
+/** Façon dont le jeu est installé (`null` : pas installé, ou jeu PC). */
+function installedMode(game: Game, inst: InstalledGame | undefined): InstallMode | null {
+  if (!inst || game.pc) return null;
+  return isEmulatorInstall(inst) ? "emulator" : "recomp";
+}
+
+/**
+ * Recomp ou émulation : la façon dont le jeu est installé, sinon le choix du joueur, sinon ce
+ * qui marche sur ce système (la recomp d'abord).
+ */
+function installMode(game: Game, inst: InstalledGame | undefined, choice: InstallChoice): InstallMode {
+  const recomps = recompList(game).length > 0;
+  const emulators = (game.emulators?.length ?? 0) > 0;
+  const installed = installedMode(game, inst);
+  if (installed) return installed;
+  if (choice.mode === "recomp" && recomps) return "recomp";
+  if (choice.mode === "emulator" && emulators) return "emulator";
+  if (game.pc || isAvailable(game)) return "recomp";
+  if (emulatorReady(game)) return "emulator";
+  return recomps || !emulators ? "recomp" : "emulator";
+}
+
+/** Émulateur effectif (celui installé, sinon celui choisi, sinon le premier proposé). */
+function effectiveEmulatorOf(game: Game, inst: InstalledGame | undefined, chosen: string | null): EmulatorOffer | null {
+  return withEffectiveEmulator(game, inst, chosen).emulator;
+}
+
+/** Ce qui est choisi dans Informations › Installation, et s'il est déjà installé. */
+interface Selection {
+  mode: InstallMode;
+  recomp: RecompOffer | null;
+  emulator: EmulatorOffer | null;
+  /** Nom et identifiant de ce qui est choisi (recomp ou émulateur). */
+  kind: InstallMode;
+  id: string | null;
+  name: string;
+  /** Installation déjà sur le disque pour ce choix. */
+  way: InstallWay | undefined;
+}
+
+/** Recomp ou émulateur choisi : le choix du joueur, sinon ce qui est installé, sinon le meilleur. */
+function selectionOf(base: Game, inst: InstalledGame | undefined, choice: InstallChoice): Selection | null {
+  const recomps = recompList(base);
+  const emulators = base.emulators ?? [];
+  if (base.pc || recomps.length + emulators.length === 0) return null;
+  // Ce qui est choisi ici, pas encore appliqué, passe avant ce qui est installé.
+  const chosenOk = choice.mode && (choice.mode === "recomp" ? recomps.length > 0 : emulators.length > 0);
+  const mode: InstallMode = chosenOk ? choice.mode! : installMode(base, inst, choice);
+  const recompId = choice.recomp ?? base.recompId ?? recomps[0]?.id ?? null;
+  const recomp = recomps.find((r) => r.id === recompId) ?? recomps[0] ?? null;
+  const emulator =
+    isEmulatorInstall(inst) && choice.emulator ? (emulators.find((e) => e.id === choice.emulator) ?? null) : effectiveEmulatorOf(base, inst, choice.emulator);
+  const picked = mode === "recomp" ? recomp : emulator;
+  const ways = inst?.executable ? (inst.ways ?? []) : [];
+  return {
+    mode,
+    recomp,
+    emulator,
+    kind: mode,
+    id: picked?.id ?? null,
+    name: picked?.name ?? "",
+    way: ways.find((w) => w.kind === mode && w.id === picked?.id),
+  };
+}
+
+/**
+ * Onglet « Informations », section Installation : recomp ou émulation, puis toutes les recomps
+ * ou tous les émulateurs du launcher pour ce jeu, y compris ceux sans version pour ce système.
+ * Jeu installé : ce qui est déjà sur le disque se met en service d'un clic, le reste s'installe
+ * à côté.
+ */
+function InstallChoiceFacts({ game: base, target, installs }: { game: Game; target: Target | null; installs: InstallsState }) {
+  const inst = installs.installed.get(base.id);
+  const offline = useOffline();
+  const [choice, setChoice] = useInstallChoice(base.id);
+  const sel = selectionOf(base, inst, choice);
+  if (!sel) return null;
+  const recomps = recompList(base);
+  const emulators = base.emulators ?? [];
+  const { mode, recomp, emulator: current } = sel;
+  const system = target ? TARGET_LABELS[target] : "ce système";
+  const idle = !installs.running.has(base.id) && !installs.busy.get(base.id) && !installs.progress.get(base.id);
+  const ways = inst?.executable ? (inst.ways ?? []) : [];
+  const nameOf = (kind: InstallMode, id: string) =>
+    (kind === "recomp" ? recomps.find((r) => r.id === id)?.name : emulators.find((e) => e.id === id)?.name) ?? id;
+  const owned = (kind: InstallMode, id: string | undefined) => ways.some((w) => w.kind === kind && w.id === id);
+  const activeWay = ways.find((w) => w.active);
+  const others = activeWay ? nameOf(activeWay.kind, activeWay.id) : "L'installation actuelle";
+
+  // Jeu installé : ce qui est choisi et pas en service se met en service, ou s'installe à côté.
+  let action: { label: string; hint: string; run: () => void } | null = null;
+  if (inst?.executable && idle && sel.id && !sel.way?.active) {
+    const id = sel.id;
+    if (sel.way) {
+      action = {
+        label: `Jouer avec ${sel.name}`,
+        hint: "Déjà installé : rien n'est retéléchargé.",
+        run: () =>
+          void backend
+            .useInstall(base.id, sel.kind, id)
+            .then(() => {
+              setChoice({ mode: null, recomp: null, emulator: null });
+              return installs.reload();
+            })
+            .catch(() => installs.reload()),
+      };
+    } else if (mode === "emulator" && current && emulatorReady({ ...base, emulator: current })) {
+      action = {
+        label: `Installer ${current.name}`,
+        hint: `${others} reste installé : vous pourrez y revenir. La ROM n'est pas retéléchargée si elle est déjà sur le disque. Les émulateurs partagent la même sauvegarde.`,
+        run: () => void installs.start(base.id, undefined, null, true, current.id),
+      };
+    } else if (mode === "recomp" && recomp?.available && !base.runtime) {
+      action = {
+        label: `Installer ${recomp.name === "Recomp" ? "la recomp" : recomp.name}`,
+        hint: `${others} reste installé : vous pourrez y revenir. La ROM n'est pas retéléchargée si elle est déjà sur le disque. Chaque recomp a ses propres sauvegardes.`,
+        run: () => void installs.start(base.id, undefined, null, false, null, recomp.id),
+      };
+    }
+  }
+
   return (
-    <div className="gd-emulators">
-      <p className="n-hint">Émulateur</p>
-      <div className="gd-emulators-list" role="radiogroup" aria-label="Émulateur">
-        {all.map((e) => {
-          const on = e.id === current?.id;
-          const usable = e.available && e.configMissing.length === 0;
-          return (
-            <button
-              key={e.id}
-              role="radio"
-              aria-checked={on}
-              className={`n-btn gd-emulator${on ? " is-on" : ""}`}
-              disabled={!usable}
-              title={usable ? `${e.name} ${e.version}` : `Pas de version pour ${target ? TARGET_LABELS[target] : "ce système"}`}
-              onClick={() => !on && onPick(e)}
-            >
-              {e.name}
-              {e.advice && <span className="gd-advice">Conseillé</span>}
-              {!usable && <span className="gd-emulator-off"> (indisponible)</span>}
-            </button>
-          );
-        })}
-      </div>
-      {all.find((e) => e.advice)?.advice && <p className="n-hint gd-advice-line">{all.find((e) => e.advice)?.advice}</p>}
-      {hint && <p className="n-hint">{hint}</p>}
-    </div>
+    <>
+      {recomps.length > 0 && emulators.length > 0 && (
+        <>
+          <dt>Mode</dt>
+          <dd>
+            <span className="gd-lang" role="group" aria-label="Recomp ou émulation">
+              {(
+                [
+                  ["recomp", "Recomp"],
+                  ["emulator", "Émulation"],
+                ] as const
+              ).map(([m, label]) => (
+                <button key={m} className="n-btn" aria-pressed={mode === m} onClick={() => mode !== m && setChoice({ mode: m })}>
+                  {label}
+                </button>
+              ))}
+            </span>
+          </dd>
+        </>
+      )}
+      <dt>{mode === "recomp" ? (recomps.length > 1 ? "Recomps" : "Recomp") : emulators.length > 1 ? "Émulateurs" : "Émulateur"}</dt>
+      <dd>
+        <div className="gd-emulators-list" role="radiogroup" aria-label={mode === "recomp" ? "Recomp" : "Émulateur"}>
+          {mode === "recomp"
+            ? recomps.map((r) => {
+                const on = r.id === recomp?.id;
+                return (
+                  <button
+                    key={r.id}
+                    role="radio"
+                    aria-checked={on}
+                    className={`n-btn gd-emulator${on ? " is-on" : ""}`}
+                    title={r.available ? `${r.name} ${r.version}` : `Pas de version pour ${system}`}
+                    onClick={() => !on && setChoice({ mode: "recomp", recomp: r.id })}
+                  >
+                    {r.name}
+                    {r.advice && <span className="gd-advice">Conseillé</span>}
+                    {!r.available && <span className="gd-emulator-off"> (indisponible)</span>}
+                    {owned("recomp", r.id) && <span className="gd-emulator-off"> (installée)</span>}
+                  </button>
+                );
+              })
+            : emulators.map((e) => {
+                const on = e.id === current?.id;
+                const usable = e.available && e.configMissing.length === 0;
+                return (
+                  <button
+                    key={e.id}
+                    role="radio"
+                    aria-checked={on}
+                    className={`n-btn gd-emulator${on ? " is-on" : ""}`}
+                    title={usable ? `${e.name} ${e.version}` : `Pas de version pour ${system}`}
+                    onClick={() => !on && setChoice({ mode: "emulator", emulator: e.id })}
+                  >
+                    {e.name}
+                    {e.advice && <span className="gd-advice">Conseillé</span>}
+                    {!usable && <span className="gd-emulator-off"> (indisponible)</span>}
+                    {owned("emulator", e.id) && <span className="gd-emulator-off"> (installé)</span>}
+                  </button>
+                );
+              })}
+        </div>
+        {mode === "recomp" && recomp && !recomp.available && (
+          <p className="n-alert" data-sound="none">
+            {recomp.name} n'est pas disponible pour {system}. {availableOn(recomp.systems)}
+          </p>
+        )}
+        {mode === "emulator" && current && !current.available && (
+          <p className="n-alert" data-sound="none">
+            {current.name} n'est pas disponible pour {system}. {availableOn(current.systems)}
+          </p>
+        )}
+        {mode === "emulator" && current?.available && current.configMissing.length > 0 && (
+          <p className="n-notice">
+            {current.name} a besoin d'éléments de configuration absents du serveur : {current.configMissing.join(", ")}.
+          </p>
+        )}
+        {mode === "recomp" && recomp?.advice && <Advice text={recomp.advice} />}
+        {mode === "emulator" && current?.advice && <Advice text={current.advice} />}
+        {(activeWay || action) && (
+          <p className="n-hint gd-way-line">
+            {activeWay && <>« Jouer » lance {nameOf(activeWay.kind, activeWay.id)}.</>}
+            {action && (
+              <>
+                {activeWay && " "}
+                <button
+                  className="n-link gd-way-action"
+                  disabled={offline && !sel.way}
+                  title={offline && !sel.way ? OFFLINE_TITLE : action.hint}
+                  onClick={action.run}
+                >
+                  {action.label}
+                </button>
+              </>
+            )}
+          </p>
+        )}
+      </dd>
+    </>
   );
 }
 
@@ -871,10 +1025,19 @@ function Bo3LanguageFact({ romId, playing }: { romId: number; playing: boolean }
 /** Détails de l'installation, affichés dans l'onglet « Informations ». */
 export function InstallFacts({ game: base, target, installs }: { game: Game; target: Target | null; installs: InstallsState }) {
   const inst = installs.installed.get(base.id);
-  const game = withEffectiveEmulator(base, inst);
+  const [choice] = useInstallChoice(base.id);
+  // Recomp ou émulateur choisi : les lignes ci-dessous parlent de lui, installé ou non (version,
+  // téléchargement, sources, plateformes, tout vient du catalogue de FarfaRomManager).
+  const sel = selectionOf(base, inst, choice);
+  const chosen = withEffectiveEmulator(base, inst, choice.emulator);
+  const game = sel?.emulator && sel.mode === "emulator" ? { ...chosen, emulator: sel.emulator } : chosen;
   const runtimeInstalled = !!game.runtime && !!installs.installed.get(game.runtime.romId)?.executable;
-  const withEmulator = isEmulatorInstall(inst) || (!inst && !game.recomp);
+  const withEmulator = sel ? sel.mode === "emulator" : false;
+  const choosing = !!sel;
+  // Ce qui est choisi n'est pas ce que « Jouer » lance : on montre ce qu'on sait de lui.
+  const preview = !!sel && !(inst && (!inst.executable || sel.way?.active || !(inst.ways?.length)));
   const emulatorSystems = withEmulator ? (game.emulator?.systems ?? []) : [];
+  const recompSystems = !withEmulator && sel?.recomp && sel.recomp.id !== base.recompId ? sel.recomp.systems : null;
   const [shaders, setShaders] = useState<Record<string, SharedShaders>>({});
   const playing = installs.running.has(base.id);
   useEffect(() => {
@@ -897,7 +1060,9 @@ export function InstallFacts({ game: base, target, installs }: { game: Game; tar
       again.forEach((t) => window.clearTimeout(t));
     };
   }, [base.id, withEmulator, playing]);
-  const shaderLines = Object.entries(shaders).map(([emu, s]) => {
+  const shaderLines = Object.entries(shaders)
+    .filter(([emu]) => !game.emulator || emu === game.emulator.id)
+    .map(([emu, s]) => {
     const name = game.emulators?.find((e) => e.id === emu)?.name ?? emu;
     const last = s.sessions[s.sessions.length - 1]?.added ?? 0;
     const recent = s.sessions.slice(-3);
@@ -918,17 +1083,21 @@ export function InstallFacts({ game: base, target, installs }: { game: Game; tar
       live = false;
     };
   }, []);
+  const recompRepo = sel?.recomp?.repo ?? game.runtime?.repo;
   const source = withEmulator
     ? game.emulator?.repo
       ? { name: game.emulator.name, url: game.emulator.repo }
       : null
-    : game.runtime?.repo
-      ? { name: game.runtime.name, url: game.runtime.repo }
+    : recompRepo
+      ? { name: sel?.recomp?.name ?? game.runtime?.name ?? "la recomp", url: recompRepo }
       : null;
+  const emulatorHere = installs.installed.get(game.emulator?.runtimeRomId ?? -1)?.versionRaw === game.emulator?.versionKey;
+  const romBytes = game.romFiles.reduce((n, f) => n + f.size, 0);
   const rommPage = rommUrl ? `${rommUrl.replace(/\/+$/, "")}/rom/${base.id}` : null;
   return (
     <>
-      {game.runtime && !withEmulator && (
+      <InstallChoiceFacts game={base} target={target} installs={installs} />
+      {!choosing && game.runtime && !withEmulator && (
         <>
           <dt>Recomp</dt>
           <dd>
@@ -938,7 +1107,7 @@ export function InstallFacts({ game: base, target, installs }: { game: Game; tar
           </dd>
         </>
       )}
-      {withEmulator && game.emulator && (
+      {!choosing && withEmulator && game.emulator && (
         <>
           <dt>Émulateur</dt>
           <dd>
@@ -953,10 +1122,33 @@ export function InstallFacts({ game: base, target, installs }: { game: Game; tar
         </>
       )}
       <dt>Version serveur</dt>
-      <dd>{(withEmulator ? game.emulator?.version : game.serverVersion) ?? "inconnue"}</dd>
+      <dd>{(withEmulator ? game.emulator?.version : (preview && sel?.recomp?.version) || game.serverVersion) ?? "inconnue"}</dd>
       <dt>Version installée</dt>
-      <dd>{inst?.executable ? inst.version ?? "inconnue" : "non installé"}</dd>
-      {inst && (
+      <dd>{preview ? (sel?.way?.version ?? (sel?.way ? "inconnue" : "non installé")) : inst?.executable ? (inst.version ?? "inconnue") : "non installé"}</dd>
+      {preview && sel?.way && (
+        <>
+          <dt>Emplacement</dt>
+          <dd className="gd-savedir" title={sel.way.gameDir}>
+            {shortPath(sel.way.gameDir)}
+          </dd>
+        </>
+      )}
+      {preview && !sel?.way && game.detailsLoaded && (withEmulator ? emulatorReady(game) : !!sel?.recomp?.available) && (
+        <>
+          <dt>Téléchargement</dt>
+          <dd>
+            {formatSize(
+              withEmulator
+                ? emulatorDownloadSize(game, emulatorHere)
+                : sel?.recomp?.id === base.recompId
+                  ? downloadSize(game, runtimeInstalled && !hasUpdate(game, installs.installed.get(game.runtime?.romId ?? -1)))
+                  : (sel?.recomp?.size ?? 0) + romBytes,
+            )}
+            {inst?.executable && " (la ROM déjà sur le disque n'est pas retéléchargée)"}
+          </dd>
+        </>
+      )}
+      {!preview && inst && (
         <>
           <dt>Emplacement</dt>
           <dd className="gd-savedir" title={inst.gameDir}>
@@ -964,7 +1156,7 @@ export function InstallFacts({ game: base, target, installs }: { game: Game; tar
           </dd>
         </>
       )}
-      {inst?.executable && (
+      {!preview && inst?.executable && (
         <>
           <dt>Exécutable</dt>
           <dd>{inst.executable}</dd>
@@ -995,13 +1187,13 @@ export function InstallFacts({ game: base, target, installs }: { game: Game; tar
         </>
       )}
       {inst?.executable && inst.pc?.cod === "bo3" && <Bo3LanguageFact romId={base.id} playing={playing} />}
-      {!inst && isAvailable(game) && (
+      {!choosing && !inst && isAvailable(game) && (
         <>
           <dt>Téléchargement</dt>
           <dd>{formatSize(downloadSize(game, runtimeInstalled && !hasUpdate(game, installs.installed.get(game.runtime?.romId ?? -1))))}</dd>
         </>
       )}
-      {!inst && !isAvailable(game) && emulatorReady(game) && game.detailsLoaded && (
+      {!choosing && !inst && !isAvailable(game) && emulatorReady(game) && game.detailsLoaded && (
         <>
           <dt>Téléchargement</dt>
           <dd>{formatSize(emulatorDownloadSize(game, installs.installed.get(game.emulator?.runtimeRomId ?? -1)?.versionRaw === game.emulator?.versionKey))}</dd>
@@ -1017,7 +1209,7 @@ export function InstallFacts({ game: base, target, installs }: { game: Game; tar
           </dd>
         </>
       )}
-      {inst?.executable && <OptimizedFacts romId={base.id} running={installs.running.has(base.id)} />}
+      {!preview && inst?.executable && <OptimizedFacts romId={base.id} running={installs.running.has(base.id)} />}
       {(source || rommPage) && (
         <>
           <dt>Sources</dt>
@@ -1045,13 +1237,18 @@ export function InstallFacts({ game: base, target, installs }: { game: Game; tar
               {game.pc.proton && " (via Proton)"}
             </li>
           )}
-          {!game.pc && game.archives.length === 0 && emulatorSystems.length === 0 && <li className="n-hint">aucune</li>}
+          {!game.pc && (recompSystems ?? (withEmulator ? [] : game.archives)).length === 0 && emulatorSystems.length === 0 && <li className="n-hint">aucune</li>}
+          {recompSystems?.map((s) => (
+            <li key={s} className={sel?.recomp?.available && s === target ? "is-mine" : undefined}>
+              {TARGET_LABELS[s]}
+            </li>
+          ))}
           {emulatorSystems.map((s) => (
             <li key={s} className={game.emulator?.available && s === target ? "is-mine" : undefined}>
               {TARGET_LABELS[s]}
             </li>
           ))}
-          {!withEmulator && game.archives.map((a) => (
+          {!withEmulator && !recompSystems && game.archives.map((a) => (
             <li key={a.target} className={a.target === game.myArchive?.target ? "is-mine" : undefined}>
               {TARGET_LABELS[a.target]}
             </li>
@@ -1716,12 +1913,15 @@ function UninstallDialog({
   name,
   runtimeName,
   emulator,
+  others,
   onClose,
   onConfirm,
 }: {
   name: string;
   runtimeName: string | null;
   emulator: boolean;
+  /** Autres façons de jouer installées (recomp, émulateurs) : elles partent aussi. */
+  others: string[];
   onClose: () => void;
   onConfirm: (keepSaves: boolean) => void;
 }) {
@@ -1744,6 +1944,7 @@ function UninstallDialog({
       <p>
         Supprimer <strong>{name}</strong> de cet ordinateur ?
       </p>
+      {others.length > 0 && <p className="n-hint">Également installé avec {others.join(", ")} : tout est supprimé.</p>}
       {runtimeName && (
         <p className="n-hint">{runtimeName} n'est supprimé qu'avec le dernier jeu qui l'utilise. Les sauvegardes des autres jeux ne sont pas touchées.{emulator && " La sauvegarde conservée reste dans le dossier de la ROM."}</p>
       )}

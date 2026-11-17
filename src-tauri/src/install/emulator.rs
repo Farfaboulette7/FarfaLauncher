@@ -349,8 +349,21 @@ impl InstallJob {
     /// Installe l'émulateur s'il manque ou n'est plus à jour, puis la ROM de ce jeu.
     pub(super) async fn install_with_emulator(&self, rom_id: i64) -> AppResult<InstallOutcome> {
         let game = library::fetch_game_details(&self.client, rom_id, self.target).await?;
-        let previous = state::find(&self.config_dir, rom_id);
-        let emulator = self.pick_emulator(&game.console, previous.as_ref()).ok_or(AppError::NotAvailable)?;
+        // Le jeu peut déjà être installé d'autres façons : elles restent sur le disque, en
+        // réserve. Les émulateurs partagent le dossier des ROM et les sauvegardes (RomM) ; la ROM
+        // posée à côté d'une recomp est reprise par lien physique (une seule copie).
+        let installs = state::all_installs(&self.config_dir, rom_id);
+        let on_emulator = |p: &&InstalledGame| p.shared.as_ref().is_some_and(|s| s.is_emulator());
+        let active = installs.first().filter(on_emulator).cloned();
+        let emulator = self.pick_emulator(&game.console, active.as_ref().or(installs.iter().find(on_emulator))).ok_or(AppError::NotAvailable)?;
+        // Cet émulateur-là d'abord (mise à jour), sinon un autre : même dossier des ROM.
+        let previous = installs
+            .iter()
+            .filter(on_emulator)
+            .find(|p| p.shared.as_ref().is_some_and(|s| s.game == emulator.id))
+            .or_else(|| installs.iter().find(on_emulator))
+            .cloned();
+        let recomps: Vec<InstalledGame> = installs.iter().filter(|p| p.shared.is_none() && p.pc.is_none()).cloned().collect();
         if game.rom_files.is_empty() {
             return Err(AppError::NotAvailable);
         }
@@ -384,7 +397,7 @@ impl InstallJob {
                 self.emit(rom_id, "download", offset, total);
                 continue;
             }
-            if let Some(old) = recomp_copy(previous.as_ref(), file) {
+            if let Some(old) = recomps.iter().find_map(|r| recomp_copy(Some(r), file)) {
                 let (from, to) = (old.clone(), dest.clone());
                 match blocking(move || super::reuse_file(&from, &to).map_err(|e| disk_error("reprise de la ROM de la recomp", e))).await {
                     Ok(()) => {
@@ -445,6 +458,7 @@ impl InstallJob {
             updated_at: now,
             game_dir: installed.game_dir.clone(),
             pc: None,
+            ways: Vec::new(),
             shared: Some(SharedGame {
                 runtime_rom_id: installed.rom_id,
                 game: emulator.id.clone(),
@@ -459,7 +473,8 @@ impl InstallJob {
             }),
         };
         state::write_state(&self.config_dir, &st)?;
-        super::remove_reused(&reused);
+        // La ROM reprise reste aussi à côté de la recomp : on peut y revenir sans retélécharger.
+        drop(reused);
         tracing::info!("« {} » installé avec {} dans {}", st.name, emulator.name, rom_dir.display());
         let st = state::find(&self.config_dir, rom_id).ok_or(AppError::Internal)?;
         Ok(InstallOutcome::Installed { game: st })
@@ -548,6 +563,7 @@ impl InstallJob {
         }
         let now = state::now();
         let st = InstalledGame {
+            ways: Vec::new(),
             rom_id: runtime_rom_id,
             name: emulator.name.clone(),
             version: Some(emulator.version.nom.clone()),
@@ -802,6 +818,7 @@ mod tests {
             kind: Some(KIND_EMULATOR.into()), rom_dir: Some(rom_dir.clone()), saves_dir: Some(rom_dir.clone()), save_patterns: vec!["Jeu.sav".into()],
         };
         let st = InstalledGame {
+            ways: Vec::new(),
             rom_id: 1, name: "J".into(), version: None, version_raw: None, target: crate::platform::Target::Windows, archive_name: String::new(),
             executable: None, pending_candidates: vec![], roms: vec!["Jeu.gba".into()], rom_sources: vec![], mods_downloaded: vec![], saves: SaveSync::default(),
             direct_launch: None, prefer_launcher: false, players: Vec::new(), installed_at: 0, updated_at: 0, pc: None, shared: Some(shared.clone()), game_dir: root.clone(),

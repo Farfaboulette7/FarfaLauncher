@@ -296,16 +296,10 @@ pub fn annotate(game: &mut Game, catalog: &Catalog, recomps: &HashSet<i64>, me: 
     game.emulators = console.as_deref().map(|c| catalog.offers(c, me)).unwrap_or_default().into_iter().map(|o| Catalog::for_game(o, catalog, id)).collect();
     game.recomps = catalog.recomp_offers(id, me);
     game.recomp_id = catalog.recomp_for_rom(id).map(|r| r.id.clone());
-    // Une seule recomp : son conseil vaut face aux émulateurs.
+    // Une seule recomp : proposée elle aussi (version, systèmes, dépôt), avec son conseil.
     if game.recomps.is_empty() {
-        if let Some(r) = catalog.recomp_for_rom(id).filter(|r| r.advice.is_some()) {
-            game.recomps = vec![crate::manager::RecompOffer {
-                id: r.id.clone(),
-                name: r.name.clone(),
-                version: r.version.nom.clone(),
-                available: true,
-                advice: r.advice.clone(),
-            }];
+        if let Some(r) = catalog.recomp_for_rom(id) {
+            game.recomps = vec![Catalog::recomp_offer(r, me)];
         }
     }
 }

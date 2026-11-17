@@ -183,6 +183,7 @@ impl InstallJob {
             updated_at: now,
             game_dir,
             pc: None,
+            ways: Vec::new(),
             shared: Some(state::SharedGame {
                 runtime_rom_id: runtime.rom_id,
                 game: def.game.clone(),
@@ -242,16 +243,30 @@ impl InstallJob {
     /// `runtime` : l'exécutable est celui du manifeste, sans question.
     async fn install_recomp(&self, rom_id: i64, game: Game, runtime: Option<&Runtime>) -> AppResult<InstallOutcome> {
         let archive = game.my_archive.clone().ok_or(AppError::NotAvailable)?;
-        let previous = state::find(&self.config_dir, rom_id);
-        // Jeu joué jusqu'ici avec un émulateur : la recomp prend son propre dossier, et la ROM
-        // déjà sur le disque est reprise du dossier de l'émulateur plutôt que retéléchargée.
-        let (previous, from_emulator) = match previous {
-            Some(p) if p.shared.as_ref().is_some_and(|s| s.is_emulator()) => (None, Some(p)),
-            p => (p, None),
-        };
+        // Le jeu peut déjà être installé d'autres façons (émulateur, autre recomp) : elles restent
+        // sur le disque, en réserve. La même recomp déjà installée est mise à jour sur place ;
+        // sinon la recomp prend son propre dossier et la ROM déjà sur le disque est reprise
+        // (lien physique : une seule copie) plutôt que retéléchargée.
+        let wanted = state::recomp_id_of(&archive.file.file_name);
+        let installs = if runtime.is_some() { state::find(&self.config_dir, rom_id).into_iter().collect() } else { state::all_installs(&self.config_dir, rom_id) };
+        let is_recomp = |p: &InstalledGame| p.pc.is_none() && !p.shared.as_ref().is_some_and(|s| s.is_emulator());
+        let previous = installs
+            .iter()
+            .find(|p| is_recomp(p) && (runtime.is_some() || p.shared.is_some() || state::recomp_id_of(&p.archive_name) == wanted))
+            .cloned();
+        let donors: Vec<InstalledGame> = installs.iter().filter(|p| previous.as_ref().is_none_or(|prev| prev.game_dir != p.game_dir)).cloned().collect();
         let game_dir = match &previous {
             Some(p) => p.game_dir.clone(),
-            None => self.install_root.join(state::safe_folder_name(&game.folder_name, rom_id)),
+            None => {
+                let plain = self.install_root.join(state::safe_folder_name(&game.folder_name, rom_id));
+                // Dossier déjà pris par une autre recomp de ce jeu : celle-ci a le sien.
+                if installs.iter().any(|p| p.game_dir == plain) {
+                    let id = wanted.clone().unwrap_or_else(|| "recomp".into());
+                    self.install_root.join(state::safe_folder_name(&format!("{} ({id})", game.folder_name), rom_id))
+                } else {
+                    plain
+                }
+            }
         };
         let internal = game_dir.join(INTERNAL_DIR);
         let downloads = internal.join("downloads");
@@ -266,12 +281,9 @@ impl InstallJob {
         // 1. Espace disque (estimation avant téléchargement). Les ROMs déjà
         //    posées et inchangées sur le serveur ne sont pas retéléchargées.
         let old_sources = previous.as_ref().map(|p| p.rom_sources.clone()).unwrap_or_default();
-        let reused = match &from_emulator {
-            Some(emu) => {
-                let (emu, files, dl) = (emu.clone(), game.rom_files.clone(), downloads.clone());
-                blocking(move || Ok(reuse_emulator_roms(&emu, &files, &dl))).await?
-            }
-            None => Vec::new(),
+        let reused = {
+            let (donors, files, dl) = (donors.clone(), game.rom_files.clone(), downloads.clone());
+            blocking(move || Ok(reuse_installed_roms(&donors, &files, &dl))).await?
         };
         let rom_fetch: Vec<&RemoteFile> = game
             .rom_files
@@ -382,11 +394,12 @@ impl InstallJob {
             saves: previous.as_ref().map(|p| p.saves.clone()).unwrap_or_default(),
             direct_launch: None,
             prefer_launcher: previous.as_ref().is_some_and(|p| p.prefer_launcher),
-            players: previous.as_ref().or(from_emulator.as_ref()).map(|p| p.players.clone()).unwrap_or_default(),
-            installed_at: previous.as_ref().or(from_emulator.as_ref()).map(|p| p.installed_at).unwrap_or(now),
+            players: previous.as_ref().or(donors.first()).map(|p| p.players.clone()).unwrap_or_default(),
+            installed_at: previous.as_ref().or(donors.first()).map(|p| p.installed_at).unwrap_or(now),
             updated_at: now,
             game_dir: game_dir.clone(),
             pc: None,
+            ways: Vec::new(),
             shared: None,
         };
         // Recomp qui construit le jeu (Hookshot) : son outil d'abord, pour poser la copie du jeu
@@ -433,8 +446,8 @@ impl InstallJob {
             cb(Progress { rom_id, phase, done, total, verifying: false })
         })
         .await?;
-        // La ROM est maintenant à côté de la recomp : la copie de l'émulateur est retirée.
-        remove_reused(&reused);
+        // La ROM reprise reste aussi à sa place d'avant : l'autre façon de jouer la garde.
+        drop(reused);
         if let Some(builder) = builder {
             st = self.build_game(rom_id, st, &builder, &prepare[1..]).await?;
         }
@@ -499,10 +512,26 @@ fn place_file(from: &Path, to: &Path) -> std::io::Result<()> {
     std::fs::rename(from, to).or_else(|_| std::fs::copy(from, to).map(|_| ()))
 }
 
-/// ROMs du jeu installé avec un émulateur reprises dans les téléchargements de la recomp :
-/// (ancien fichier, `rel_path` serveur).
+/// ROMs déjà posées par les autres installations du jeu (émulateur, autre recomp), reprises
+/// dans les téléchargements de la recomp : (fichier repris, `rel_path` serveur).
+fn reuse_installed_roms(donors: &[InstalledGame], files: &[RemoteFile], downloads: &Path) -> Vec<(PathBuf, String)> {
+    let mut reused: Vec<(PathBuf, String)> = Vec::new();
+    for donor in donors {
+        let fresh: Vec<RemoteFile> = files.iter().filter(|f| !reused.iter().any(|(_, rel)| *rel == f.rel_path)).cloned().collect();
+        reused.extend(reuse_emulator_roms(donor, &fresh, downloads));
+    }
+    reused
+}
+
+/// ROMs d'une autre installation du jeu reprises dans les téléchargements de la recomp :
+/// (ancien fichier, `rel_path` serveur). Émulateur : son dossier des ROM ; recomp : son dossier.
 fn reuse_emulator_roms(emu: &InstalledGame, files: &[RemoteFile], downloads: &Path) -> Vec<(PathBuf, String)> {
-    let Some(rom_dir) = emu.shared.as_ref().and_then(|s| s.rom_dir.clone()) else { return Vec::new() };
+    let rom_dir = match &emu.shared {
+        Some(s) if s.is_emulator() => s.rom_dir.clone(),
+        None if emu.pc.is_none() => Some(emu.game_dir.clone()),
+        _ => None,
+    };
+    let Some(rom_dir) = rom_dir else { return Vec::new() };
     let mut reused = Vec::new();
     for f in files {
         let Some(src) = emu.rom_sources.iter().find(|s| same_rom(s, f) && s.placed.len() == 1) else { continue };
@@ -519,15 +548,6 @@ fn reuse_emulator_roms(emu: &InstalledGame, files: &[RemoteFile], downloads: &Pa
         }
     }
     reused
-}
-
-/// Retire les anciennes copies des ROMs reprises (leur contenu est à sa nouvelle place).
-pub(crate) fn remove_reused(reused: &[(PathBuf, String)]) {
-    for (old, _) in reused {
-        if let Err(e) = std::fs::remove_file(old) {
-            tracing::warn!("ancienne ROM non retirée ({}): {e}", old.display());
-        }
-    }
 }
 
 /// Termine l'installation avec l'exécutable choisi : ROMs, droits, état, nettoyage.
@@ -1041,6 +1061,7 @@ mod tests {
         std::fs::create_dir_all(old.join("saves")).unwrap();
         std::fs::write(old.join("saves/slot.sav"), b"x").unwrap();
         let st = InstalledGame {
+            ways: Vec::new(),
             rom_id: 7,
             name: "Zelda".into(),
             version: None,
@@ -1125,9 +1146,8 @@ mod tests {
         let reused = reuse_emulator_roms(&emu, &[f.clone(), other], &downloads);
         assert_eq!(reused.len(), 1, "seule la même ROM (SHA-1 sans tenir compte de la casse) est reprise");
         assert_eq!(std::fs::read(downloads.join("oot.nup")).unwrap(), b"ROM!");
-        remove_reused(&reused);
-        assert!(!rom_dir.join("oot.nup").exists());
-        assert_eq!(std::fs::read(downloads.join("oot.nup")).unwrap(), b"ROM!", "le contenu survit à l'ancienne copie");
+        // L'émulateur garde sa ROM : les deux façons de jouer cohabitent.
+        assert_eq!(std::fs::read(rom_dir.join("oot.nup")).unwrap(), b"ROM!");
         std::fs::remove_dir_all(&root).unwrap();
     }
 

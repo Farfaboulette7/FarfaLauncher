@@ -49,6 +49,15 @@ pub struct RecompOffer {
     pub version: String,
     /// Build pour ce système.
     pub available: bool,
+    /// Systèmes qui ont une build (vide : recomp partagée, tous ceux du runtime).
+    #[serde(default)]
+    pub systems: Vec<Target>,
+    /// Dépôt du projet (lien « Sources »).
+    #[serde(default)]
+    pub repo: Option<String>,
+    /// Taille de sa build pour ce système (0 : aucune).
+    #[serde(default)]
+    pub size: u64,
     /// « Conseillé » : le petit message de la fiche.
     pub advice: Option<String>,
 }
@@ -461,15 +470,22 @@ impl Catalog {
         if all.len() < 2 {
             return Vec::new();
         }
-        all.into_iter()
-            .map(|r| RecompOffer {
-                id: r.id.clone(),
-                name: r.name.clone(),
-                version: r.version.nom.clone(),
-                available: r.is_shared() || r.archives(target).1.is_some(),
-                advice: r.advice.clone(),
-            })
-            .collect()
+        all.into_iter().map(|r| Self::recomp_offer(r, target)).collect()
+    }
+
+    /// Une recomp telle que proposée au joueur, avec les systèmes qui ont une build.
+    pub fn recomp_offer(r: &CatalogRecomp, target: Target) -> RecompOffer {
+        let (archives, mine) = r.archives(target);
+        RecompOffer {
+            id: r.id.clone(),
+            name: r.name.clone(),
+            version: r.version.nom.clone(),
+            available: r.is_shared() || mine.is_some(),
+            systems: archives.iter().map(|a| a.target).collect(),
+            repo: Some(r.repo.clone()).filter(|u| !u.is_empty()),
+            size: mine.map(|a| a.file.size).unwrap_or(0),
+            advice: r.advice.clone(),
+        }
     }
 
     pub fn emulator(&self, id: &str) -> Option<&Emulator> {
@@ -799,6 +815,7 @@ mod tests {
         let offers = c.recomp_offers(7, me);
         assert_eq!(offers.iter().map(|o| (o.id.as_str(), o.available, o.advice.is_some())).collect::<Vec<_>>(),
                    vec![("hookshot", true, false), ("longshot", true, true)]);
+        assert_eq!(offers[1].systems, vec![me]); // systèmes qui ont une build
         // Conseillée sans build pour ce système : celle qui en a une.
         let sans: Catalog = serde_json::from_str(&text.replace(&format!(r#"[{{"name":"l_{0}.zip","size":1,"sha1":"b","system":"{0}"}}]"#, me.suffix()), "[]")).unwrap();
         assert_eq!(sans.recomp_for_rom(7).unwrap().id, "hookshot");
@@ -910,6 +927,7 @@ mod tests {
         assert_eq!(c.recomp_exe(3406), Some("ttyd-eu"));
         assert_eq!(c.recomp_exe(1), None);
         let st = crate::install::state::InstalledGame {
+            ways: Vec::new(),
             rom_id: 3406,
             name: "TTYD".into(),
             version: None,

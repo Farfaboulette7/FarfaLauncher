@@ -189,6 +189,7 @@ pub fn run() {
             commands::install::executable_candidates,
             commands::install::choose_executable,
             commands::install::uninstall_game,
+            commands::install::use_install,
             commands::install::open_game_folder,
             commands::install::has_mods_folder,
             commands::install::open_mods_folder,

@@ -4,6 +4,9 @@
 //!   installée = contenu de VERSION.txt, plateforme, exécutable, dates, mods).
 //! - Un registre `installed.json` (dossier de config) qui associe chaque jeu
 //!   RomM à son dossier, car le dossier d'installation peut changer.
+//! - Un jeu peut être installé de plusieurs façons à la fois (sa recomp, un ou plusieurs
+//!   émulateurs, une autre recomp) : une seule est en service (« Jouer »), les autres restent
+//!   sur le disque, en réserve (`alternates`), et on bascule sans rien retélécharger.
 
 use std::path::{Path, PathBuf};
 
@@ -65,6 +68,44 @@ pub struct InstalledGame {
     /// Dossier du jeu (non stocké dans le fichier, déduit de son emplacement).
     #[serde(skip_deserializing, default)]
     pub game_dir: PathBuf,
+    /// Façons dont ce jeu est installé, celle en service comprise (rempli à la lecture,
+    /// jamais écrit dans le dossier du jeu).
+    #[serde(skip_deserializing, skip_serializing_if = "Vec::is_empty", default)]
+    pub ways: Vec<InstallWay>,
+}
+
+/// Une façon de jouer installée : une recomp ou un émulateur.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallWay {
+    /// `recomp` ou `emulator`.
+    pub kind: String,
+    /// Identifiant de la recomp ou de l'émulateur dans le catalogue.
+    pub id: String,
+    pub version: Option<String>,
+    /// C'est elle que « Jouer » lance.
+    pub active: bool,
+    /// Son dossier (celui de l'émulateur pour un émulateur).
+    pub game_dir: PathBuf,
+}
+
+impl InstalledGame {
+    /// Façon de jouer de cette installation (`None` : jeu PC).
+    pub fn way(&self, active: bool) -> Option<InstallWay> {
+        if self.pc.is_some() {
+            return None;
+        }
+        let (kind, id) = match &self.shared {
+            Some(s) if s.is_emulator() => ("emulator", s.game.clone()),
+            _ => ("recomp", recomp_id_of(&self.archive_name)?),
+        };
+        Some(InstallWay { kind: kind.into(), id, version: self.version.clone(), active, game_dir: self.game_dir.clone() })
+    }
+}
+
+/// Recomp d'une archive installée : `<id>_<Système>.zip`.
+pub fn recomp_id_of(archive_name: &str) -> Option<String> {
+    archive_name.rsplit_once('_').map(|(id, _)| id.to_string()).filter(|id| !id.is_empty())
 }
 
 /// Lien entre un jeu installé et le runtime qui le fait tourner. Version et
@@ -163,10 +204,20 @@ pub struct SaveSync {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Registry {
+    /// Installation en service de chaque jeu.
     games: Vec<RegistryEntry>,
+    /// Autres installations des mêmes jeux, gardées sur le disque.
+    #[serde(default)]
+    alternates: Vec<RegistryEntry>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl RegistryEntry {
+    fn same_place(&self, other: &RegistryEntry) -> bool {
+        self.rom_id == other.rom_id && self.game_dir == other.game_dir && self.page == other.page
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RegistryEntry {
     rom_id: i64,
@@ -284,7 +335,9 @@ fn read_entry(e: &RegistryEntry) -> Option<InstalledGame> {
 
 /// Écrit l'état dans le dossier du jeu et l'inscrit au registre.
 pub fn write_state(config_dir: &Path, st: &InstalledGame) -> AppResult<()> {
-    let text = serde_json::to_string_pretty(st).map_err(|e| log_err(AppError::Internal, "état du jeu", e))?;
+    let mut stored = st.clone();
+    stored.ways.clear();
+    let text = serde_json::to_string_pretty(&stored).map_err(|e| log_err(AppError::Internal, "état du jeu", e))?;
     if st.shared.is_some() {
         let path = page_path(&st.game_dir, st.rom_id);
         if let Some(dir) = path.parent() {
@@ -295,46 +348,99 @@ pub fn write_state(config_dir: &Path, st: &InstalledGame) -> AppResult<()> {
         write_atomic(&st.game_dir.join(STATE_FILE), &text)?;
     }
     let mut reg = load_registry(config_dir);
+    let entry = RegistryEntry { rom_id: st.rom_id, game_dir: st.game_dir.clone(), page: st.shared.is_some() };
+    // Installé d'une autre façon jusqu'ici : l'ancienne installation reste, en réserve.
+    for old in reg.games.iter().filter(|g| g.rom_id == st.rom_id && !g.same_place(&entry)) {
+        if !reg.alternates.iter().any(|a| a.same_place(old)) {
+            reg.alternates.push(old.clone());
+        }
+    }
+    reg.alternates.retain(|a| !a.same_place(&entry));
     reg.games.retain(|g| g.rom_id != st.rom_id);
-    reg.games.push(RegistryEntry { rom_id: st.rom_id, game_dir: st.game_dir.clone(), page: st.shared.is_some() });
+    reg.games.push(entry);
     save_registry(config_dir, &reg)
+}
+
+/// Les installations en réserve d'un jeu (encore lisibles sur le disque).
+pub fn alternates(config_dir: &Path, rom_id: i64) -> Vec<InstalledGame> {
+    load_registry(config_dir).alternates.iter().filter(|a| a.rom_id == rom_id).filter_map(read_entry).collect()
+}
+
+/// Toutes les installations d'un jeu : celle en service d'abord.
+pub fn all_installs(config_dir: &Path, rom_id: i64) -> Vec<InstalledGame> {
+    find(config_dir, rom_id).into_iter().chain(alternates(config_dir, rom_id)).collect()
+}
+
+/// Met en service l'installation en réserve qui a cette façon de jouer ; celle d'avant passe
+/// en réserve à son tour.
+pub fn activate(config_dir: &Path, rom_id: i64, kind: &str, id: &str) -> AppResult<InstalledGame> {
+    let mut reg = load_registry(config_dir);
+    let pos = reg
+        .alternates
+        .iter()
+        .position(|a| a.rom_id == rom_id && read_entry(a).and_then(|s| s.way(false)).is_some_and(|w| w.kind == kind && w.id == id))
+        .ok_or(AppError::NotInstalled)?;
+    let chosen = reg.alternates.remove(pos);
+    let previous: Vec<RegistryEntry> = reg.games.iter().filter(|g| g.rom_id == rom_id).cloned().collect();
+    reg.games.retain(|g| g.rom_id != rom_id);
+    reg.alternates.extend(previous);
+    reg.games.push(chosen);
+    save_registry(config_dir, &reg)?;
+    find(config_dir, rom_id).ok_or(AppError::NotInstalled)
 }
 
 /// Jeux installés sur le runtime du dossier `game_dir`.
 pub fn pages_in(config_dir: &Path, game_dir: &Path) -> Vec<i64> {
-    load_registry(config_dir).games.iter().filter(|g| g.page && g.game_dir == game_dir).map(|g| g.rom_id).collect()
+    // Les installations en réserve comptent : l'émulateur reste tant qu'un jeu peut y revenir.
+    let reg = load_registry(config_dir);
+    let mut ids: Vec<i64> = reg.games.iter().chain(&reg.alternates).filter(|g| g.page && g.game_dir == game_dir).map(|g| g.rom_id).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
 }
 
 /// Dossier déplacé : tout ce qui y est inscrit le suit.
 pub fn relocate(config_dir: &Path, old: &Path, new: &Path) -> AppResult<()> {
     let mut reg = load_registry(config_dir);
-    for g in reg.games.iter_mut().filter(|g| g.game_dir == old) {
+    let Registry { games, alternates } = &mut reg;
+    for g in games.iter_mut().chain(alternates.iter_mut()).filter(|g| g.game_dir == old) {
         g.game_dir = new.to_path_buf();
     }
     save_registry(config_dir, &reg)
 }
 
+/// Oublie l'installation en service d'un jeu. S'il en a une autre en réserve, elle passe en
+/// service.
 pub fn forget(config_dir: &Path, rom_id: i64) -> AppResult<()> {
     let mut reg = load_registry(config_dir);
     for g in reg.games.iter().filter(|g| g.rom_id == rom_id && g.page) {
         let _ = std::fs::remove_file(page_path(&g.game_dir, rom_id));
     }
     reg.games.retain(|g| g.rom_id != rom_id);
+    if let Some(pos) = reg.alternates.iter().position(|a| a.rom_id == rom_id && read_entry(a).is_some()) {
+        let next = reg.alternates.remove(pos);
+        reg.games.push(next);
+    }
     save_registry(config_dir, &reg)
 }
 
 /// Jeux installés dont le dossier et le fichier d'état existent encore.
 pub fn list_installed(config_dir: &Path) -> Vec<InstalledGame> {
-    load_registry(config_dir)
-        .games
-        .iter()
-        .filter_map(read_entry)
-        .collect()
+    let reg = load_registry(config_dir);
+    reg.games.iter().filter_map(read_entry).map(|st| with_ways(&reg, st)).collect()
 }
 
 pub fn find(config_dir: &Path, rom_id: i64) -> Option<InstalledGame> {
-    let entry = load_registry(config_dir).games.into_iter().find(|g| g.rom_id == rom_id)?;
-    read_entry(&entry)
+    let reg = load_registry(config_dir);
+    let entry = reg.games.iter().find(|g| g.rom_id == rom_id)?;
+    read_entry(entry).map(|st| with_ways(&reg, st))
+}
+
+/// Ajoute à l'installation en service les façons de jouer installées (elle comprise).
+fn with_ways(reg: &Registry, mut st: InstalledGame) -> InstalledGame {
+    let others = reg.alternates.iter().filter(|a| a.rom_id == st.rom_id).filter_map(read_entry).filter_map(|a| a.way(false));
+    st.ways = st.way(true).into_iter().chain(others).collect();
+    st
 }
 
 /// Jeux déplacés sur le serveur (ex. de `farfa-portage` vers `portage-n64`) :
@@ -429,6 +535,7 @@ mod tests {
         let game_dir = root.join("Jeux").join("Super Mario 64");
         std::fs::create_dir_all(&game_dir).unwrap();
         let st = InstalledGame {
+            ways: Vec::new(),
             rom_id: 3,
             name: "Super Mario 64".into(),
             version: None,
@@ -465,6 +572,80 @@ mod tests {
         assert_eq!(rekey_ids(&config, &[(40, 19)]), 0);
         std::fs::remove_dir_all(root).unwrap();
     }
+
+    fn installed(rom_id: i64, archive: &str, game_dir: PathBuf) -> InstalledGame {
+        InstalledGame {
+            ways: Vec::new(),
+            rom_id,
+            name: "Zelda".into(),
+            version: Some("1".into()),
+            version_raw: None,
+            target: Target::Windows,
+            archive_name: archive.into(),
+            executable: Some("jeu.exe".into()),
+            pending_candidates: vec![],
+            roms: vec![],
+            rom_sources: vec![],
+            mods_downloaded: vec![],
+            saves: SaveSync::default(),
+            direct_launch: None,
+            prefer_launcher: false,
+            players: Vec::new(),
+            installed_at: 1,
+            updated_at: 1,
+            game_dir,
+            pc: None,
+            shared: None,
+        }
+    }
+
+    /// Recomp puis émulateur sur le même jeu : les deux restent, on bascule de l'une à l'autre,
+    /// et la désinstallation les retire l'une après l'autre.
+    #[test]
+    fn recomp_and_emulator_live_side_by_side() {
+        let root = std::env::temp_dir().join(format!("farfa-ways-{}", uuid::Uuid::new_v4()));
+        let config = root.join("config");
+        let (recomp_dir, emu_dir) = (root.join("Jeux").join("Zelda"), root.join("Jeux").join("Citron"));
+        std::fs::create_dir_all(&recomp_dir).unwrap();
+        std::fs::create_dir_all(&emu_dir).unwrap();
+        write_state(&config, &installed(7, "zelda_Windows.zip", recomp_dir.clone())).unwrap();
+        write_state(&config, &installed(-5, "citron_Windows.zip", emu_dir.clone())).unwrap();
+        let mut page = installed(7, "citron_Windows.zip", emu_dir.clone());
+        page.shared = Some(SharedGame {
+            runtime_rom_id: -5,
+            game: "citron".into(),
+            runtime_name: "Citron".into(),
+            data_dir: String::new(),
+            save_dir: String::new(),
+            cache_dir: None,
+            kind: Some(crate::install::emulator::KIND_EMULATOR.into()),
+            rom_dir: Some(root.join("Roms")),
+            saves_dir: None,
+            save_patterns: vec![],
+        });
+        write_state(&config, &page).unwrap();
+
+        let ways = |c: &Path| find(c, 7).unwrap().ways.iter().map(|w| (w.kind.clone(), w.id.clone(), w.active)).collect::<Vec<_>>();
+        assert_eq!(ways(&config), vec![("emulator".into(), "citron".into(), true), ("recomp".into(), "zelda".into(), false)]);
+        assert_eq!(pages_in(&config, &emu_dir), vec![7]);
+        // L'état gardé sur le disque ne contient pas la liste (elle est relue à chaque fois).
+        assert!(!std::fs::read_to_string(recomp_dir.join(STATE_FILE)).unwrap().contains("\"ways\""));
+
+        // Retour à la recomp, sans rien réinstaller.
+        let st = activate(&config, 7, "recomp", "zelda").unwrap();
+        assert_eq!(st.game_dir, recomp_dir);
+        assert_eq!(ways(&config), vec![("recomp".into(), "zelda".into(), true), ("emulator".into(), "citron".into(), false)]);
+        assert!(activate(&config, 7, "emulator", "eden").is_err());
+        // L'émulateur reste compté : il n'est pas désinstallé tant qu'un jeu peut y revenir.
+        assert_eq!(pages_in(&config, &emu_dir), vec![7]);
+
+        // Oublier celle en service fait passer l'autre en service, puis plus rien.
+        forget(&config, 7).unwrap();
+        assert_eq!(ways(&config), vec![("emulator".into(), "citron".into(), true)]);
+        forget(&config, 7).unwrap();
+        assert!(find(&config, 7).is_none());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
 
 #[cfg(test)]
@@ -476,6 +657,7 @@ mod bo3_tests {
         let dir = std::env::temp_dir().join(format!("farfa-bo3-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let old = InstalledGame {
+            ways: Vec::new(),
             rom_id: 10625,
             name: "Call of Duty: Black Ops III".into(),
             version: Some("v3.0.0".into()),

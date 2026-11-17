@@ -88,6 +88,15 @@ fn recomp_key(catalog: &Catalog, st: &InstalledGame) -> Option<(String, String)>
     if st.shared.as_ref().is_some_and(|s| s.is_emulator()) {
         return None;
     }
+    // Chaque recomp a ses propres sauvegardes : celle de cette installation, pas la proposée.
+    if st.shared.is_none() {
+        if let Some(id) = crate::install::state::recomp_id_of(&st.archive_name) {
+            if let Some(r) = catalog.recomps_for_rom(st.rom_id).into_iter().find(|r| r.id == id) {
+                let game = r.games.iter().find(|g| g.rom_id == Some(st.rom_id)).and_then(|g| g.game.clone());
+                return Some((r.id.clone(), game.unwrap_or_else(|| r.id.clone())));
+            }
+        }
+    }
     key_for_rom(catalog, st.rom_id)
 }
 

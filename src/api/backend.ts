@@ -233,6 +233,12 @@ export interface RecompOffer {
   version: string;
   /** Build pour ce système. */
   available: boolean;
+  /** Systèmes qui ont une build (vide : recomp partagée). */
+  systems: Target[];
+  /** Dépôt du projet. */
+  repo?: string | null;
+  /** Taille de sa build pour ce système (0 : aucune). */
+  size?: number;
   /** « Conseillé » : le petit message de sa fiche. */
   advice: string | null;
 }
@@ -285,7 +291,7 @@ export interface Game {
   emulator: EmulatorOffer | null;
   /** Tous les émulateurs de sa console, au choix (dans l'ordre où ils sont proposés). */
   emulators: EmulatorOffer[];
-  /** Ses recomps quand il en a plusieurs (ou la seule, quand elle est conseillée). */
+  /** Ses recomps (même s'il n'en a qu'une), disponibles ou non sur ce système. */
   recomps?: RecompOffer[];
   /** Recomp proposée : celle choisie, sinon la conseillée, sinon la première. */
   recompId?: string | null;
@@ -344,6 +350,21 @@ export interface InstalledGame {
   gameDir: string;
   /** Jeu PC (plateforme « Ordinateur »). */
   pc: PcInstall | null;
+  /** Façons dont ce jeu est installé (celle en service comprise) : on bascule sans retélécharger. */
+  ways?: InstallWay[];
+}
+
+/** Façon de faire tourner un jeu : sa recomp (portage PC) ou un émulateur de sa console. */
+export type InstallMode = "recomp" | "emulator";
+
+/** Une recomp ou un émulateur installé pour un jeu. */
+export interface InstallWay {
+  kind: InstallMode;
+  id: string;
+  version: string | null;
+  /** C'est elle que « Jouer » lance. */
+  active: boolean;
+  gameDir: string;
 }
 
 export interface DirectLaunch {
@@ -719,6 +740,8 @@ export const backend = {
   executableCandidates: (romId: number) => invoke<string[]>("executable_candidates", { romId }),
   chooseExecutable: (romId: number, executable: string) => invoke<InstalledGame>("choose_executable", { romId, executable }),
   uninstallGame: (romId: number, keepSaves: boolean) => invoke<void>("uninstall_game", { romId, keepSaves }),
+  /** Jouer avec une autre façon déjà installée (recomp ou émulateur), sans retélécharger. */
+  useInstall: (romId: number, kind: InstallMode, id: string) => invoke<InstalledGame>("use_install", { romId, kind, id }),
   openGameFolder: (romId: number, sub?: "mods_downloads") => invoke<void>("open_game_folder", { romId, sub: sub ?? null }),
   ingameResume: () => invoke<void>("ingame_resume"),
   quitGame: (romId: number) => invoke<void>("quit_game", { romId }),
@@ -876,7 +899,9 @@ export function hasUpdate(game: Game, inst: InstalledGame | undefined): boolean 
 /** Émulateur installable pour ce jeu sur ce système. */
 export function emulatorReady(game: Game): boolean {
   // Jeu fourni en archive de données à décompresser pour sa recomp : rien qu'un émulateur puisse lancer.
-  const onlyData = game.detailsLoaded && game.romFiles.length > 0 && game.romFiles.every((f) => f.fileName.toLowerCase().endsWith(".extract.zip"));
+  // (La ROM de RomM reste installable par un émulateur : `emulatorRomBytes` la compte, données à part.)
+  const onlyData =
+    game.detailsLoaded && !game.emulatorRomBytes && game.romFiles.length > 0 && game.romFiles.every((f) => f.fileName.toLowerCase().endsWith(".extract.zip"));
   return !onlyData && !!game.emulator?.available && game.emulator.configMissing.length === 0;
 }
 

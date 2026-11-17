@@ -330,12 +330,37 @@ pub async fn uninstall_game(app: AppHandle, state: State<'_, AppState>, rom_id: 
     // Mise à jour en attente : elle n'a plus lieu d'être.
     drop_from_queue(&app, rom_id);
     state.check_family_idle(rom_id)?;
-    let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
-    // Recomp qui avait relié un dossier hors du jeu (boiii) : le lien part avec le jeu.
-    if let Some(r) = state.catalog().recomp_for_install(&st) {
-        crate::links::remove_into(&r.links, &st.game_dir);
+    state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
+    // Toutes les façons dont le jeu est installé partent : celle en service, puis celles en
+    // réserve, qui passent en service l'une après l'autre.
+    while let Some(st) = state::find(&state.config_dir, rom_id) {
+        // Recomp qui avait relié un dossier hors du jeu (boiii) : le lien part avec le jeu.
+        if let Some(r) = state.catalog().recomp_for_install(&st) {
+            crate::links::remove_into(&r.links, &st.game_dir);
+        }
+        install::uninstall(&state.config_dir, st, keep_saves).await?;
     }
-    install::uninstall(&state.config_dir, st, keep_saves).await
+    Ok(())
+}
+
+/// Joue désormais avec une autre façon déjà installée (recomp ou émulateur), sans rien
+/// retélécharger. Celle d'avant reste sur le disque, en réserve.
+#[tauri::command]
+pub fn use_install(state: State<'_, AppState>, rom_id: i64, kind: String, id: String) -> AppResult<state::InstalledGame> {
+    let _busy = state.mark_busy(rom_id)?;
+    if state.running.lock().unwrap().contains(&rom_id) {
+        return Err(AppError::AlreadyRunning);
+    }
+    let st = state::activate(&state.config_dir, rom_id, &kind, &id)?;
+    // Recomp : elle devient celle du jeu (mises à jour, sauvegardes, lancement).
+    if kind == "recomp" && state.catalog().recomps_for_rom(rom_id).iter().any(|r| r.id == id) && state.settings().recomp_choice.get(&rom_id) != Some(&id) {
+        state.update_settings(|s| {
+            s.recomp_choice.insert(rom_id, id.clone());
+        })?;
+        runtimes::combine(&state);
+    }
+    tracing::info!("« {} » se joue maintenant avec {kind} {id}", st.name);
+    Ok(st)
 }
 
 /// Déplace un jeu installé : `dest` est le dossier qui contiendra le sien.

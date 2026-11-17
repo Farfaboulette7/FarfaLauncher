@@ -453,6 +453,7 @@ pub async fn run(job: &InstallJob, game: Game, pc: PcGame) -> AppResult<InstallO
         updated_at: now,
         game_dir: game_dir.clone(),
         shared: None,
+        ways: Vec::new(),
         pc: Some(PcInstall {
             kind: pc.kind,
             os: pc.os,
