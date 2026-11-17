@@ -120,6 +120,7 @@ pub fn run() {
             commands::stats::game_ranking,
             commands::stats::set_stats_hidden,
             commands::update::install_update,
+            commands::update::install_test_version,
             commands::update::beta_channel,
             commands::update::set_beta_channel,
             commands::open_url,

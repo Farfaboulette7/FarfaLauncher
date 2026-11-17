@@ -65,6 +65,8 @@
 .chat-changes { margin: 2px 0 0; padding-left: 18px; font-size: 0.95em; white-space: normal; }
 .chat-fixed { margin-top: 6px !important; font-size: var(--fs-xs); opacity: 0.8; }
 .chat-end { height: 0; }
+.chat-test { display: grid; gap: 8px; justify-items: start; }
+.chat-test p { margin: 0; }
 
 /* Trois petits points : le support prépare sa réponse. */
 .chat-typing { display: inline-flex; gap: 5px; align-items: center; padding: 12px 14px; }
