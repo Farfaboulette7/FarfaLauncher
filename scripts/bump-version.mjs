@@ -2,14 +2,16 @@
 // src-tauri/tauri.conf.json (le workflow de release vérifie qu'elles
 // correspondent au tag).
 //
-// Usage : node scripts/bump-version.mjs 0.2.0
+// Usage : node scripts/bump-version.mjs 0.2.0          (version stable)
+//         node scripts/bump-version.mjs 1.0.1-beta.1   (version de test, canal bêta seulement)
 import { readFileSync, writeFileSync } from "node:fs";
 
 const version = process.argv[2];
-if (!/^\d+\.\d+\.\d+$/.test(version ?? "")) {
-  console.error("Usage : node scripts/bump-version.mjs X.Y.Z");
+if (!/^\d+\.\d+\.\d+(-beta\.\d+)?$/.test(version ?? "")) {
+  console.error("Usage : node scripts/bump-version.mjs X.Y.Z (stable) ou X.Y.Z-beta.N (test)");
   process.exit(1);
 }
+console.log(version.includes("-") ? "Version de test : canal bêta seulement.\n" : "Version stable : tous les launchers.\n");
 
 function update(path, transform) {
   const before = readFileSync(path, "utf8");

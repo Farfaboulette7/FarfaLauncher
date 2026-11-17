@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { check, type Update } from "@tauri-apps/plugin-updater";
+import { backend, UpdateInfo } from "../api/backend";
 import { logToFile } from "../components/ErrorBoundary";
+
+type Update = UpdateInfo;
+/** Vérification par le Rust, qui choisit l'adresse du canal (stable ou bêta). */
+const check = () => backend.checkUpdate();
 
 /** Nouvelle vérification pendant que le launcher tourne. */
 const EVERY_MS = 30 * 60 * 1000;

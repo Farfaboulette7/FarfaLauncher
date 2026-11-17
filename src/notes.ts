@@ -47,7 +47,8 @@ function versionOf(path: string): number[] {
 
 /** Versions du launcher jusqu'à `current` comprise, avec leurs notes (sans la ligne de téléchargement). */
 export function launcherNotes(current: string, max = 5): { version: string; lines: NoteLine[] }[] {
-  const cur = current.split(".").map(Number);
+  // Version de test (1.0.1-beta.2) : comparée comme sa version stable.
+  const cur = current.split("-")[0].split(".").map(Number);
   const cmp = (a: number[], b: number[]) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
   return Object.entries(LAUNCHER_NOTES)
     .map(([path, md]) => ({ v: versionOf(path), md }))

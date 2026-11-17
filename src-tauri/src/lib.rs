@@ -83,11 +83,16 @@ pub fn run() {
                 let _ = window.show();
             }
             app.manage(state);
+            app.manage(commands::update::PendingUpdate::default());
             gamepad::start(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::open_logs,
+            commands::update::check_update,
+            commands::update::install_update,
+            commands::update::beta_channel,
+            commands::update::set_beta_channel,
             commands::open_url,
             commands::system::system_info,
             commands::system::server_ping,

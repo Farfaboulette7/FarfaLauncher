@@ -2,6 +2,14 @@
 # (AppImage) et Mac Apple Silicon (.dmg), signe les paquets de mise à jour et publie une GitHub Release
 # avec latest.json (lu par le module de mise à jour).
 #
+# Deux canaux :
+#   - stable (tag vX.Y.Z) : release normale, la « dernière release » de GitHub, lue par tous
+#     les launchers (releases/latest/download/latest.json) ;
+#   - bêta (tag vX.Y.Z-beta.N) : pré-release, que GitHub ne donne jamais comme dernière : les
+#     launchers du canal stable ne la voient pas.
+# À chaque publication, bêta ou stable, son latest.json remplace celui de la release technique
+# « canal-beta », lu par les launchers qui ont coché « Recevoir les versions de test ».
+#
 # Secrets requis (Settings → Secrets and variables → Actions) :
 #   TAURI_SIGNING_PRIVATE_KEY           contenu du fichier farfalauncher.key
 #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  mot de passe choisi à la génération
@@ -58,7 +66,8 @@ jobs:
               name: `FaRFa project ${tag}`,
               body,
               draft: true,
-              prerelease: false,
+              // vX.Y.Z-beta.N : version de test, seulement pour le canal bêta.
+              prerelease: tag.includes('-'),
             });
             return data.id;
 
@@ -185,3 +194,47 @@ jobs:
               release_id: id,
               draft: false,
             });
+
+            // Canal bêta : le latest.json de cette version (bêta ou stable) devient celui de
+            // la release technique « canal-beta ».
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const latest = assets.find((a) => a.name === 'latest.json');
+            if (!latest) {
+              core.warning('Pas de latest.json dans la release : canal bêta inchangé.');
+              return;
+            }
+            const { data: bytes } = await github.request('GET /repos/{owner}/{repo}/releases/assets/{asset_id}', {
+              owner,
+              repo,
+              asset_id: latest.id,
+              headers: { accept: 'application/octet-stream' },
+            });
+            let beta;
+            try {
+              beta = (await github.rest.repos.getReleaseByTag({ owner, repo, tag: 'canal-beta' })).data;
+            } catch (e) {
+              beta = (await github.rest.repos.createRelease({
+                owner,
+                repo,
+                tag_name: 'canal-beta',
+                target_commitish: context.sha,
+                name: 'Canal bêta (technique)',
+                body: 'Release technique : son latest.json indique aux launchers du canal bêta (« Recevoir les versions de test ») la dernière version, de test ou stable. Rien à télécharger ici.',
+                prerelease: true,
+              })).data;
+            }
+            for (const a of beta.assets ?? []) {
+              if (a.name === 'latest.json') {
+                await github.rest.repos.deleteReleaseAsset({ owner, repo, asset_id: a.id });
+              }
+            }
+            await github.rest.repos.uploadReleaseAsset({
+              owner,
+              repo,
+              release_id: beta.id,
+              name: 'latest.json',
+              data: Buffer.from(bytes),
+              headers: { 'content-type': 'application/json' },
+            });
+            core.info(`Canal bêta : ${context.ref.replace('refs/tags/', '')}`);

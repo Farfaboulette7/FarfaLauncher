@@ -40,6 +40,14 @@ export function Settings({ session, installs, onBack, onLogout, onCacheCleared, 
   const [motion, setMotion] = useState(backdropMotion());
   /** Limite de débit des téléchargements en Mo/s (0 : illimité) ; `null` tant qu'elle n'est pas lue. */
   const [limit, setLimit] = useState<number | null>(null);
+  /** Canal bêta (« Recevoir les versions de test ») ; `null` tant qu'il n'est pas lu. */
+  const [beta, setBeta] = useState<boolean | null>(null);
+  useEffect(() => {
+    backend
+      .betaChannel()
+      .then(setBeta)
+      .catch(() => setBeta(null));
+  }, []);
   useEffect(() => {
     backend
       .installInfo()
@@ -399,6 +407,26 @@ export function Settings({ session, installs, onBack, onLogout, onCacheCleared, 
                   {checking ? "Vérification…" : "Vérifier les mises à jour"}
                 </button>
               </div>
+              {beta !== null && (
+                <>
+                  <label className="settings-check">
+                    <input
+                      type="checkbox"
+                      checked={beta}
+                      onChange={(e) => {
+                        const on = e.target.checked;
+                        setBeta(on);
+                        act(() => backend.setBetaChannel(on), on ? "Vous recevrez les versions de test." : "Vous ne recevrez plus que les versions stables.");
+                      }}
+                    />
+                    Recevoir les versions de test
+                  </label>
+                  <p className="n-hint">
+                    Les nouveautés arrivent plus tôt, avec parfois des bugs. Vous recevez aussi les versions stables. En décochant, vous gardez la version
+                    installée jusqu'à la prochaine version stable.
+                  </p>
+                </>
+              )}
             </div>
           </section>
         </main>

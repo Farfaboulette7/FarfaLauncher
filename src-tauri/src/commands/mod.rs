@@ -7,6 +7,7 @@ pub mod library;
 pub mod session;
 pub mod sounds;
 pub mod system;
+pub mod update;
 pub mod report;
 pub mod window;
 

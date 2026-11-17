@@ -1,14 +1,14 @@
 // Mise à jour du launcher (plugin updater de Tauri, paquets signés publiés
 // sur les Releases GitHub).
 import { useState } from "react";
-import type { Update } from "@tauri-apps/plugin-updater";
+import { listen } from "@tauri-apps/api/event";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { formatSize } from "../api/backend";
+import { backend, formatSize, UPDATE_PROGRESS_EVENT, UpdateInfo, UpdateProgress } from "../api/backend";
 import { Dialog } from "./Dialog";
 import { logToFile } from "./ErrorBoundary";
 
 interface Props {
-  update: Update;
+  update: UpdateInfo;
   onClose: () => void;
   /** Ouverte depuis le bouton de l'en-tête : « Plus tard » possible. */
   optional?: boolean;
@@ -21,17 +21,23 @@ export function UpdateDialog({ update, onClose, optional = false }: Props) {
 
   async function install() {
     setState("downloading");
+    const stop = await listen<UpdateProgress>(UPDATE_PROGRESS_EVENT, ({ payload }) => {
+      if (payload.event === "progress") {
+        setDone(payload.done);
+        setTotal(payload.total ?? 0);
+      } else {
+        setState("installing");
+      }
+    });
     try {
-      await update.downloadAndInstall((event) => {
-        if (event.event === "Started") setTotal(event.data.contentLength ?? 0);
-        if (event.event === "Progress") setDone((d) => d + event.data.chunkLength);
-        if (event.event === "Finished") setState("installing");
-      });
+      await backend.installUpdate();
       // Sous Windows, l'installateur ferme déjà le launcher ; ailleurs on redémarre.
       await relaunch();
     } catch (e) {
-      logToFile("error", `mise à jour du launcher: ${String(e)}`);
+      logToFile("error", `mise à jour du launcher: ${JSON.stringify(e)}`);
       setState("error");
+    } finally {
+      stop();
     }
   }
 
@@ -59,6 +65,7 @@ export function UpdateDialog({ update, onClose, optional = false }: Props) {
     >
       <p>
         La version <strong>{update.version}</strong> de FaRFa project est disponible (vous avez la {update.currentVersion}).
+        {update.beta && " C'est une version de test : merci de signaler ce qui ne va pas."}
         {optional ? "Le launcher redémarre une fois la mise à jour installée." : "Cette mise à jour est obligatoire."}
       </p>
       {update.body && <pre className="update-notes">{update.body}</pre>}

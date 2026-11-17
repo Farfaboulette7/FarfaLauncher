@@ -34,6 +34,8 @@ pub struct Settings {
     pub crash_prompt_off: Vec<i64>,
     /// Limite de débit des téléchargements en Mo/s (0 : illimité).
     pub download_limit_mb: u32,
+    /// « Recevoir les versions de test » : mises à jour du canal bêta.
+    pub beta_channel: bool,
 }
 
 impl Default for Settings {
@@ -50,6 +52,7 @@ impl Default for Settings {
             recomp_choice: Default::default(),
             crash_prompt_off: Vec::new(),
             download_limit_mb: 0,
+            beta_channel: false,
         }
     }
 }

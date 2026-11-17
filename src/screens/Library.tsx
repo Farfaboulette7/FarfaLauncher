@@ -1,5 +1,4 @@
 import { getVersion } from "@tauri-apps/api/app";
-import type { Update } from "@tauri-apps/plugin-updater";
 import { Emblem } from "../components/Emblem";
 import { CSSProperties, memo, ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
@@ -19,6 +18,7 @@ import {
   LibrarySnapshot,
   Platform,
   SessionInfo,
+  UpdateInfo,
   Target,
 } from "../api/backend";
 import { useFirstImage } from "../hooks/useCachedImage";
@@ -154,7 +154,7 @@ interface Props {
   onLogout: (notice: string | null) => void;
   onCheckUpdates: () => Promise<string>;
   /** Nouvelle version sortie pendant que le launcher tourne. */
-  update: Update | null;
+  update: UpdateInfo | null;
   onUpdate: () => void;
 }
 

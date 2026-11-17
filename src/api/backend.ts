@@ -584,6 +584,17 @@ export interface MusicTrack {
   eightBit: MusicVariant;
 }
 
+/** Nouvelle version du launcher, trouvée sur le canal choisi (stable ou bêta). */
+export interface UpdateInfo {
+  version: string;
+  currentVersion: string;
+  body: string | null;
+  /** Version de test (pré-release). */
+  beta: boolean;
+}
+export const UPDATE_PROGRESS_EVENT = "update-progress";
+export type UpdateProgress = { event: "progress"; done: number; total: number | null } | { event: "finished" };
+
 export const INSTALL_PROGRESS_EVENT = "install-progress";
 export const INSTALL_FINISHED_EVENT = "install-finished";
 
@@ -616,6 +627,12 @@ export const backend = {
   musicFiles: (track: MusicTrack) => invoke<{ normal: string; eightBit: string }>("music_files", { track }),
   favoriteSet: (romId: number, favorite: boolean) => invoke<number[]>("favorite_set", { romId, favorite }),
   installInfo: () => invoke<InstallInfo>("install_info"),
+  /** Nouvelle version du launcher sur le canal choisi, `null` s'il est à jour. */
+  checkUpdate: () => invoke<UpdateInfo | null>("check_update"),
+  /** Télécharge et installe la version trouvée par `checkUpdate` (progression : UPDATE_PROGRESS_EVENT). */
+  installUpdate: () => invoke<void>("install_update"),
+  betaChannel: () => invoke<boolean>("beta_channel"),
+  setBetaChannel: (beta: boolean) => invoke<void>("set_beta_channel", { beta }),
   /** `dest` : dossier où créer celui du jeu (sinon le dossier des jeux des paramètres). */
   installGame: (romId: number, dest?: string, proton?: string | null, withEmulator = false, emulator?: string | null, recomp?: string | null) =>
     invoke<void>("install_game", { romId, dest: dest ?? null, proton: proton ?? null, withEmulator, emulator: emulator ?? null, recomp: recomp ?? null }),
