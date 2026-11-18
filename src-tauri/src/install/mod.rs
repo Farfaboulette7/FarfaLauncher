@@ -1760,7 +1760,8 @@ mod tests {
     }
 
     /// Vrai serveur, recomp qui construit le jeu (Hookshot) : `FARFA_E2E_ROM`, plus URL, TOKEN, MANAGER.
-    /// Garde le dossier (`farfa-prepare-e2e`) pour lancer le jeu ensuite.
+    /// Garde le dossier (`farfa-prepare-e2e`, ou `FARFA_E2E_DIR`) pour lancer le jeu ensuite.
+    /// `FARFA_E2E_EXE` : fin attendue de l'exécutable (`bin/hookshot.exe` par défaut ; OpenSmash : `OpenSmash.exe`).
     #[cfg(windows)]
     #[tokio::test]
     #[ignore]
@@ -1768,7 +1769,7 @@ mod tests {
         let var = |k: &str| std::env::var(k).unwrap();
         let rom: i64 = var("FARFA_E2E_ROM").parse().unwrap();
         let client = RommClient::new(&var("FARFA_E2E_URL"), Some(var("FARFA_E2E_TOKEN"))).unwrap();
-        let base = std::env::temp_dir().join("farfa-prepare-e2e");
+        let base = std::env::var("FARFA_E2E_DIR").map(PathBuf::from).unwrap_or_else(|_| std::env::temp_dir().join("farfa-prepare-e2e"));
         let config = base.join("config");
         std::fs::create_dir_all(&config).unwrap();
         let manager = client.with_base(&var("FARFA_E2E_MANAGER"));
@@ -1802,7 +1803,8 @@ mod tests {
             InstallOutcome::NeedsChoice { game } => panic!("choix demandé parmi {:?}", game.pending_candidates),
         };
         println!("exécutable : {:?} ; ROM {:?} ; dossier {}", st.executable, st.roms, st.game_dir.display());
-        assert!(st.executable.as_deref().is_some_and(|e| e.ends_with("bin/hookshot.exe")));
+        let expected = std::env::var("FARFA_E2E_EXE").unwrap_or_else(|_| "bin/hookshot.exe".into());
+        assert!(st.executable.as_deref().is_some_and(|e| e.ends_with(&expected)));
     }
 
     /// Vrai serveur, PPSSPP lancé : `FARFA_E2E_ROM` (jeu PSP en .chd), plus URL, TOKEN, MANAGER.

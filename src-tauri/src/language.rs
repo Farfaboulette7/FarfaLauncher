@@ -33,6 +33,39 @@ pub struct LanguageRule {
     pub key: String,
     /// Écrite telle quelle (ini, kv), lue comme du JSON (json).
     pub value: String,
+    /// Valeur quand le joueur choisit « English » (OpenSmash : `en-US`). Absente : pas de choix.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub english: Option<String>,
+}
+
+/// Langue choisie par le joueur pour cette installation (« English » dans les informations du jeu).
+const CHOICE_FILE: &str = "langue-choix";
+
+/// `en` si le joueur a choisi l'anglais pour ce jeu, sinon `fr`.
+pub fn choice(game_dir: &Path) -> &'static str {
+    match std::fs::read_to_string(game_dir.join(INTERNAL_DIR).join(CHOICE_FILE)) {
+        Ok(t) if t.trim() == "en" => "en",
+        _ => "fr",
+    }
+}
+
+/// Mémorise la langue choisie ; elle est posée au prochain lancement.
+pub fn set_choice(game_dir: &Path, lang: &str) -> std::io::Result<()> {
+    let file = game_dir.join(INTERNAL_DIR).join(CHOICE_FILE);
+    if lang == "en" {
+        std::fs::create_dir_all(game_dir.join(INTERNAL_DIR))?;
+        std::fs::write(file, "en")
+    } else {
+        match std::fs::remove_file(file) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        }
+    }
+}
+
+/// Le jeu propose-t-il l'anglais sur ce système ?
+pub fn offers_english(rules: &[LanguageRule]) -> bool {
+    rules.iter().any(|r| r.for_this_system() && r.english.is_some())
 }
 
 /// Nom de ce système dans les fichiers du gestionnaire.
@@ -54,7 +87,20 @@ impl LanguageRule {
 
 /// Variables d'environnement à donner au jeu, et fichiers posés si ce n'est pas déjà fait.
 pub fn prepare(game_dir: &Path, exe_dir: &Path, rules: &[LanguageRule]) -> Vec<(String, String)> {
-    let rules: Vec<&LanguageRule> = rules.iter().filter(|r| r.for_this_system()).collect();
+    // Anglais choisi : sa valeur à la place du français. La signature change, le fichier est réécrit.
+    let english = choice(game_dir) == "en";
+    let rules: Vec<LanguageRule> = rules
+        .iter()
+        .filter(|r| r.for_this_system())
+        .map(|r| {
+            let mut r = r.clone();
+            if let (true, Some(en)) = (english, &r.english) {
+                r.value = en.clone();
+            }
+            r
+        })
+        .collect();
+    let rules: Vec<&LanguageRule> = rules.iter().collect();
     // `{exedir}` dans une variable : le dossier de l'exécutable (Savage Wind sous Linux y garde ses données).
     let env = rules
         .iter()
@@ -345,16 +391,46 @@ mod tests {
         let base = std::env::temp_dir().join(format!("farfa-langue-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(base.join(INTERNAL_DIR)).unwrap();
         let rules = vec![
-            LanguageRule { system: None, format: "ini".into(), file: Some("{exedir}/larecomp.ini".into()), key: "language".into(), value: "fr".into() },
-            LanguageRule { system: None, format: "env".into(), file: None, key: "MHGU_LANG".into(), value: "fr".into() },
-            LanguageRule { system: Some("autre".into()), format: "env".into(), file: None, key: "X".into(), value: "1".into() },
+            LanguageRule { system: None, format: "ini".into(), file: Some("{exedir}/larecomp.ini".into()), key: "language".into(), value: "fr".into(), english: None },
+            LanguageRule { system: None, format: "env".into(), file: None, key: "MHGU_LANG".into(), value: "fr".into(), english: None },
+            LanguageRule { system: Some("autre".into()), format: "env".into(), file: None, key: "X".into(), value: "1".into(), english: None },
         ];
+        assert!(!offers_english(&rules));
         assert_eq!(prepare(&base, &base, &rules), [("MHGU_LANG".to_string(), "fr".to_string())]);
         assert_eq!(std::fs::read_to_string(base.join("larecomp.ini")).unwrap(), "language=fr\n");
         // Le joueur change de langue : elle n'est plus touchée.
         std::fs::write(base.join("larecomp.ini"), "language=en\n").unwrap();
         prepare(&base, &base, &rules);
         assert_eq!(std::fs::read_to_string(base.join("larecomp.ini")).unwrap(), "language=en\n");
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn english_chosen_by_the_player() {
+        let base = std::env::temp_dir().join(format!("farfa-langue-en-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(base.join(INTERNAL_DIR)).unwrap();
+        let rules = vec![
+            LanguageRule { system: None, format: "ini".into(), file: Some("{exedir}/config/display.ini".into()), key: "language".into(), value: "fr".into(), english: Some("en-US".into()) },
+            LanguageRule { system: None, format: "env".into(), file: None, key: "SSBU_LANGUAGE".into(), value: "fr".into(), english: Some("en-US".into()) },
+        ];
+        assert!(offers_english(&rules));
+        let ini = base.join("config").join("display.ini");
+        assert_eq!(choice(&base), "fr");
+        assert_eq!(prepare(&base, &base, &rules), [("SSBU_LANGUAGE".to_string(), "fr".to_string())]);
+        assert_eq!(std::fs::read_to_string(&ini).unwrap(), "language=fr\n");
+        // « English » : posé au lancement suivant, puis retour au français.
+        set_choice(&base, "en").unwrap();
+        assert_eq!(choice(&base), "en");
+        assert_eq!(prepare(&base, &base, &rules), [("SSBU_LANGUAGE".to_string(), "en-US".to_string())]);
+        assert_eq!(std::fs::read_to_string(&ini).unwrap(), "language=en-US\n");
+        set_choice(&base, "fr").unwrap();
+        set_choice(&base, "fr").unwrap();
+        assert_eq!(choice(&base), "fr");
+        prepare(&base, &base, &rules);
+        assert_eq!(std::fs::read_to_string(&ini).unwrap(), "language=fr\n");
+        // Signature d'une règle sans anglais : la même qu'avant (pas de réécriture à la mise à jour).
+        let sans: LanguageRule = serde_json::from_str(r#"{"format":"ini","file":"{exedir}/a.ini","key":"k","value":"fr"}"#).unwrap();
+        assert!(!serde_json::to_string(&sans).unwrap().contains("english"));
         std::fs::remove_dir_all(&base).unwrap();
     }
 }

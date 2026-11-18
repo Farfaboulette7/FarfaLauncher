@@ -525,6 +525,29 @@ pub async fn set_bo3_language(state: State<'_, AppState>, rom_id: i64, lang: Str
     .map_err(|_| AppError::Internal)?
 }
 
+/// Langue choisie pour un jeu installé dont la recomp ou l'émulateur propose l'anglais
+/// (`langue:` avec une valeur en anglais, OpenSmash) : `fr` ou `en`. `None` : pas de choix.
+#[tauri::command]
+pub fn game_language(state: State<'_, AppState>, rom_id: i64) -> AppResult<Option<&'static str>> {
+    let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
+    let rules = state.catalog().language_for_install(&st);
+    Ok(crate::language::offers_english(&rules).then(|| crate::language::choice(&st.game_dir)))
+}
+
+/// Choisit `fr` ou `en` ; la langue est posée au prochain lancement.
+#[tauri::command]
+pub fn set_game_language(state: State<'_, AppState>, rom_id: i64, lang: String) -> AppResult<&'static str> {
+    if !matches!(lang.as_str(), "fr" | "en") {
+        return Err(AppError::Internal);
+    }
+    if state.running.lock().unwrap().contains(&rom_id) {
+        return Err(AppError::AlreadyRunning);
+    }
+    let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
+    crate::language::set_choice(&st.game_dir, &lang).map_err(|e| crate::error::log_err(AppError::Disk, "langue du jeu", e))?;
+    Ok(crate::language::choice(&st.game_dir))
+}
+
 #[tauri::command]
 pub fn set_install_dir(state: State<'_, AppState>, path: Option<String>) -> AppResult<String> {
     let dir = path.map(PathBuf::from).filter(|p| p.is_absolute());

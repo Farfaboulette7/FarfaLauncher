@@ -200,6 +200,8 @@ pub fn run() {
             commands::install::cod_modes,
             commands::install::bo3_language,
             commands::install::set_bo3_language,
+            commands::install::game_language,
+            commands::install::set_game_language,
             commands::install::set_key_binds,
             commands::install::controller_ports,
             commands::install::set_players,

@@ -977,25 +977,57 @@ const PC_KIND_LABELS: Record<PcKind, string> = {
 
 /** Black Ops III : langue du jeu (boiii ne parle qu'anglais au jeu, le launcher renomme ses zones). */
 function Bo3LanguageFact({ romId, playing }: { romId: number; playing: boolean }) {
-  const [lang, setLang] = useState<Bo3Language | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  return <LanguageFact romId={romId} playing={playing} load={backend.bo3Language} save={backend.setBo3Language} />;
+}
+
+/** Recomp qui propose l'anglais (`langue:` avec une valeur en anglais, OpenSmash) : posé au prochain lancement. */
+function GameLanguageFact({ romId, playing }: { romId: number; playing: boolean }) {
+  const [offered, setOffered] = useState(false);
   useEffect(() => {
     let live = true;
     backend
-      .bo3Language(romId)
-      .then((l) => live && setLang(l))
+      .gameLanguage(romId)
+      .then((l) => live && setOffered(l !== null))
       .catch(() => {});
     return () => {
       live = false;
     };
   }, [romId]);
+  if (!offered) return null;
+  return <LanguageFact romId={romId} playing={playing} load={loadGameLanguage} save={backend.setGameLanguage} />;
+}
+
+const loadGameLanguage = (romId: number) => backend.gameLanguage(romId).then((l): Bo3Language => l ?? "fr");
+
+/** Choix Français / English d'un jeu installé. */
+function LanguageFact({
+  romId,
+  playing,
+  load,
+  save,
+}: {
+  romId: number;
+  playing: boolean;
+  load: (romId: number) => Promise<Bo3Language>;
+  save: (romId: number, lang: Bo3Language) => Promise<Bo3Language>;
+}) {
+  const [lang, setLang] = useState<Bo3Language | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    load(romId)
+      .then((l) => live && setLang(l))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [romId, load]);
   const choose = (l: Bo3Language) => {
     if (l === lang || busy) return;
     setBusy(true);
     setError(null);
-    backend
-      .setBo3Language(romId, l)
+    save(romId, l)
       .then(setLang)
       .catch((e) => setError(errorMessage(e)))
       .finally(() => setBusy(false));
@@ -1187,6 +1219,7 @@ export function InstallFacts({ game: base, target, installs }: { game: Game; tar
         </>
       )}
       {inst?.executable && inst.pc?.cod === "bo3" && <Bo3LanguageFact romId={base.id} playing={playing} />}
+      {inst?.executable && !inst.pc && <GameLanguageFact romId={base.id} playing={playing} />}
       {!choosing && !inst && isAvailable(game) && (
         <>
           <dt>Téléchargement</dt>

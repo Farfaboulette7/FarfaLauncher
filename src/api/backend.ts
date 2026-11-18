@@ -803,6 +803,10 @@ export const backend = {
   codModes: (romId: number) => invoke<CodModeInfo[]>("cod_modes", { romId }),
   bo3Language: (romId: number) => invoke<Bo3Language>("bo3_language", { romId }),
   setBo3Language: (romId: number, lang: Bo3Language) => invoke<Bo3Language>("set_bo3_language", { romId, lang }),
+  /** Langue choisie d'un jeu dont la recomp propose l'anglais (OpenSmash) ; null : pas de choix. */
+  gameLanguage: (romId: number) => invoke<Bo3Language | null>("game_language", { romId }),
+  /** Posée au prochain lancement. */
+  setGameLanguage: (romId: number, lang: Bo3Language) => invoke<Bo3Language>("set_game_language", { romId, lang }),
   setKeyBinds: (romId: number, keys: KeyBind[]) => invoke<InstalledGame>("set_key_binds", { romId, keys }),
   controllerPorts: (romId: number) => invoke<number>("controller_ports", { romId }),
   setPlayers: (romId: number, players: (PlayerPad | null)[]) => invoke<InstalledGame>("set_players", { romId, players }),
