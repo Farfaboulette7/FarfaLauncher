@@ -40,15 +40,28 @@ Commandes (réponses en JSON, une ligne par message) :
   installes                     jeux installés
   jeu <id>                      fiche complète d'un jeu
   image <url> [<url>...]        télécharge des images du serveur en cache, renvoie leurs chemins
-  installer <id> [--emulateur <id>] [--recomp]
+  installer <id> [--emulateur <id>] [--recomp [<id>]]
+                                avec l'émulateur ou la recomp choisis (sinon ceux conseillés) ;
+                                la façon de jouer d'avant reste installée, en réserve
+  utiliser <id> recomp|emulator <id>
+                                joue avec une autre façon déjà installée, sans retélécharger
   executables <id>              exécutables possibles d'un jeu installé
   choisir <id> <exécutable>     termine une installation qui attend ce choix
+  fiche <id> [<console>]        ce que l'onglet Informations du launcher montre en plus de `jeu` :
+                                temps de jeu, nouveautés, classement, shaders partagés, page RomM
+  langue <id> [fr|en]         langue du jeu (Black Ops III, recomps qui proposent l'anglais)
+  historique <id>               versions précédentes de la sauvegarde
+  restaurer <id> <version>      remet une version (l'actuelle est gardée dans l'historique)
   desinstaller <id> [--garder-sauvegardes]
   jouer <id>                    sauvegarde du serveur, réglages, jeu, envoi de la sauvegarde
   synchroniser [<id>]           envoie les sauvegardes changées et le temps de jeu en attente";
 
 /// Fermeture demandée du jeu en cours (`jouer`), levée à la réception du signal d'arrêt de Steam.
 static GAME_STOP: std::sync::OnceLock<Arc<std::sync::atomic::AtomicBool>> = std::sync::OnceLock::new();
+
+/// Annulation de l'installation en cours (`installer`), levée par le signal d'arrêt que
+/// NieRDeck envoie quand le joueur annule : le téléchargement s'arrête proprement.
+static INSTALL_CANCEL: std::sync::OnceLock<CancellationToken> = std::sync::OnceLock::new();
 
 /// Taille des pages de `jeux`.
 const PAGE: usize = 100;
@@ -76,12 +89,22 @@ pub fn main() {
         // « Quitter le jeu » de Steam envoie le signal d'arrêt à tout le groupe : le
         // jeu se ferme, et ce programme doit survivre pour envoyer la sauvegarde.
         #[cfg(unix)]
-        if args.first().is_some_and(|c| c == "jouer") {
+        if args.first().is_some_and(|c| c == "installer") {
+            // Prêt dès le début : une annulation avant le premier téléchargement compte aussi.
+            let _ = INSTALL_CANCEL.set(CancellationToken::new());
+        }
+        #[cfg(unix)]
+        if args.first().is_some_and(|c| c == "jouer" || c == "installer") {
             use tokio::signal::unix::{signal, SignalKind};
             for kind in [SignalKind::terminate(), SignalKind::interrupt(), SignalKind::hangup()] {
                 if let Ok(mut s) = signal(kind) {
                     tokio::spawn(async move {
                         while s.recv().await.is_some() {
+                            if let Some(cancel) = INSTALL_CANCEL.get() {
+                                tracing::info!("arrêt demandé ({kind:?}) : installation annulée");
+                                cancel.cancel();
+                                continue;
+                            }
                             tracing::info!("arrêt demandé ({kind:?}) : fermeture du jeu, puis envoi de la sauvegarde");
                             // Le jeu tourne dans son propre groupe : on lui transmet la demande.
                             if let Some(stop) = GAME_STOP.get() {
@@ -230,7 +253,33 @@ async fn run(args: Vec<String>) -> AppResult<Value> {
         }
         "jeu" => game(&open_state(), rom_id(rest.first())?).await,
         "image" => images(&open_state(), rest).await,
-        "installer" => install_game(&open_state(), rom_id(rest.first())?, option(rest, "--emulateur").cloned(), flag(rest, "--recomp")).await,
+        "installer" => {
+            // `--recomp` seul force la recomp ; suivi d'un identifiant, il la choisit.
+            let recomp = option(rest, "--recomp").filter(|v| !v.starts_with("--")).cloned();
+            install_game(&open_state(), rom_id(rest.first())?, option(rest, "--emulateur").cloned(), flag(rest, "--recomp"), recomp).await
+        }
+        "utiliser" => {
+            let state = open_state();
+            let id = rom_id(rest.first())?;
+            let kind = rest.get(1).filter(|k| matches!(k.as_str(), "recomp" | "emulator")).ok_or(AppError::Internal)?;
+            let way = rest.get(2).ok_or(AppError::Internal)?;
+            use_install(&state, id, kind, way)
+        }
+        "fiche" => sheet(&open_state(), rom_id(rest.first())?, rest.get(1).cloned().unwrap_or_default()).await,
+        "langue" => language(&open_state(), rom_id(rest.first())?, rest.get(1).map(String::as_str)).await,
+        "historique" => {
+            let state = open_state();
+            Ok(json!({ "versions": crate::save_sync::history(&state, rom_id(rest.first())?).await? }))
+        }
+        "restaurer" => {
+            let state = open_state();
+            let id = rom_id(rest.first())?;
+            let version = rest.get(1).ok_or(AppError::Internal)?;
+            // Pas pendant une partie : son `jouer` tient le verrou.
+            let _lock = lock(&state, id)?;
+            crate::save_sync::restore_version(&state, id, version).await?;
+            Ok(json!({ "romId": id }))
+        }
         "executables" => {
             let state = open_state();
             let st = state::find(&state.config_dir, rom_id(rest.first())?).ok_or(AppError::NotInstalled)?;
@@ -449,10 +498,32 @@ fn lock(state: &AppState, rom_id: i64) -> AppResult<std::fs::File> {
     }
 }
 
-async fn install_game(state: &AppState, id: i64, emulator: Option<String>, force_recomp: bool) -> AppResult<Value> {
+/// Garde la recomp choisie pour un jeu qui en a plusieurs (comme le launcher) : elle reste la
+/// sienne même si le conseil du catalogue change.
+fn keep_recomp_choice(state: &AppState, id: i64, wanted: Option<String>) -> AppResult<()> {
+    let catalog = state.catalog();
+    let choices = catalog.recomps_for_rom(id);
+    let wanted = wanted.filter(|w| choices.iter().any(|r| &r.id == w)).or_else(|| (choices.len() > 1).then(|| catalog.recomp_for_rom(id).map(|r| r.id.clone())).flatten());
+    drop(catalog);
+    if let Some(w) = wanted {
+        if state.settings().recomp_choice.get(&id) != Some(&w) {
+            tracing::info!("recomp choisie pour le jeu {id} : {w}");
+            state.update_settings(|s| {
+                s.recomp_choice.insert(id, w);
+            })?;
+            crate::runtimes::combine(state);
+        }
+    }
+    Ok(())
+}
+
+async fn install_game(state: &AppState, id: i64, emulator: Option<String>, force_recomp: bool, recomp: Option<String>) -> AppResult<Value> {
     let _lock = lock(state, id)?;
     let client = state.client()?;
     refresh_catalog(state).await;
+    if emulator.is_none() {
+        keep_recomp_choice(state, id, recomp)?;
+    }
     let manifest = state.manifest();
     let catalog = state.catalog();
     // Comme le launcher : la recomp si le jeu en a une pour ce système, sinon l'émulateur.
@@ -469,7 +540,7 @@ async fn install_game(state: &AppState, id: i64, emulator: Option<String>, force
         config_dir: state.config_dir.clone(),
         install_root: state.install_root(),
         target: target(),
-        cancel: CancellationToken::new(),
+        cancel: INSTALL_CANCEL.get_or_init(CancellationToken::new).clone(),
         proton: None,
         manifest,
         catalog,
@@ -479,13 +550,112 @@ async fn install_game(state: &AppState, id: i64, emulator: Option<String>, force
         runtime_lock: state.runtime_lock.clone(),
         on_progress: Arc::new(|p| emit(json!({ "type": "progress", "data": p }))),
     };
-    match job.run(id).await? {
+    // Dossiers des jeux avant l'installation : une annulation retire celui qu'elle vient de créer.
+    let root = state.install_root();
+    let before: HashSet<PathBuf> = std::fs::read_dir(&root).map(|rd| rd.filter_map(Result::ok).map(|e| e.path()).collect()).unwrap_or_default();
+    let result = job.run(id).await;
+    if matches!(result, Err(AppError::Cancelled)) && state::find(&state.config_dir, id).is_none() {
+        remove_cancelled_download(&root, &before);
+    }
+    match result? {
         InstallOutcome::Installed { game } => Ok(json!({ "status": "installed", "game": game })),
         InstallOutcome::NeedsChoice { game } => {
             let candidates = candidates(&game);
             Ok(json!({ "status": "needsChoice", "game": game, "candidates": candidates }))
         }
     }
+}
+
+/// Le reste de la fiche d'un jeu (onglets Informations et Nouveautés du launcher). Chaque
+/// partie vaut `null` si le serveur ne la donne pas : la fiche s'affiche quand même.
+async fn sheet(state: &AppState, id: i64, console: String) -> AppResult<Value> {
+    let client = state.client()?;
+    refresh_catalog(state).await;
+    let secs = std::time::Duration::from_secs(10);
+    let playtime = tokio::time::timeout(secs, crate::romm::playtime::total_ms(&client, id)).await.ok().and_then(Result::ok).flatten();
+    let ranking = tokio::time::timeout(secs, crate::stats::game_ranking(state, id)).await.ok().and_then(Result::ok).flatten();
+    let shaders = match crate::manager::base_url(&state.settings()) {
+        Some(base) => {
+            let manager = client.with_base(&base);
+            let path = format!("api/shaders/rom/{id}?systeme={}", crate::language::current_system());
+            tokio::time::timeout(secs, manager.get_json::<Value>(&path)).await.ok().and_then(Result::ok)
+        }
+        None => None,
+    };
+    let changelog = state.catalog().changelog(id, &console, target());
+    Ok(json!({
+        "playtimeMs": playtime,
+        "ranking": ranking,
+        "shaders": shaders,
+        "changelog": changelog,
+        "rommPage": format!("{}/rom/{id}", client.base().trim_end_matches('/')),
+    }))
+}
+
+/// Installation annulée d'un jeu qui n'était pas installé : le dossier qu'elle a créé ne
+/// contient que le téléchargement en cours (`.farfalauncher`), on le supprime pour rendre la
+/// place. Un dossier avec autre chose dedans (autre installation en même temps) est gardé.
+fn remove_cancelled_download(root: &Path, before: &HashSet<PathBuf>) {
+    let Ok(rd) = std::fs::read_dir(root) else { return };
+    for dir in rd.filter_map(Result::ok).map(|e| e.path()).filter(|p| p.is_dir() && !before.contains(p)) {
+        let only_partial = std::fs::read_dir(&dir).is_ok_and(|rd| rd.filter_map(Result::ok).all(|e| e.file_name() == crate::install::extract::INTERNAL_DIR));
+        if only_partial {
+            match std::fs::remove_dir_all(&dir) {
+                Ok(()) => tracing::info!("installation annulée : {} supprimé", dir.display()),
+                Err(e) => tracing::warn!("installation annulée : {} non supprimé ({e})", dir.display()),
+            }
+        }
+    }
+}
+
+/// Met en service une installation en réserve (recomp ou émulateur) ; celle d'avant y passe.
+fn use_install(state: &AppState, id: i64, kind: &str, way: &str) -> AppResult<Value> {
+    let _lock = lock(state, id)?;
+    let st = state::activate(&state.config_dir, id, kind, way)?;
+    if kind == "recomp" && state.catalog().recomps_for_rom(id).iter().any(|r| r.id == way) && state.settings().recomp_choice.get(&id).map(String::as_str) != Some(way) {
+        state.update_settings(|s| {
+            s.recomp_choice.insert(id, way.to_string());
+        })?;
+        crate::runtimes::combine(state);
+    }
+    tracing::info!("« {} » se joue maintenant avec {kind} {way}", st.name);
+    Ok(json!({ "installed": st }))
+}
+
+/// Langue d'un jeu installé : `{"language": "fr"|"en"|null, "bo3": bool}` (null : pas de
+/// choix pour ce jeu). Avec `lang`, la change d'abord.
+async fn language(state: &AppState, id: i64, lang: Option<&str>) -> AppResult<Value> {
+    use crate::pc::cod;
+    let st = state::find(&state.config_dir, id).ok_or(AppError::NotInstalled)?;
+    if let Some(l) = lang {
+        if !matches!(l, "fr" | "en") {
+            return Err(AppError::Internal);
+        }
+    }
+    if matches!(st.pc.as_ref().and_then(|p| p.cod.as_ref()), Some(cod::CodGame::Bo3)) {
+        let dir = st.game_dir.clone();
+        if let Some(l) = lang {
+            let _lock = lock(state, id)?;
+            let l = l.to_string();
+            let d = dir.clone();
+            tokio::task::spawn_blocking(move || -> AppResult<()> {
+                cod::repair_bo3_zone(&d).map_err(|e| crate::error::log_err(AppError::Disk, "zone/ de Black Ops III", e))?;
+                cod::set_bo3_language(&d, &l).map_err(|e| crate::error::log_err(AppError::Disk, "langue de Black Ops III", e))
+            })
+            .await
+            .map_err(|_| AppError::Internal)??;
+        }
+        return Ok(json!({ "language": cod::bo3_language(&dir), "bo3": true }));
+    }
+    let rules = state.catalog().language_for_install(&st);
+    if !crate::language::offers_english(&rules) {
+        return Ok(json!({ "language": null, "bo3": false }));
+    }
+    if let Some(l) = lang {
+        let _lock = lock(state, id)?;
+        crate::language::set_choice(&st.game_dir, l).map_err(|e| crate::error::log_err(AppError::Disk, "langue du jeu", e))?;
+    }
+    Ok(json!({ "language": crate::language::choice(&st.game_dir), "bo3": false }))
 }
 
 /// Système des exécutables d'un jeu : un jeu Windows sous Proton a des `.exe`.

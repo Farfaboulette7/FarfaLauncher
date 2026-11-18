@@ -472,11 +472,14 @@ impl InstallJob {
         let gd = st.game_dir.clone();
         let target = self.target;
         let candidates: Vec<String> = blocking(move || Ok(detect::find_candidates(&gd, target).iter().map(|p| path_to_rel(p)).collect())).await?;
-        let game_exe = self
-            .catalog
-            .recomp_exe(rom_id)
+        let hint = self.catalog.recomp_exe(rom_id).map(|h| h.to_string());
+        let game_exe = hint
+            .as_deref()
             .and_then(|hint| runtimes::pick_exe(&candidates, hint, None))
             .filter(|e| e != builder)
+            // Sous Linux, l'AppImage de l'outil de construction cache les autres exécutables
+            // (Hookshot : `jeu/bin/hookshot`) : le chemin de la fiche, s'il existe, suffit.
+            .or_else(|| hint.filter(|h| h != builder && st.game_dir.join(rel_to_path(h)).is_file()))
             .ok_or_else(|| {
                 tracing::error!("jeu construit introuvable parmi {candidates:?}");
                 AppError::NoExecutable

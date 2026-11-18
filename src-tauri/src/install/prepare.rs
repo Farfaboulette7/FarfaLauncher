@@ -135,6 +135,13 @@ pub fn run(game_dir: &Path, program: &str, args: &[String], env: &[(String, Stri
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
+    // Son propre groupe de processus : une annulation arrête aussi ce qu'il lance
+    // (Hookshot : Python, puis les compilateurs).
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
     let mut child = cmd.spawn().map_err(|e| {
         tracing::error!("construction non lancée : {e}");
         AppError::InstallerFailed
@@ -176,6 +183,11 @@ pub fn run(game_dir: &Path, program: &str, args: &[String], env: &[(String, Stri
     });
     let status = loop {
         if cancel.is_cancelled() {
+            #[cfg(unix)]
+            {
+                // Tout le groupe (le programme et ses sous-programmes).
+                let _ = Command::new("kill").args(["-KILL", "--", &format!("-{}", child.id())]).stdout(Stdio::null()).stderr(Stdio::null()).status();
+            }
             let _ = child.kill();
             let _ = child.wait();
             return Err(AppError::Cancelled);
