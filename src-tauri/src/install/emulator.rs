@@ -16,7 +16,8 @@ use super::{detect, download, ensure_space, extract, make_executable, path_to_re
 use crate::error::{AppError, AppResult};
 use crate::install::download::disk_error;
 use crate::install::extract::INTERNAL_DIR;
-use crate::manager::{self, Emulator};
+use crate::error::log_err;
+use crate::manager::{self, Emulator, RomPrep};
 use crate::platform::ArchiveKind;
 use crate::romm::library::{self, RemoteFile};
 use crate::runtimes;
@@ -154,6 +155,62 @@ pub fn refreshed_launch(emulator: &Emulator, st: &InstalledGame) -> Option<Direc
     Some(DirectLaunch { exe: old.exe.clone(), args, cwd: old.cwd.clone(), env })
 }
 
+/// ROM qui n'a pas été préparée pour l'émulateur (installée par un launcher qui ne savait pas
+/// le faire, 1.2.0 et avant : le zip a été donné tel quel à Azahar) : préparée au lancement,
+/// et l'installation est mise à jour. `None` : rien à faire.
+pub async fn heal_rom(config_dir: &Path, emulator: &Emulator, st: &InstalledGame) -> AppResult<Option<InstalledGame>> {
+    let Some(prep) = emulator.rom_prep.clone().filter(|p| p.unzip || p.decrypt.is_some()) else { return Ok(None) };
+    let Some(shared) = st.shared.as_ref().filter(|s| s.is_emulator()) else { return Ok(None) };
+    let (Some(rom_dir), Some(launch), Some(exe)) = (shared.rom_dir.clone(), st.direct_launch.as_ref(), st.executable.as_deref()) else { return Ok(None) };
+    let Some(rom) = launch.args.iter().map(PathBuf::from).find(|p| p.starts_with(&rom_dir) && p.is_file()) else { return Ok(None) };
+    let is_zip = rom.extension().is_some_and(|e| e.eq_ignore_ascii_case("zip"));
+    let three_ds = prep.decrypt.as_deref() == Some("3ds");
+    let (r, three) = (rom.clone(), three_ds);
+    let needed = blocking(move || Ok(crate::n3ds::is_rom(&r) && three && crate::n3ds::is_encrypted(&r))).await? || (prep.unzip && is_zip);
+    if !needed {
+        return Ok(None);
+    }
+    tracing::info!("« {} » : ROM pas encore préparée pour {}, préparée avant le lancement", st.name, emulator.name);
+    let keys = prep.keys.as_deref().map(|k| emulator.data_dir(&st.game_dir, exe).join(rel_to_path(k)));
+    let (r, dir) = (rom.clone(), rom_dir.clone());
+    let rel = blocking(move || prepare_rom(&r, &dir, &prep, keys.as_deref(), &|_, _, _| {})).await?;
+    let new_rom = rom_dir.join(&rel);
+    let (old_rel, new_rel) = (rom.strip_prefix(&rom_dir).map(path_to_rel).unwrap_or_default(), path_to_rel(&rel));
+    let mut st = st.clone();
+    for r in st.roms.iter_mut().filter(|r| **r == old_rel) {
+        *r = new_rel.clone();
+    }
+    for s in &mut st.rom_sources {
+        for p in s.placed.iter_mut().filter(|p| **p == old_rel) {
+            *p = new_rel.clone();
+        }
+    }
+    if let Some(d) = st.direct_launch.as_mut() {
+        let (old, new) = (rom.to_string_lossy().into_owned(), new_rom.to_string_lossy().into_owned());
+        for a in d.args.iter_mut().filter(|a| **a == old) {
+            *a = new.clone();
+        }
+    }
+    // Sauvegardes : l'identifiant du jeu se lit maintenant dans la ROM (3DS : ID de titre).
+    // La console est le dossier des ROM de ce jeu (`Roms/<console>/<jeu>`).
+    let console = rom_dir.parent().and_then(Path::file_name).and_then(|c| c.to_str()).unwrap_or("").to_string();
+    let disc = disc_id(&new_rom);
+    let stem_name = new_rom.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+    let (save_dir, patterns) = emulator.saves.for_console(&console);
+    let exe_dir = emulator.data_dir(&st.game_dir, exe);
+    if let Some(sh) = st.shared.as_mut() {
+        sh.saves_dir = saves_dir(save_dir, &rom_dir, &exe_dir, disc.as_deref());
+        sh.save_patterns = patterns
+            .iter()
+            .filter(|p| !crate::switch_saves::is_deferred(p))
+            .filter_map(|p| expand_disc(&expand(p, &new_rom, &rom_dir, &stem_name), disc.as_deref()))
+            .collect();
+    }
+    state::write_state(config_dir, &st)?;
+    tracing::info!("« {} » : ROM préparée, {}", st.name, new_rom.display());
+    Ok(Some(st))
+}
+
 /// Émulateur en bundle `.app` (Mac) : lancé depuis le dossier qui contient le bundle, où
 /// les dérivés de yuzu cherchent `user/` et mGBA son `portable.ini`.
 fn bundle_cwd(exe: &str) -> Option<String> {
@@ -163,11 +220,15 @@ fn bundle_cwd(exe: &str) -> Option<String> {
     Some(exe.rsplit_once('/').map(|(dir, _)| dir.to_string()).unwrap_or_default())
 }
 
-/// Identifiant d'un disque : GameCube ou Wii (`GZ2P01`, dans son en-tête), PSP
+/// Identifiant d'un jeu 3DS (voir `n3ds::save_id`) ou d'un disque : GameCube ou Wii (`GZ2P01`, dans son en-tête), PSP
 /// (`ULES00151`, dans `UMD_DATA.BIN`) ou PS2 (`SLES-50330`, dans `SYSTEM.CNF`),
 /// aussi au format CHD.
 pub fn disc_id(path: &Path) -> Option<String> {
     use std::io::{Read, Seek, SeekFrom};
+    // 3DS : moitié basse de l'ID de titre (`0006a900`), le dossier de ses sauvegardes dans Azahar.
+    if crate::n3ds::is_rom(path) {
+        return crate::n3ds::save_id(path);
+    }
     let ext = path.extension()?.to_string_lossy().to_ascii_lowercase();
     if ext == "chd" {
         let mut disc = ChdSectors::open(path)?;
@@ -383,6 +444,10 @@ impl InstallJob {
             .unwrap_or_else(|| root.join("Roms").join(state::safe_folder_name(&game.console, rom_id)).join(state::safe_folder_name(rom_folder(&game.folder_name, &game.rom_files), rom_id)));
 
         let files = emulator_files(&game.rom_files);
+        let main = main_rom(&game.rom_files).ok_or(AppError::NotAvailable)?;
+        // ROM à préparer (zip extrait, jeu 3DS déchiffré) : déjà faite pour cette archive, elle reste.
+        let prep = emulator.rom_prep.clone().filter(|p| p.unzip || p.decrypt.is_some());
+        let prepared = prep.as_ref().and_then(|p| prepared_before(previous.as_ref(), main, &rom_dir, p));
         let total: u64 = files.iter().map(|f| f.size).sum();
         ensure_space(&rom_dir, total)?;
         let mut offset = 0;
@@ -392,7 +457,7 @@ impl InstallJob {
         for file in files {
             let dest = rom_dir.join(rom_rel(file));
             // Même ROM déjà en place (changement d'émulateur) : ni retéléchargée, ni relue en entier.
-            if already_placed(previous.as_ref(), file, &dest) {
+            if already_placed(previous.as_ref(), file, &dest) || (prepared.is_some() && file.rel_path == main.rel_path) {
                 offset += file.size;
                 self.emit(rom_id, "download", offset, total);
                 continue;
@@ -420,16 +485,41 @@ impl InstallJob {
             offset += file.size;
         }
 
+        // ROM préparée pour l'émulateur : c'est elle qui est lancée (posée à la place du zip).
+        let prepared = match (prep, prepared) {
+            (_, Some(rel)) => Some(rel),
+            (Some(prep), None) => {
+                let archive = rom_dir.join(rom_rel(main));
+                let keys = prep.keys.as_deref().map(|k| emulator.data_dir(&installed.game_dir, &exe).join(rel_to_path(k)));
+                let progress = self.on_progress.clone();
+                let dir = rom_dir.clone();
+                let rel = blocking(move || {
+                    let report = |phase: &'static str, done: u64, total: u64| progress(super::Progress { rom_id, phase, done, total, verifying: false });
+                    prepare_rom(&archive, &dir, &prep, keys.as_deref(), &report)
+                })
+                .await?;
+                Some(path_to_rel(&rel))
+            }
+            (None, None) => None,
+        };
         self.emit(rom_id, "finalize", 0, 0);
-        let main = main_rom(&game.rom_files).ok_or(AppError::NotAvailable)?;
-        let rom_path = rom_dir.join(rom_rel(main));
-        let rom_stem = stem(&main.file_name);
+        let main_placed = path_to_rel(&rom_rel(main));
+        let rom_path = rom_dir.join(rel_to_path(prepared.as_deref().unwrap_or(&main_placed)));
+        let rom_file_name = rom_path.file_name().and_then(|n| n.to_str()).unwrap_or(&main.file_name).to_string();
+        let rom_stem = stem(&rom_file_name);
         let disc = disc_id(&rom_path);
         let (save_dir, save_patterns) = emulator.saves.for_console(&game.console);
         let args = emulator.launch.args.iter().map(|a| expand(a, &rom_path, &rom_dir, rom_stem)).collect();
         let env = emulator.launch.env.iter().map(|(k, v)| (k.clone(), expand(v, &rom_path, &rom_dir, rom_stem))).collect();
         let now = state::now();
-        let placed: Vec<String> = game.rom_files.iter().map(|f| path_to_rel(&rom_rel(f))).collect();
+        let placed: Vec<String> = game
+            .rom_files
+            .iter()
+            .map(|f| match &prepared {
+                Some(rel) if f.rel_path == main.rel_path => rel.clone(),
+                _ => path_to_rel(&rom_rel(f)),
+            })
+            .collect();
         let st = InstalledGame {
             rom_id,
             name: game.name.clone(),
@@ -669,6 +759,106 @@ impl InstallJob {
     }
 }
 
+/// ROM préparée lors d'une installation précédente, depuis la même archive, et toujours en
+/// place (et déchiffrée) : ni retéléchargée, ni refaite.
+fn prepared_before(previous: Option<&InstalledGame>, main: &RemoteFile, rom_dir: &Path, prep: &RomPrep) -> Option<String> {
+    let sha1 = main.sha1.as_deref()?;
+    let src = previous?.rom_sources.iter().find(|s| s.sha1.as_deref() == Some(sha1) && s.size == main.size && s.placed.len() == 1)?;
+    let placed = &src.placed[0];
+    if *placed == path_to_rel(&rom_rel(main)) {
+        return None;
+    }
+    let path = rom_dir.join(rel_to_path(placed));
+    let ok = path.is_file() && !(prep.decrypt.as_deref() == Some("3ds") && crate::n3ds::is_encrypted(&path));
+    ok.then(|| placed.clone())
+}
+
+/// Prépare la ROM téléchargée pour l'émulateur : le zip est remplacé par le plus gros de ses
+/// fichiers (la ROM, pas le readme), puis le jeu 3DS est déchiffré sur place.
+/// Renvoie le chemin de la ROM, relatif au dossier des ROM.
+fn prepare_rom(archive: &Path, rom_dir: &Path, prep: &RomPrep, keys: Option<&Path>, progress: &dyn Fn(&'static str, u64, u64)) -> AppResult<PathBuf> {
+    let three_ds = prep.decrypt.as_deref() == Some("3ds");
+    let is_zip = archive.extension().is_some_and(|e| e.eq_ignore_ascii_case("zip"));
+    let rom = if prep.unzip && is_zip { unzip_rom(archive, three_ds, progress)? } else { archive.to_path_buf() };
+    if three_ds && crate::n3ds::is_rom(&rom) && crate::n3ds::is_encrypted(&rom) {
+        let text = keys
+            .and_then(|k| std::fs::read_to_string(k).ok())
+            .ok_or_else(|| log_err(AppError::KeysMissing, "déchiffrement 3DS", "aes_keys.txt absent du dossier de l'émulateur"))?;
+        let keys = crate::n3ds::Keys::parse(&text);
+        let started = Instant::now();
+        let mut last = Instant::now() - Duration::from_secs(1);
+        crate::n3ds::decrypt(&rom, &keys, &mut |done, total| {
+            if last.elapsed() >= Duration::from_millis(200) || done == total {
+                last = Instant::now();
+                progress("decrypt", done, total);
+            }
+        })
+        .map_err(|e| {
+            let missing = e.contains("aes_keys.txt");
+            // ROM à moitié déchiffrée : inutilisable, elle sera retéléchargée.
+            if !missing {
+                let _ = std::fs::remove_file(&rom);
+            }
+            let kind = if missing {
+                AppError::KeysMissing
+            } else if e.contains(crate::n3ds::DAMAGED) {
+                AppError::RomDamaged
+            } else {
+                AppError::Decrypt
+            };
+            log_err(kind, "déchiffrement 3DS", e)
+        })?;
+        tracing::info!("ROM 3DS déchiffrée en {:?} : {}", started.elapsed(), rom.display());
+    }
+    Ok(rom.strip_prefix(rom_dir).map(Path::to_path_buf).unwrap_or_else(|_| rom.file_name().map(PathBuf::from).unwrap_or_default()))
+}
+
+/// Remplace le zip par le plus gros de ses fichiers (une ROM 3DS d'abord, si on en cherche une).
+fn unzip_rom(archive: &Path, want_3ds: bool, progress: &dyn Fn(&'static str, u64, u64)) -> AppResult<PathBuf> {
+    use std::io::{Read, Write};
+    let bad = |e: String| log_err(AppError::Extract, "ROM en zip", e);
+    let file = std::fs::File::open(archive).map_err(|e| disk_error("ouverture de la ROM", e))?;
+    let mut zip = zip::ZipArchive::new(std::io::BufReader::new(file)).map_err(|e| bad(e.to_string()))?;
+    let mut best: Option<((bool, u64), usize, String)> = None;
+    for i in 0..zip.len() {
+        let entry = zip.by_index(i).map_err(|e| bad(e.to_string()))?;
+        if !entry.is_file() {
+            continue;
+        }
+        let Some(name) = entry.enclosed_name().and_then(|p| p.file_name().and_then(|n| n.to_str()).map(str::to_string)) else { continue };
+        let rank = (want_3ds && crate::n3ds::is_rom(Path::new(&name)), entry.size());
+        if best.as_ref().is_none_or(|b| rank > b.0) {
+            best = Some((rank, i, name));
+        }
+    }
+    let ((_, size), index, name) = best.ok_or_else(|| bad("archive vide".into()))?;
+    let dir = archive.parent().unwrap_or(Path::new("."));
+    let dest = dir.join(&name);
+    let part = dir.join(format!("{name}.part"));
+    let mut entry = zip.by_index(index).map_err(|e| bad(e.to_string()))?;
+    let mut out = std::fs::File::create(&part).map_err(|e| disk_error("extraction de la ROM", e))?;
+    let mut buf = vec![0u8; 1 << 20];
+    let mut done = 0u64;
+    let mut last = Instant::now() - Duration::from_secs(1);
+    loop {
+        let n = entry.read(&mut buf).map_err(|e| bad(e.to_string()))?;
+        if n == 0 {
+            break;
+        }
+        out.write_all(&buf[..n]).map_err(|e| disk_error("extraction de la ROM", e))?;
+        done += n as u64;
+        if last.elapsed() >= Duration::from_millis(200) || done == size {
+            last = Instant::now();
+            progress("extract", done, size);
+        }
+    }
+    drop(out);
+    std::fs::rename(&part, &dest).map_err(|e| disk_error("extraction de la ROM", e))?;
+    std::fs::remove_file(archive).map_err(|e| disk_error("suppression du zip de la ROM", e))?;
+    tracing::info!("ROM extraite de {} : {}", archive.display(), dest.display());
+    Ok(dest)
+}
+
 /// Fichier déjà téléchargé pour ce jeu : même empreinte, même taille sur le disque.
 fn already_placed(previous: Option<&InstalledGame>, file: &RemoteFile, dest: &Path) -> bool {
     let Some(sha1) = file.sha1.as_deref() else { return false };
@@ -792,6 +982,29 @@ mod tests {
     }
 
     #[test]
+    fn zipped_3ds_rom_replaces_its_zip() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("farfa-rom-prep-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let zpath = dir.join("Jeu (Europe).zip");
+        {
+            let mut w = zip::ZipWriter::new(std::fs::File::create(&zpath).unwrap());
+            let o: zip::write::SimpleFileOptions = Default::default();
+            // Le readme est plus gros : c'est quand même la ROM qui est prise.
+            w.start_file("readme.txt", o).unwrap();
+            w.write_all(&[b'x'; 64]).unwrap();
+            w.start_file("Jeu (Europe) Decrypted.3ds", o).unwrap();
+            w.write_all(b"pas une vraie ROM").unwrap();
+            w.finish().unwrap();
+        }
+        let prep = RomPrep { unzip: true, decrypt: Some("3ds".into()), keys: None };
+        let rel = prepare_rom(&zpath, &dir, &prep, None, &|_, _, _| {}).unwrap();
+        assert_eq!(rel, PathBuf::from("Jeu (Europe) Decrypted.3ds"));
+        assert!(!zpath.exists() && dir.join(&rel).is_file() && !dir.join("readme.txt").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn rom_folders_have_no_extension() {
         assert_eq!(rom_folder("Jeu v1.2 (USA).gba", &[f("Jeu v1.2 (USA).gba", 1)]), "Jeu v1.2 (USA)");
         // Dossier de plusieurs fichiers : son nom est gardé tel quel, même avec un point.
@@ -830,6 +1043,56 @@ mod tests {
         // Déjà parti : pas une erreur.
         remove_rom_files(&st, &shared, false).unwrap();
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// Jeu installé par un launcher qui ne préparait pas la ROM (1.2.0) : zip lancé tel quel.
+    #[tokio::test]
+    async fn zip_left_by_an_old_launcher_is_prepared_at_launch() {
+        use std::io::Write;
+        let root = std::env::temp_dir().join(format!("farfa-heal-{}", uuid::Uuid::new_v4()));
+        let rom_dir = root.join("Roms/3ds/Jeu");
+        let emu_dir = root.join("Emulateurs/azahar");
+        std::fs::create_dir_all(&rom_dir).unwrap();
+        std::fs::create_dir_all(&emu_dir).unwrap();
+        std::fs::write(emu_dir.join("azahar.exe"), b"x").unwrap();
+        let zpath = rom_dir.join("Jeu.zip");
+        {
+            let mut w = zip::ZipWriter::new(std::fs::File::create(&zpath).unwrap());
+            w.start_file("Jeu Decrypted.3ds", zip::write::SimpleFileOptions::default()).unwrap();
+            w.write_all(b"rom").unwrap();
+            w.finish().unwrap();
+        }
+        let emulator: Emulator = serde_json::from_value(serde_json::json!({
+            "id": "azahar", "name": "Azahar", "consoles": ["3ds"], "version": {"cle": "1", "nom": "1"},
+            "romPrep": {"unzip": true, "decrypt": "3ds", "keys": "user/sysdata/aes_keys.txt"},
+            "saves": {"dir": "user/sdmc", "patterns": ["{discid}"]}
+        }))
+        .unwrap();
+        let shared = SharedGame {
+            runtime_rom_id: -1, game: "azahar".into(), runtime_name: "Azahar".into(), data_dir: String::new(), save_dir: String::new(), cache_dir: None,
+            kind: Some(KIND_EMULATOR.into()), rom_dir: Some(rom_dir.clone()), saves_dir: None, save_patterns: vec![],
+        };
+        let zip_arg = zpath.to_string_lossy().into_owned();
+        let st = InstalledGame {
+            ways: Vec::new(),
+            rom_id: 7, name: "Jeu".into(), version: None, version_raw: None, target: crate::platform::Target::Windows, archive_name: String::new(),
+            executable: Some("azahar.exe".into()), pending_candidates: vec![], roms: vec!["Jeu.zip".into()],
+            rom_sources: vec![RomSource { rel_path: "Jeu.zip".into(), size: 1, sha1: Some("ab".into()), md5: None, placed: vec!["Jeu.zip".into()] }],
+            mods_downloaded: vec![], saves: SaveSync::default(),
+            direct_launch: Some(DirectLaunch { exe: "azahar.exe".into(), args: vec!["-f".into(), zip_arg], cwd: None, env: vec![] }),
+            prefer_launcher: false, players: Vec::new(), installed_at: 0, updated_at: 0, pc: None, shared: Some(shared), game_dir: emu_dir.clone(),
+        };
+        let config = root.join("config");
+        std::fs::create_dir_all(&config).unwrap();
+        let healed = heal_rom(&config, &emulator, &st).await.unwrap().expect("ROM préparée");
+        let rom = rom_dir.join("Jeu Decrypted.3ds");
+        assert!(rom.is_file() && !zpath.exists());
+        assert_eq!(healed.roms, vec!["Jeu Decrypted.3ds".to_string()]);
+        assert_eq!(healed.rom_sources[0].placed, vec!["Jeu Decrypted.3ds".to_string()]);
+        assert_eq!(healed.direct_launch.as_ref().unwrap().args, vec!["-f".to_string(), rom.to_string_lossy().into_owned()]);
+        // Déjà préparée : plus rien à faire au lancement suivant.
+        assert!(heal_rom(&config, &emulator, &healed).await.unwrap().is_none());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
 

@@ -421,6 +421,7 @@ export type InstallPhase =
   | "verify"
   | "backup"
   | "extract"
+  | "decrypt"
   | "data"
   | "place"
   | "installer"

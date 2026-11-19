@@ -109,6 +109,12 @@ pub struct Started {
 pub async fn start(state: &AppState, rom_id: i64, save_choice: SaveChoice, cod: Option<CodChoice>, menu: bool, pads: &[PadInfo]) -> AppResult<Started> {
     let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
     let exe = st.executable.clone().ok_or(AppError::NoExecutable)?;
+    // Jeu d'émulateur installé sans que sa ROM soit préparée (zip, 3DS) : préparée maintenant.
+    let healed = match state.catalog().emulator_for_install(&st) {
+        Some(e) => crate::install::emulator::heal_rom(&state.config_dir, e, &st).await?,
+        None => None,
+    };
+    let st = healed.unwrap_or(st);
     save_sync::before_play(state, rom_id, save_choice).await?;
     let prepared = prepare_pc(state, &st, cod).await?;
     // « Ouvrir la recomp » : son launcher, sans les arguments qui le passent (`--play`…) ni le

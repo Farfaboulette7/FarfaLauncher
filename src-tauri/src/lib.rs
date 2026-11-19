@@ -20,6 +20,7 @@ mod links;
 mod launch;
 mod logging;
 mod manager;
+mod n3ds;
 mod optimize;
 mod pc;
 mod play;

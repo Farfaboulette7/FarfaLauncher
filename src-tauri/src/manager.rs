@@ -231,6 +231,23 @@ pub struct Emulator {
     /// Consoles pour lesquelles il est l'émulateur conseillé, avec le message.
     #[serde(default)]
     pub advice: Vec<ConsoleAdvice>,
+    /// ROM à préparer avant de la donner à l'émulateur (`decompresser:`, `dechiffrer:`).
+    #[serde(default)]
+    pub rom_prep: Option<RomPrep>,
+}
+
+/// Préparation de la ROM : zip extrait, puis jeu déchiffré (3DS, pour Azahar).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RomPrep {
+    #[serde(default)]
+    pub unzip: bool,
+    /// Format à déchiffrer (`3ds`).
+    #[serde(default)]
+    pub decrypt: Option<String>,
+    /// Fichier des clés, relatif à l'exécutable (posé par `config:`).
+    #[serde(default)]
+    pub keys: Option<String>,
 }
 
 /// Archive de FarfaRomManager extraite dans le dossier de l'émulateur (`dest`, relatif à
@@ -933,6 +950,7 @@ mod tests {
             dialogs: vec![],
             packs: vec![],
             advice: vec![],
+            rom_prep: None,
         }
     }
 

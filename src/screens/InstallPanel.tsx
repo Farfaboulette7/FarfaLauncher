@@ -49,6 +49,7 @@ export const PHASE_LABELS: Record<InstallPhase, string> = {
   verify: "Vérification…",
   backup: "Sauvegarde des saves…",
   extract: "Extraction du jeu",
+  decrypt: "Déchiffrement du jeu",
   data: "Extraction des données du jeu",
   place: "Rangement des fichiers…",
   installer: "Installation",
@@ -1428,11 +1429,12 @@ function repoLabel(url: string): string {
 }
 
 /** Phases dont `done`/`total` sont des octets. */
-const BYTE_PHASES: InstallPhase[] = ["download", "proton", "client", "extract", "data"];
+const BYTE_PHASES: InstallPhase[] = ["download", "proton", "client", "extract", "decrypt", "data"];
 
 /** Explication affichée sous la barre : ce qui se passe, et combien de temps ça prend. */
 const PHASE_HINTS: Partial<Record<InstallPhase, string>> = {
   extract: "Les fichiers du jeu sont décompressés dans son dossier.",
+  decrypt: "Le jeu est déchiffré pour l'émulateur : une minute environ par Go.",
   data: "Les données tirées de votre copie du jeu sont posées à côté de lui : des dizaines de milliers de fichiers, plusieurs minutes pour un gros jeu.",
   build: "Le jeu est construit sur ce PC à partir de votre copie : 10 à 45 minutes selon le processeur.",
   check: "Le launcher vérifie que c'est bien la version du jeu attendue par la recomp.",

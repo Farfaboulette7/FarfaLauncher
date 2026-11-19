@@ -26,7 +26,7 @@ pub fn ports(format: &str) -> usize {
     match format_name(format) {
         "dolphin" | "punes" | "aurora" | "recharged" | "eden" => 4,
         "snes9x" | "duckstation" | "pcsx2" => 2,
-        "mgba" | "ppsspp" | "melonds" => 1,
+        "mgba" | "ppsspp" | "melonds" | "azahar" => 1,
         _ => 0,
     }
 }
@@ -89,6 +89,7 @@ pub fn apply(format: &str, players: &[Option<PlayerPad>], pads: &[PadInfo], exe_
         "mgba" => mgba::apply(&ports, exe_dir),
         "ppsspp" => ppsspp::apply(&ports, exe_dir),
         "melonds" => melonds::apply(&ports, pads, exe_dir),
+        "azahar" => azahar::apply(&ports, exe_dir),
         "snes9x" => snes9x::apply(&ports, pads, exe_dir),
         "duckstation" => duckstation::apply(&ports, pads, exe_dir),
         "pcsx2" => pcsx2::apply(&ports, pads, exe_dir),
@@ -628,6 +629,72 @@ mod pcsx2 {
                 }
             }
         }
+        write(&path, &before, &text)
+    }
+}
+
+/// Azahar (3DS) : `user/config/qt-config.ini` à côté de l'exécutable (mode portable), profil
+/// de manettes en cours (`[Controls] profiles\N\…`), comme son association automatique.
+///
+/// Azahar lit les manettes avec l'API « GameController » de SDL2 : les boutons y portent le
+/// même numéro sur toutes les manettes. La 3DS n'a qu'un joueur : le profil écoute toutes les
+/// manettes (`maptype:all`), ce qui évite de dépendre du GUID, que SDL2 (Azahar) et SDL3
+/// (le launcher) n'écrivent pas toujours pareil. A et B à leur place sur la manette (A à
+/// droite), comme sur la console.
+mod azahar {
+    use super::*;
+
+    const ALL: &str = "engine:sdl,api:controller,maptype:all";
+
+    pub fn entries() -> Vec<(&'static str, String)> {
+        let button = |n: u8| format!("\"{ALL},button:{n}\"");
+        let trigger = |n: u8| format!("\"{ALL},axis:{n},direction:+,threshold:0.500000\"");
+        let stick = |x: u8, y: u8| format!("\"{ALL},axis_x:{x},axis_y:{y},deadzone:0.100000\"");
+        // Numéros SDL2 : A 0, B 1, X 2, Y 3, Back 4, Guide 5, Start 6, LB 9, RB 10, croix 11 à 14.
+        vec![
+            ("button_a", button(1)),
+            ("button_b", button(0)),
+            ("button_x", button(3)),
+            ("button_y", button(2)),
+            ("button_up", button(11)),
+            ("button_down", button(12)),
+            ("button_left", button(13)),
+            ("button_right", button(14)),
+            ("button_l", button(9)),
+            ("button_r", button(10)),
+            ("button_start", button(6)),
+            ("button_select", button(4)),
+            ("button_zl", trigger(4)),
+            ("button_zr", trigger(5)),
+            ("button_home", button(5)),
+            ("circle_pad", stick(0, 1)),
+            ("c_stick", stick(2, 3)),
+        ]
+    }
+
+    pub fn apply(ports: &[Option<PadInfo>], exe_dir: &Path) -> Result<(), String> {
+        if ports.first().cloned().flatten().is_none() {
+            return Ok(()); // joueur 1 sans manette : le clavier d'Azahar reste
+        }
+        let path = path_for("{exedir}/user/config/qt-config.ini", "{exedir}/user/config/qt-config.ini", exe_dir)?;
+        let before = read(&path);
+        let mut text = before.clone();
+        let index = ini_value(&text, "Controls", "profile").and_then(|v| v.parse::<usize>().ok()).unwrap_or(0) + 1;
+        let prefix = format!("profiles\\{index}\\");
+        // Déjà sur une manette (posée par le launcher ou réglée dans Azahar) : rien ne change.
+        if ini_value(&text, "Controls", &format!("{prefix}button_a")).is_some_and(|v| v.contains("engine:sdl")) {
+            return Ok(());
+        }
+        for (key, value) in entries() {
+            text = set_ini(&text, &format!("Controls.{prefix}{key}\\default"), "false");
+            text = set_ini(&text, &format!("Controls.{prefix}{key}"), &value);
+        }
+        text = set_ini(&text, &format!("Controls.{prefix}input_maptype\\default"), "false");
+        text = set_ini(&text, &format!("Controls.{prefix}input_maptype"), "0");
+        if ini_value(&text, "Controls", "profiles\\size").and_then(|v| v.parse::<usize>().ok()).unwrap_or(0) < index {
+            text = set_ini(&text, "Controls.profiles\\size", &index.to_string());
+        }
+        tracing::info!("manettes : Azahar sur toutes les manettes (profil {index})");
         write(&path, &before, &text)
     }
 }
@@ -1254,6 +1321,36 @@ mod tests {
         let rt = (0xFFFF | 0x10000 | (5 << 24) | (2 << 20)).to_string();
         assert_eq!(ini_value(&toml, "Instance0.Joystick", "HK_SwapScreens"), Some(rt.as_str()));
         assert_eq!(ini_value(&toml, "Instance0.Joystick", "HK_SwapScreenEmphasis"), Some(rt.as_str()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn azahar_profile() {
+        assert_eq!(ports("azahar"), 1);
+        let dir = std::env::temp_dir().join(format!("farfa-azahar-{}", std::process::id()));
+        let cfg = dir.join("user").join("config");
+        std::fs::create_dir_all(&cfg).unwrap();
+        // Fichier tel qu'Azahar l'écrit au premier lancement : profil clavier.
+        std::fs::write(
+            cfg.join("qt-config.ini"),
+            "[Controls]\r\nprofile=0\r\nprofiles\\1\\button_a\\default=true\r\nprofiles\\1\\button_a=\"code:65,engine:keyboard\"\r\nprofiles\\size=1\r\n\r\n[UI]\r\nPaths\\language=fr\r\n",
+        )
+        .unwrap();
+        let x = pad(0, "Xbox", "g", "x0", Some(0));
+        apply("azahar", &[None], &[x.clone()], &dir).unwrap();
+        let ini = read(&cfg.join("qt-config.ini"));
+        assert_eq!(ini_value(&ini, "Controls", "profiles\\1\\button_a"), Some("\"engine:sdl,api:controller,maptype:all,button:1\""));
+        assert_eq!(ini_value(&ini, "Controls", "profiles\\1\\button_a\\default"), Some("false"));
+        assert_eq!(ini_value(&ini, "Controls", "profiles\\1\\button_zr"), Some("\"engine:sdl,api:controller,maptype:all,axis:5,direction:+,threshold:0.500000\""));
+        assert_eq!(ini_value(&ini, "Controls", "profiles\\1\\input_maptype"), Some("0"));
+        assert_eq!(ini_value(&ini, "Controls", "profiles\\size"), Some("1"));
+        assert_eq!(ini_value(&ini, "UI", "Paths\\language"), Some("fr"));
+        assert!(ini.contains("\r\n"), "fins de ligne gardées");
+        // Réglé ensuite dans Azahar : laissé tel quel.
+        let tweaked = set_ini(&ini, "Controls.profiles\\1\\button_a", "\"engine:sdl,api:controller,maptype:all,button:0\"");
+        std::fs::write(cfg.join("qt-config.ini"), &tweaked).unwrap();
+        apply("azahar", &[None], &[x], &dir).unwrap();
+        assert_eq!(read(&cfg.join("qt-config.ini")), tweaked);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

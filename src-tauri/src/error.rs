@@ -53,6 +53,12 @@ pub enum AppError {
     NotEnoughSpace { needed: String, available: String },
     #[error("L'archive du jeu est illisible ou endommagée.")]
     Extract,
+    #[error("Ce jeu 3DS doit être déchiffré, mais les clés de la console manquent sur le serveur. Prévenez l'administrateur.")]
+    KeysMissing,
+    #[error("Ce jeu 3DS est abîmé sur le serveur et ne peut pas être lancé. Prévenez l'administrateur.")]
+    RomDamaged,
+    #[error("Ce jeu 3DS n'a pas pu être déchiffré. Les détails sont dans les logs.")]
+    Decrypt,
     #[error("Aucun exécutable n'a été trouvé dans ce jeu.")]
     NoExecutable,
     #[error("Ce jeu n'est pas disponible pour votre système.")]
@@ -110,6 +116,9 @@ impl AppError {
             AppError::DiskFull => "disk_full",
             AppError::NotEnoughSpace { .. } => "not_enough_space",
             AppError::Extract => "extract",
+            AppError::KeysMissing => "keys_missing",
+            AppError::RomDamaged => "rom_damaged",
+            AppError::Decrypt => "decrypt",
             AppError::NoExecutable => "no_executable",
             AppError::NotAvailable => "not_available",
             AppError::Busy => "busy",
