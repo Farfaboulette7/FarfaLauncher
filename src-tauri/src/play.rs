@@ -111,8 +111,10 @@ pub async fn start(state: &AppState, rom_id: i64, save_choice: SaveChoice, cod: 
     let exe = st.executable.clone().ok_or(AppError::NoExecutable)?;
     save_sync::before_play(state, rom_id, save_choice).await?;
     let prepared = prepare_pc(state, &st, cod).await?;
-    // Jeu déjà relevé derrière le launcher : lancé directement.
-    let open_menu = menu && st.shared.is_some();
+    // « Ouvrir la recomp » : son launcher, sans les arguments qui le passent (`--play`…) ni le
+    // jeu relevé derrière lui.
+    // Un émulateur partagé s'ouvre aussi sans jeu (« Ouvrir l'émulateur »).
+    let open_menu = menu && (st.shared.is_some() || state.catalog().recomp_menu(&st));
     // Émulateur : arguments relus sur le catalogue.
     // Recomp à un seul jeu avec `argument:` : lancée sur sa ROM, sans son menu.
     let refreshed = state
@@ -122,7 +124,8 @@ pub async fn start(state: &AppState, rom_id: i64, save_choice: SaveChoice, cod: 
         .or_else(|| state.catalog().recomp_launch(&st));
     let direct = refreshed.as_ref().or(st.direct_launch.as_ref()).filter(|d| !open_menu && !st.prefer_launcher && st.game_dir.join(rel_to_path(&d.exe)).exists());
     // Recomp ou émulateur : français par défaut, posé avant le lancement.
-    let mut env: Vec<(String, String)> = direct.map(|d| d.env.clone()).unwrap_or_default();
+    // Ses variables (`variable:`) restent posées quand on ouvre le launcher de la recomp.
+    let mut env: Vec<(String, String)> = direct.or(refreshed.as_ref().filter(|_| open_menu)).map(|d| d.env.clone()).unwrap_or_default();
     let mut shader_job: Option<crate::shaders::Job> = None;
     if prepared.is_none() {
         let program = st.game_dir.join(rel_to_path(direct.map(|d| d.exe.as_str()).unwrap_or(&exe)));
@@ -179,7 +182,7 @@ pub async fn start(state: &AppState, rom_id: i64, save_choice: SaveChoice, cod: 
         (Some(p), _) => Launch { exe: p.exe.clone(), args: &p.args, env: &[], cwd: p.cwd.clone(), learn: false, runner: p.runner.as_ref() },
         (None, Some(d)) => Launch { exe: rel_to_path(&d.exe), args: &d.args, env: &env, cwd: d.cwd.as_deref().map(rel_to_path), learn: false, runner: None },
         // Jeu d'un runtime : son lancement est connu, le menu de la recomp n'a rien à apprendre.
-        (None, None) => Launch { exe: rel_to_path(&exe), args: &[], env: &env, cwd: None, learn: st.shared.is_none(), runner: None },
+        (None, None) => Launch { exe: rel_to_path(&exe), args: &[], env: &env, cwd: None, learn: st.shared.is_none() && !open_menu, runner: None },
     };
     let running = launch::spawn(&st.game_dir, spec)?;
     Ok(Started { running, started: OffsetDateTime::now_utc(), shader_job, game: st })

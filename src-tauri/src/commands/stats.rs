@@ -21,6 +21,13 @@ pub async fn player_stats(state: State<'_, AppState>, id: Option<i64>) -> AppRes
     crate::stats::profile(&state, id).await
 }
 
+/// « Rafraîchir » : les sessions RomM qui manquent au gestionnaire partent tout de suite.
+#[tauri::command]
+pub async fn stats_sync(state: State<'_, AppState>) -> AppResult<()> {
+    crate::stats::sync(&state).await;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn stats_ranking(state: State<'_, AppState>) -> AppResult<Option<Value>> {
     crate::stats::ranking(&state).await

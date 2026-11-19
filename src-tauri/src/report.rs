@@ -69,7 +69,7 @@ fn file_name(p: &Path) -> String {
 }
 
 /// Dossier de l'émulateur ou de l'exécutable du jeu.
-fn exe_dir(catalog: &Catalog, st: &InstalledGame) -> PathBuf {
+pub fn exe_dir(catalog: &Catalog, st: &InstalledGame) -> PathBuf {
     let exe = st.executable.clone().unwrap_or_default();
     match catalog.emulator_for_install(st) {
         Some(e) => e.data_dir(&st.game_dir, &exe),

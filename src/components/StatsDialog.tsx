@@ -260,9 +260,9 @@ export function StatsDialog({
   );
 }
 
-/** Classement des amis sur un jeu (fiche du jeu). Rien si personne n'y a joué. */
-export function GameRanking({ romId, refreshKey, onOpenPlayer }: { romId: number; refreshKey?: unknown; onOpenPlayer?: (id: number) => void }) {
-  const [rows, setRows] = useState<RankingRow[] | null>(null);
+/** Classement des amis sur un jeu (onglet Communautaire). `empty` : message si personne n'y a joué (sinon rien). */
+export function GameRanking({ romId, refreshKey, onOpenPlayer, empty }: { romId: number; refreshKey?: unknown; onOpenPlayer?: (id: number) => void; empty?: string }) {
+  const [rows, setRows] = useState<RankingRow[] | null | undefined>(undefined);
   useEffect(() => {
     let alive = true;
     backend
@@ -273,12 +273,13 @@ export function GameRanking({ romId, refreshKey, onOpenPlayer }: { romId: number
       alive = false;
     };
   }, [romId, refreshKey]);
-  if (!rows || rows.length === 0) return null;
+  if (rows === undefined) return empty ? <p className="n-hint">Chargement…</p> : null;
+  if (!rows || rows.length === 0) return empty ? <p className="n-hint">{empty}</p> : null;
   return (
     <section className="stats-game-ranking">
-      <h3 className="n-section-title">Classement des amis</h3>
+      <h3 className="n-section-title">Classement</h3>
       <ol className="stats-ranking">
-        {rows.slice(0, 5).map((r, i) => (
+        {rows.slice(0, 10).map((r, i) => (
           <li key={r.id}>
             <span className="stats-rank">{i + 1}</span>
             <PlayerAvatar player={r} />

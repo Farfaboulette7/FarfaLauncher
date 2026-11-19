@@ -1,0 +1,24 @@
+/* Onglet « Communautaire » de la page d'un jeu. */
+.comm, .comm-reviews, .comm-reports { display: flex; flex-direction: column; gap: 14px; max-width: 1140px; }
+.comm-reviews > p, .comm-reports > p { margin: 0; }
+.comm-average { font-size: var(--fs-md); }
+.comm-form { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: var(--nier-line) solid var(--nier-low); }
+.comm-form > p { margin: 0; }
+.comm-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.comm-pick-label { min-width: 90px; font-size: var(--fs-sm); letter-spacing: var(--nier-tracking-wide); }
+.comm-pick-values { flex-wrap: wrap; }
+.comm-pick-values .n-btn { min-width: 38px; padding-left: 8px; padding-right: 8px; }
+.comm-form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
+.comm-list { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.comm-card { display: flex; flex-direction: column; gap: 6px; padding: 10px 14px; border: var(--nier-line) solid var(--nier-low); }
+.comm-card p { margin: 0; }
+.comm-who { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.comm-who .friend-avatar { width: 30px; height: 30px; flex: none; }
+.comm-name { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.comm-date { margin-left: auto; white-space: nowrap; }
+.comm-title { font-weight: 600; }
+.comm-scores { font-size: var(--fs-sm); letter-spacing: var(--nier-tracking-wide); color: var(--nier-low); }
+.comm-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
+.comm-quote { padding-left: 10px; border-left: 3px solid var(--nier-low); }
+.comm-fixed { font-weight: 600; }
+.comm-changes { margin: 0; padding-left: 20px; font-size: var(--fs-sm); line-height: 1.5; }

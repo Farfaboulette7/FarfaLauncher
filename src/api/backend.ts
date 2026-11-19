@@ -227,6 +227,36 @@ export interface EmulatorOffer {
 }
 
 /** Une recomp proposée pour un jeu qui en a plusieurs. */
+/** Note RomM d'un joueur sur un jeu ; un avis du launcher a le titre « Avis » et ses notes en étiquettes. */
+export interface RommNote {
+  id: number;
+  title: string;
+  content: string;
+  is_public: boolean;
+  tags: string[] | null;
+  created_at: string;
+  updated_at: string;
+  user_id: number;
+  username: string;
+  user_avatar_path?: string;
+}
+
+/** Signalement d'un jeu vu par tous les joueurs (onglet Communautaire). */
+export interface GameReport {
+  id: string;
+  at: number | null;
+  status: string;
+  description: string | null;
+  reponse: string | null;
+  modifications: string[];
+  corrigeDans: string | null;
+  runner: string | null;
+  userId: number | null;
+  username: string | null;
+  avatar: boolean | null;
+  mine: boolean;
+}
+
 export interface RecompOffer {
   id: string;
   name: string;
@@ -708,7 +738,11 @@ export const backend = {
   imagePath: (url: string) => invoke<string>("image_path", { url }),
   manualPath: (romId: number, manual: Manual) => invoke<string>("manual_path", { romId, manual }),
   gamePlaytime: (romId: number) => invoke<number | null>("game_playtime", { romId }),
-  gameChangelog: (romId: number, console: string) => invoke<Changelog | null>("game_changelog", { romId, console }),
+  /** `kind`/`id` : le mode choisi sur la page du jeu (recomp ou émulateur), même pas installé. */
+  gameChangelog: (romId: number, console: string, kind: InstallMode | null = null, id: string | null = null) =>
+    invoke<Changelog | null>("game_changelog", { romId, console, kind, id }),
+  /** La recomp installée a son propre launcher (« Ouvrir la recomp »). */
+  recompMenu: (romId: number) => invoke<boolean>("recomp_menu", { romId }),
   clearCache: () => invoke<void>("clear_cache"),
   favoritesList: () => invoke<FavoritesInfo>("favorites_list"),
   soundPaths: () => invoke<Record<string, string>>("sound_paths"),
@@ -746,6 +780,8 @@ export const backend = {
   ingameResume: () => invoke<void>("ingame_resume"),
   quitGame: (romId: number) => invoke<void>("quit_game", { romId }),
   hasModsFolder: (romId: number) => invoke<boolean>("has_mods_folder", { romId }),
+  /** Dossier des mods du jeu installé, d'après la documentation de sa recomp ou de son émulateur. */
+  modsFolder: (romId: number) => invoke<string | null>("mods_folder", { romId }),
   openModsFolder: (romId: number) => invoke<void>("open_mods_folder", { romId }),
   setInstallDir: (path: string | null) => invoke<string>("set_install_dir", { path }),
   /** `dest` : dossier qui contiendra celui du jeu. */
@@ -776,6 +812,13 @@ export const backend = {
   playerStats: (id: number | null) => invoke<PlayerStats | null>("player_stats", { id }),
   statsRanking: () => invoke<RankingRow[] | null>("stats_ranking"),
   gameRanking: (romId: number) => invoke<RankingRow[] | null>("game_ranking", { romId }),
+  /** Avis des joueurs sur un jeu (notes RomM publiques) et l'ID du joueur. */
+  gameReviews: (romId: number) => invoke<{ me: number; notes: RommNote[] }>("game_reviews", { romId }),
+  saveGameReview: (romId: number, noteId: number | null, content: string, rating: number | null, difficulty: number | null, completion: number | null) =>
+    invoke<RommNote>("save_game_review", { romId, noteId, content, rating, difficulty, completion }),
+  deleteGameReview: (romId: number, noteId: number) => invoke<void>("delete_game_review", { romId, noteId }),
+  /** Signalements du jeu, tous joueurs confondus (`null` : gestionnaire trop ancien). */
+  gameReports: (romId: number) => invoke<GameReport[] | null>("game_reports", { romId }),
   setStatsHidden: (hidden: boolean) => invoke<boolean>("set_stats_hidden", { hidden }),
   /** Jeu demandé par un raccourci Steam (`--jouer <id>`), une seule fois. */
   takePlayRequest: () => invoke<number | null>("take_play_request"),
@@ -823,6 +866,8 @@ export const backend = {
   restoreSaveVersion: (romId: number, version: string) => invoke<void>("restore_save_version", { romId, version }),
   runningGames: () => invoke<number[]>("running_games"),
   flushPlaySessions: () => invoke<number>("flush_play_sessions"),
+  /** Envoie au gestionnaire les sessions de jeu qui lui manquent (statistiques). */
+  statsSync: () => invoke<void>("stats_sync"),
   /** Envoie les sauvegardes gardées hors ligne ; rend le nombre encore en attente. */
   flushPendingSaves: () => invoke<number>("flush_pending_saves"),
   downloadedMods: (romId: number) => invoke<string[]>("downloaded_mods", { romId }),

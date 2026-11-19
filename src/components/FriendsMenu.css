@@ -19,7 +19,7 @@
   font-size: var(--fs-sm);
   color: var(--nier-low);
   transform-origin: top right;
-  animation: friends-panel-in var(--nier-normal, 180ms) var(--nier-ease, ease-out) both;
+  animation: friends-panel-in 280ms var(--nier-ease, ease-out) both;
 }
 .friends-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .friends-title { letter-spacing: var(--nier-tracking-wide); text-transform: uppercase; }
@@ -55,10 +55,8 @@
 .friends-check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
 .friends-check input { accent-color: var(--nier-low); }
 .friends-hint { margin: 0; font-size: var(--fs-xs); }
+/* Même ouverture que le panneau Musique, gardée quand le système réduit les animations. */
 @keyframes friends-panel-in {
-  from { opacity: 0; transform: translateY(-6px) scaleY(0.92); }
-  to { opacity: 1; transform: none; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .friends-panel { animation: none; }
+  from { opacity: 0; transform: translateY(-12px) scale(0.96, 0.6); clip-path: inset(0 0 100% 0); }
+  to { opacity: 1; transform: none; clip-path: inset(0 0 0 0); }
 }

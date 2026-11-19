@@ -7,6 +7,7 @@ pub mod library;
 pub mod session;
 pub mod sounds;
 pub mod stats;
+pub mod community;
 pub mod steam;
 pub mod system;
 pub mod update;

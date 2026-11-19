@@ -21,7 +21,9 @@ const BATCH: usize = 1000;
 #[derive(Deserialize)]
 struct RommSession {
     id: i64,
-    rom_id: i64,
+    /// `null` pour un jeu supprimé de RomM (ou remplacé) : session ignorée. Lu comme un nombre
+    /// obligatoire, une seule de ces sessions empêchait tout envoi (compte 1, 2026-11-19).
+    rom_id: Option<i64>,
     start_time: String,
     duration_ms: i64,
 }
@@ -54,7 +56,7 @@ fn to_upload(sessions: Vec<RommSession>, last_id: i64) -> Vec<Upload> {
         .filter(|s| s.id > last_id && s.duration_ms > 0)
         .filter_map(|s| {
             let start = parse_utc(&s.start_time)?;
-            Some(Upload { id: s.id, rom_id: s.rom_id, start, duration_ms: s.duration_ms })
+            Some(Upload { id: s.id, rom_id: s.rom_id?, start, duration_ms: s.duration_ms })
         })
         .collect();
     out.sort_by_key(|u| u.id);
@@ -158,7 +160,8 @@ mod tests {
               {"id":10,"rom_id":42,"start_time":"2026-11-16T20:00:00Z","duration_ms":3600000},
               {"id":11,"rom_id":42,"start_time":"pas une date","duration_ms":1000},
               {"id":14,"rom_id":42,"start_time":"2026-11-17T10:47:07","duration_ms":2366000},
-              {"id":13,"rom_id":42,"start_time":"2026-11-17T11:00:00Z","duration_ms":0}
+              {"id":13,"rom_id":42,"start_time":"2026-11-17T11:00:00Z","duration_ms":0},
+              {"id":15,"rom_id":null,"start_time":"2026-11-17T12:00:00Z","duration_ms":60000}
             ]"#,
         )
         .unwrap();

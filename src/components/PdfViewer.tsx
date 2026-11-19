@@ -16,7 +16,11 @@ const MODE_KEY = "farfa.pdf.mode";
 /** Durée de l'animation de page tournée (ms), aussi dans PdfViewer.css. */
 const FLIP_MS = 700;
 
-export function PdfViewer({ path }: { path: string }) {
+/**
+ * Lecteur de livret. `startFull` : ouvert directement en plein écran (bouton « Lire le livret »
+ * de l'onglet Informations) ; quitter le plein écran appelle alors `onExitFull` (il se ferme).
+ */
+export function PdfViewer({ path, startFull = false, onExitFull }: { path: string; startFull?: boolean; onExitFull?: () => void }) {
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
   const [error, setError] = useState(false);
   const [zoom, setZoom] = useState(1);
@@ -32,11 +36,13 @@ export function PdfViewer({ path }: { path: string }) {
   const area = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   /** Plein écran : le même lecteur (page en cours, animation) occupe la fenêtre. */
-  const [full, setFull] = useState(false);
+  const [full, setFull] = useState(startFull);
+  const exitFull = useRef(() => setFull(false));
+  exitFull.current = onExitFull ?? (() => setFull(false));
 
   useEffect(() => {
     if (!full) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setFull(false);
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && exitFull.current();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [full]);
@@ -142,13 +148,15 @@ export function PdfViewer({ path }: { path: string }) {
           className="gd-zoom pdf-fullscreen"
           title={full ? "Quitter le plein écran" : "Agrandir le livret"}
           aria-label={full ? "Quitter le plein écran" : "Agrandir le livret"}
-          onClick={() => setFull((f) => !f)}
+          onClick={() => (full ? exitFull.current() : setFull(true))}
         >
           <svg viewBox="0 0 16 16" aria-hidden="true">
             {full ? <path d="M6 1v5H1M15 6h-5V1M10 15v-5h5M1 10h5v5" /> : <path d="M1 6V1h5M10 1h5v5M15 10v5h-5M6 15H1v-5" />}
           </svg>
         </button>
-        <div className={`pdf-area pdf-area--${mode}`} ref={area}>
+        {/* Livre à 100 % : il tient dans la zone, pas de défilement. Sinon la page qui tourne
+            (3D) dépasse un instant, des barres apparaissent et tout le livre change de taille. */}
+        <div className={`pdf-area pdf-area--${mode}${mode === "book" && zoom === 1 ? " is-fit" : ""}`} ref={area}>
           {!doc && (
             <p>
               <span className="n-spinner" /> Chargement du livret…

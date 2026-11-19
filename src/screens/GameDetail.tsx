@@ -1,7 +1,8 @@
-import { CSSProperties, lazy, Suspense, useEffect, useRef, useState } from "react";
-import { backend, Changelog, formatPlaytime, Game, Manual, Platform, Target } from "../api/backend";
+import { CSSProperties, lazy, ReactNode, Suspense, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { backend, formatPlaytime, Game, Manual, Platform, Target } from "../api/backend";
 import { InstallsState } from "../hooks/useInstalls";
-import { InstallFacts, InstallPanel } from "./InstallPanel";
+import { InstallFacts, InstallPanel, useCurrentMode } from "./InstallPanel";
 import { ControlsTab } from "./ControlsTab";
 import { useCachedImage } from "../hooks/useCachedImage";
 import { BoxArt } from "../components/BoxArt";
@@ -9,15 +10,15 @@ import { Marquee } from "../components/Marquee";
 import { FullscreenButton } from "../components/FullscreenButton";
 import { MusicMenu } from "../components/MusicMenu";
 import { ReportsInbox } from "../components/ReportsInbox";
-import { GameRanking } from "../components/StatsDialog";
-import { noteLines } from "../notes";
+import { CommunityTab } from "../components/CommunityTab";
+import { SubTabs } from "../components/SubTabs";
 import { useReveal } from "../reveal";
 import "./GameDetail.css";
 
 // pdf.js est lourd : chargé seulement à l'ouverture d'un livret.
 const PdfViewer = lazy(() => import("../components/PdfViewer").then((m) => ({ default: m.PdfViewer })));
 
-type Tab = "infos" | "nouveautes" | "medias" | "livret" | "controles";
+type Tab = "infos" | "medias" | "controles" | "communautaire";
 
 interface Props {
   game: Game;
@@ -33,23 +34,17 @@ interface Props {
   /** Lancer le jeu dès qu'il est prêt (raccourci Steam). */
   autoPlay?: boolean;
   onAutoPlayed?: () => void;
+  /** Boutons en haut à droite de la bibliothèque (téléchargements, amis, messages, musique,
+   * rafraîchir, plein écran, paramètres) : les mêmes ici. */
+  actions?: ReactNode;
+  /** Change à chaque « Rafraîchir » : l'onglet ouvert se relit. */
+  refreshKey?: number;
 }
 
-export function GameDetail({ game, platform, target, installs, favorite, onToggleFavorite, favoriteError, onBack, onError, autoPlay, onAutoPlayed }: Props) {
+export function GameDetail({ game, platform, target, installs, favorite, onToggleFavorite, favoriteError, onBack, onError, autoPlay, onAutoPlayed, actions, refreshKey = 0 }: Props) {
   const [tab, setTab] = useState<Tab>("infos");
-  // Nouveautés de la recomp ou de l'émulateur : l'onglet n'apparaît que s'il y en a.
-  const [changelog, setChangelog] = useState<Changelog | null>(null);
-  useEffect(() => {
-    let alive = true;
-    setChangelog(null);
-    backend
-      .gameChangelog(game.id, game.console)
-      .then((c) => alive && setChangelog(c))
-      .catch(() => undefined);
-    return () => {
-      alive = false;
-    };
-  }, [game.id, game.console]);
+  /** Mode dans lequel le jeu se lance (étiquette à côté de la console). */
+  const current = useCurrentMode(game, installs);
   const [coverKind, setCoverKind] = useState<"box" | "flat" | null>(null);
   const [zoom, setZoom] = useState(false);
   const root = useRef<HTMLDivElement>(null);
@@ -72,10 +67,9 @@ export function GameDetail({ game, platform, target, installs, favorite, onToggl
 
   const tabs: { id: Tab; label: string; count?: number }[] = [
     { id: "infos", label: "Informations" },
-    ...(changelog ? [{ id: "nouveautes" as const, label: "Nouveautés" }] : []),
-    { id: "medias", label: "Médias", count: game.screenshotUrls.length },
-    { id: "livret", label: "Livret", count: game.manuals.length },
+    { id: "medias", label: "Médias", count: game.screenshotUrls.length + game.manuals.length },
     { id: "controles", label: "Contrôles" },
+    { id: "communautaire", label: "Communauté" },
   ];
 
   return (
@@ -87,12 +81,25 @@ export function GameDetail({ game, platform, target, installs, favorite, onToggl
         <div className="gd-title-row">
           <div className="gd-title-block">
             <Marquee as="h1" className="n-title gd-title" text={game.name} />
-            {platform && <p className="n-subtitle gd-platform">{game.variant ? `${platform.name} · ${game.variant}` : platform.name}</p>}
+            {platform && (
+              <p className="n-subtitle gd-platform">
+                {game.variant ? `${platform.name} · ${game.variant}` : platform.name}
+                {current && (
+                  <span className="gd-mode-tag" title="Mode dans lequel le jeu se lance (Informations › Installation)">
+                    {current.mode === "recomp" ? "Recomp" : "Émulation"} · {current.name}
+                  </span>
+                )}
+              </p>
+            )}
           </div>
           <div className="gd-header-actions">
-            <ReportsInbox offline={false} />
-            <MusicMenu />
-            <FullscreenButton />
+            {actions ?? (
+              <>
+                <ReportsInbox offline={false} />
+                <MusicMenu />
+                <FullscreenButton />
+              </>
+            )}
             <button
               className="n-btn n-btn--sm gd-fav"
               aria-pressed={favorite}
@@ -146,15 +153,14 @@ export function GameDetail({ game, platform, target, installs, favorite, onToggl
           </nav>
           <div
             className="gd-content n-appear"
-            key={tab}
+            key={`${tab}-${refreshKey}`}
             ref={content}
             style={{ "--appear-delay": contentDelay.current } as CSSProperties}
           >
             {tab === "infos" && <InfoTab game={game} target={target} installs={installs} onError={onError} />}
-            {tab === "nouveautes" && changelog && <ChangelogSection log={changelog} />}
-            {tab === "medias" && <MediaTab game={game} />}
-            {tab === "livret" && <ManualTab game={game} onError={onError} />}
+            {tab === "medias" && <MediaTab game={game} onError={onError} />}
             {tab === "controles" && <ControlsTab game={game} installs={installs} onError={onError} />}
+            {tab === "communautaire" && <CommunityTab romId={game.id} refreshKey={installs.lastSession.get(game.id)} />}
           </div>
         </section>
       </div>
@@ -182,6 +188,7 @@ function BoxZoom({ game, kind, onClose }: { game: Game; kind: "box" | "flat"; on
 
 function InfoTab({ game, target, installs, onError }: { game: Game; target: Target | null; installs: InstallsState; onError: (e: unknown) => Promise<string> }) {
   const refreshKey = installs.lastSession.get(game.id);
+  const [manualOpen, setManualOpen] = useState(false);
   const [playtime, setPlaytime] = useState<number | null | undefined>(undefined);
 
   useEffect(() => {
@@ -226,6 +233,16 @@ function InfoTab({ game, target, installs, onError }: { game: Game; target: Targ
             <dd>
               {playtime === undefined ? <span className="n-spinner" /> : playtime === null ? "indisponible" : playtime === 0 ? "jamais joué" : formatPlaytime(playtime)}
             </dd>
+            {game.manuals.length > 0 && (
+              <>
+                <dt>Livret</dt>
+                <dd>
+                  <button className="n-link" onClick={() => setManualOpen(true)}>
+                    Ouvrir le livret
+                  </button>
+                </dd>
+              </>
+            )}
           </dl>
         </section>
         <section>
@@ -235,49 +252,74 @@ function InfoTab({ game, target, installs, onError }: { game: Game; target: Targ
           </dl>
         </section>
       </div>
-      <GameRanking romId={game.id} refreshKey={refreshKey} />
+      {manualOpen && createPortal(<ManualFull game={game} onError={onError} onClose={() => setManualOpen(false)} />, document.body)}
     </div>
   );
 }
 
-/** Onglet Nouveautés : notes de la dernière version de la recomp ou de l'émulateur du jeu. */
-function ChangelogSection({ log }: { log: Changelog }) {
-  const lines = noteLines(log.notes);
-  const shown = lines;
-  const date = log.date ? new Date(log.date).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" }) : null;
+/** Livret ouvert directement en plein écran (bouton de l'onglet Informations). */
+function ManualFull({ game, onError, onClose }: { game: Game; onError: (e: unknown) => Promise<string>; onClose: () => void }) {
+  const manual = game.manuals[0];
+  const [path, setPath] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    backend
+      .manualPath(game.id, manual)
+      .then((p) => alive && setPath(p))
+      .catch(async (e) => {
+        const msg = await onError(e);
+        if (alive) setError(msg);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [game.id, manual, onError]);
+  useEffect(() => {
+    if (path) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [path, onClose]);
+  if (path)
+    return (
+      <Suspense fallback={<div className="lightbox"><span className="n-spinner" /></div>}>
+        <PdfViewer path={path} startFull onExitFull={onClose} />
+      </Suspense>
+    );
   return (
-    <section className="gd-changelog">
-      <h3 className="n-section-title">
-        Nouveautés · {log.kind} {log.name}
-      </h3>
-      <p className="n-hint gd-changelog-version">
-        Version {log.version}
-        {date && ` · ${date}`}
-      </p>
-      {lines.length === 0 ? (
-        <p className="n-hint">Pas de notes pour cette version.</p>
-      ) : (
-        <div className="gd-changelog-notes">
-          {shown.map((l, i) =>
-            l.kind === "title" ? (
-              <p key={i} className="gd-changelog-title">
-                {l.text}
-              </p>
-            ) : l.kind === "item" ? (
-              <p key={i} className="gd-changelog-item">
-                {l.text}
-              </p>
-            ) : (
-              <p key={i}>{l.text}</p>
-            ),
-          )}
-        </div>
+    <div className="lightbox" onClick={onClose} role="dialog" aria-modal="true">
+      {error ? <p className="n-alert">{error}</p> : (
+        <p>
+          <span className="n-spinner" /> Téléchargement du livret…
+        </p>
       )}
-    </section>
+    </div>
   );
 }
 
-function MediaTab({ game }: { game: Game }) {
+type MediaSub = "captures" | "livret";
+
+/** Médias : captures et résumé, puis le livret, en sous-onglets. */
+function MediaTab({ game, onError }: { game: Game; onError: (e: unknown) => Promise<string> }) {
+  const [sub, setSub] = useState<MediaSub>("captures");
+  return (
+    <>
+      <SubTabs
+        tabs={[
+          { id: "captures" as const, label: "Captures", count: game.screenshotUrls.length },
+          { id: "livret" as const, label: "Livret", count: game.manuals.length },
+        ]}
+        value={sub}
+        onChange={setSub}
+        label="Médias"
+      />
+      {sub === "captures" ? <Screenshots game={game} /> : <ManualTab game={game} onError={onError} />}
+    </>
+  );
+}
+
+function Screenshots({ game }: { game: Game }) {
   const [open, setOpen] = useState<number | null>(null);
   return (
     <>

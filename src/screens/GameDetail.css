@@ -117,8 +117,7 @@
 .gd-emulator-off { opacity: 0.7; }
 /* Informations › Installation : choix de la recomp ou de l'émulateur, et bascule du jeu installé. */
 .gd-facts dd > .gd-emulators-list + .n-alert, .gd-facts dd > .gd-emulators-list ~ .n-notice { margin: 6px 0 0; }
-.gd-facts dd > .gd-way-line, .gd-facts dd > .gd-advice-line { margin: 4px 0 0; }
-.gd-way-action { font-size: inherit; }
+.gd-facts dd > .gd-advice-line { margin: 4px 0 0; }
 /* « Conseillé » : une petite étiquette, pas plus. */
 .gd-advice {
   display: inline-block;
@@ -140,6 +139,20 @@
 .gd-title-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; min-width: 0; }
 .gd-title-block { min-width: 0; }
 .gd-platform { margin: 0; }
+/* Mode choisi (recomp ou émulation) à côté de la console : une petite étiquette. */
+.gd-mode-tag {
+  display: inline-block;
+  margin-left: 10px;
+  padding: 0 6px;
+  border: 1px solid currentColor;
+  font-size: 0.78em;
+  letter-spacing: 0.04em;
+  vertical-align: 1px;
+  white-space: nowrap;
+  opacity: 0.85;
+}
+/* « Jeu en mode recomp : … » : un nom long passe à la ligne, il reste lisible en entier. */
+.gd-actions-title { overflow-wrap: anywhere; }
 .gd-header-actions { display: flex; gap: 10px; flex: none; }
 .gd-fav { flex: none; }
 .gd-fav::before { display: none; }
@@ -204,7 +217,8 @@
   mask: none;
 }
 .gd-summary {
-  margin: 0;
+  /* Un peu d'air avant les captures (la règle « + * » est écrasée par le margin des listes). */
+  margin: 0 0 24px;
   max-width: 75ch;
   line-height: 1.6;
   white-space: pre-line;
@@ -426,6 +440,10 @@
 .gd-changelog-item { position: relative; padding-left: 18px; }
 .gd-changelog-item::before { content: ""; position: absolute; left: 4px; top: 0.6em; width: 6px; height: 6px; background: var(--nier-low); }
 .gd-changelog > .n-link { align-self: flex-start; margin-left: 12px; }
+/* Nouveautés en fenêtre (Informations › Installation). */
+.dialog.n-panel.gd-changelog-dialog { width: min(760px, 100%); }
+.gd-changelog-dialog .gd-changelog { margin-top: 0; }
+.gd-changelog-dialog .dialog-actions { align-items: center; }
 
 /* Réglages optimisés posés au lancement (onglet Infos). */
 .gd-optimized {
@@ -451,3 +469,6 @@
   border-bottom: 1px solid var(--nier-low-trans);
 }
 .save-history-when { font-weight: 600; }
+
+/* Sous-onglets (Médias, Communautaire). */
+.gd-subtabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }

@@ -8,6 +8,7 @@ import { launcherNotes, NoteLine } from "../notes";
 import { Dialog } from "./Dialog";
 import { AllRequests, MyRequests, useGameRequests } from "./GameRequests";
 import "./ReportsInbox.css";
+import { REFRESH_EVENT } from "../refresh";
 
 /** Évènement envoyé par l'interface après l'envoi d'un rapport (la liste se recharge). */
 export const REPORT_SENT_EVENT = "farfa-report-sent";
@@ -72,7 +73,7 @@ function Notes({ lines }: { lines: NoteLine[] }) {
   );
 }
 
-function StatusChip({ status }: { status: string }) {
+export function StatusChip({ status }: { status: string }) {
   const st = STATUS[status] ?? { label: status, tone: "wait" as const };
   return <span className={`inbox-status is-${st.tone}`}>{st.label}</span>;
 }
@@ -306,10 +307,12 @@ export function ReportsInbox({ offline }: { offline: boolean }) {
     load();
     const timer = window.setInterval(load, 10 * 60 * 1000);
     window.addEventListener(REPORT_SENT_EVENT, load);
+    window.addEventListener(REFRESH_EVENT, load);
     window.addEventListener("focus", load);
     return () => {
       window.clearInterval(timer);
       window.removeEventListener(REPORT_SENT_EVENT, load);
+      window.removeEventListener(REFRESH_EVENT, load);
       window.removeEventListener("focus", load);
     };
   }, [load]);

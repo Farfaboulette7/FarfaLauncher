@@ -2,6 +2,7 @@
 // (en jeu, en ligne, hors ligne) et l'option « Apparaître hors ligne ». La présence vient de
 // FarfaRomManager ; un gestionnaire trop ancien ne la connaît pas : le bouton n'apparaît pas.
 import { useEffect, useRef, useState } from "react";
+import { REFRESH_EVENT } from "../refresh";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { backend, type Friend, type Friends } from "../api/backend";
 import "./FriendsMenu.css";
@@ -92,9 +93,11 @@ export function FriendsMenu({
         .catch(() => undefined);
     void load();
     const timer = window.setInterval(load, open ? REFRESH_OPEN_MS : REFRESH_MS);
+    window.addEventListener(REFRESH_EVENT, load);
     return () => {
       alive = false;
       window.clearInterval(timer);
+      window.removeEventListener(REFRESH_EVENT, load);
     };
   }, [offline, open]);
 

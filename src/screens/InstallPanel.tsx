@@ -39,6 +39,7 @@ import { InstallChoice, InstallMode, useInstallChoice } from "../hooks/useInstal
 import { Dialog } from "../components/Dialog";
 import { REPORT_SENT_EVENT } from "../components/ReportsInbox";
 import { LaunchOverlay } from "../components/LaunchOverlay";
+import { ChangelogFact } from "../components/ChangelogButton";
 import { useOffline } from "../offline";
 
 export const PHASE_LABELS: Record<InstallPhase, string> = {
@@ -131,8 +132,12 @@ export function InstallPanel({ game: base, target, installs, onError, autoPlay, 
   /** Serveur injoignable : jouer oui, installer ou mettre à jour non. */
   const offline = useOffline();
   /** Recomp ou émulation, et laquelle : choisi dans l'onglet « Informations » (section Installation). */
-  const [choice] = useInstallChoice(base.id);
+  const [choice, setChoice] = useInstallChoice(base.id);
   const mode = installMode(base, inst, choice);
+  /** Mode choisi sur la page : le panneau entier parle de lui, installé ou non. */
+  const sel = selectionOf(base, inst, choice);
+  /** Le mode choisi n'est pas celui que le jeu installé lance aujourd'hui (installé à côté, ou pas encore). */
+  const switching = !!inst?.executable && !!sel?.id && !sel.way?.active;
   const recompChoice = choice.recomp;
   const recompId = recompChoice ?? base.recompId ?? null;
   const recompOffer = recompList(base).find((r) => r.id === recompId) ?? null;
@@ -199,6 +204,23 @@ export function InstallPanel({ game: base, target, installs, onError, autoPlay, 
       live = false;
     };
   }, [game.id, installedExe, runningSince]);
+  // La recomp installée a son propre launcher : bouton « Ouvrir la recomp ».
+  const [recompMenu, setRecompMenu] = useState(false);
+  const menuKey = installedExe && !installedWithEmulator ? `${installedExe}|${inst?.archiveName}|${inst?.directLaunch?.exe ?? ""}` : null;
+  useEffect(() => {
+    if (!menuKey) {
+      setRecompMenu(false);
+      return;
+    }
+    let live = true;
+    backend
+      .recompMenu(game.id)
+      .then((m) => live && setRecompMenu(m))
+      .catch(() => live && setRecompMenu(false));
+    return () => {
+      live = false;
+    };
+  }, [game.id, menuKey]);
   const last = installs.lastSession.get(game.id);
   // Le jeu vient de planter : proposer tout de suite un rapport prérempli.
   useEffect(() => {
@@ -257,6 +279,31 @@ export function InstallPanel({ game: base, target, installs, onError, autoPlay, 
     openMenu.current = true;
     codChoice.current = null;
     startPlay();
+  }
+
+  /** « Changer pour … » : le mode déjà installé à côté passe en service (« Jouer » revient ensuite). */
+  async function switchWay() {
+    if (!sel?.way || !sel.id) return;
+    setMessage(null);
+    setLaunching(`Passage à ${sel.name}…`);
+    try {
+      await backend.useInstall(base.id, sel.kind, sel.id);
+      setChoice({ mode: null, recomp: null, emulator: null });
+      await installs.reload();
+    } catch (e) {
+      setLaunching(null);
+      setMessage(await onError(e));
+      await installs.reload();
+      return;
+    }
+    setLaunching(null);
+  }
+
+  /** « Installer » un autre mode à côté de celui installé (rien n'est supprimé). */
+  function installOtherWay() {
+    if (!sel) return;
+    if (sel.mode === "emulator" && sel.emulator) void installs.start(base.id, undefined, null, true, sel.emulator.id);
+    else if (sel.mode === "recomp" && sel.recomp) void installs.start(base.id, undefined, null, false, null, sel.recomp.id);
   }
 
   /** « Jouer » : compare d'abord la sauvegarde locale à celle du serveur. */
@@ -328,12 +375,69 @@ export function InstallPanel({ game: base, target, installs, onError, autoPlay, 
     }
   }
 
+  // Mode en service aujourd'hui (il reste installé quand on en choisit un autre).
+  const current = currentModeOf(base, inst, sel);
+  const panelTitle = current ? modeTitle(current) : inst?.executable ? "Jeu installé" : "Installation";
+  const activeName = current && inst?.executable ? current.name : "L'installation actuelle";
+  const system = target ? ` (${TARGET_LABELS[target]})` : "";
+
   return (
     <div className="n-panel gd-actions">
-      <div className="n-panel-header">{inst?.executable ? "Jeu installé" : "Installation"}</div>
+      <div className="n-panel-header gd-actions-title" title={panelTitle}>
+        {panelTitle}
+      </div>
       <div className="n-panel-body gd-actions-body">
         {progress ? (
           <ProgressView romId={game.id} phase={progress.phase} done={progress.done} total={progress.total} verifying={!!progress.verifying} onCancel={() => backend.cancelInstall(game.id)} />
+        ) : switching && sel && runningSince === undefined && !busy ? (
+          sel.way ? (
+            <>
+              <button className="n-btn n-btn--primary n-btn--block" disabled={!!launching} onClick={() => void switchWay()}>
+                {launching ? (
+                  <>
+                    <span className="n-spinner" /> {launching}
+                  </>
+                ) : (
+                  `Changer pour ${sel.name}`
+                )}
+              </button>
+              <p className="n-hint">Déjà installé : rien n'est retéléchargé. {activeName} reste installé.</p>
+            </>
+          ) : sel.mode === "emulator" && sel.emulator && emulatorReady({ ...base, emulator: sel.emulator }) ? (
+            <>
+              <button className="n-btn n-btn--primary n-btn--block" disabled={offline} title={offline ? OFFLINE_TITLE : undefined} onClick={installOtherWay}>
+                Installer {sel.name}
+              </button>
+              <p className="n-hint">
+                {activeName} reste installé : vous pourrez y revenir. La ROM déjà sur le disque n'est pas retéléchargée. Les émulateurs partagent la même sauvegarde.
+              </p>
+            </>
+          ) : sel.mode === "recomp" && sel.recomp?.available && !base.runtime ? (
+            <>
+              <button className="n-btn n-btn--primary n-btn--block" disabled={offline} title={offline ? OFFLINE_TITLE : undefined} onClick={installOtherWay}>
+                Installer {sel.name}
+              </button>
+              <p className="n-hint">
+                {activeName} reste installé : vous pourrez y revenir. La ROM déjà sur le disque n'est pas retéléchargée. Chaque recomp a ses propres sauvegardes.
+              </p>
+            </>
+          ) : sel.mode === "recomp" && sel.recomp && !sel.recomp.available ? (
+            <p className="n-alert" data-sound="none">
+              {sel.name} n'est pas disponible pour votre système{system}. {availableOn(sel.recomp.systems)}
+            </p>
+          ) : sel.mode === "emulator" && sel.emulator && !sel.emulator.available ? (
+            <p className="n-alert" data-sound="none">
+              {sel.name} n'est pas disponible pour votre système{system}. {availableOn(sel.emulator.systems)}
+            </p>
+          ) : sel.mode === "emulator" && sel.emulator ? (
+            <p className="n-notice">
+              {sel.name} a besoin d'éléments de configuration absents du serveur : {sel.emulator.configMissing.join(", ")}.
+            </p>
+          ) : (
+            <p className="n-notice">
+              Pour jouer avec {sel.name}, désinstallez d'abord {activeName}.
+            </p>
+          )
         ) : offline && !inst?.executable && !pendingChoice ? (
           <>
             <button className="n-btn n-btn--primary n-btn--block" disabled>
@@ -360,7 +464,7 @@ export function InstallPanel({ game: base, target, installs, onError, autoPlay, 
               </>
             ) : (
               <button
-                className="n-btn n-btn--primary n-btn--block n-cursor"
+                className="n-btn n-btn--primary n-btn--block"
                 data-sound="none"
                 disabled={!!launching}
                 onClick={onPlay}
@@ -374,13 +478,17 @@ export function InstallPanel({ game: base, target, installs, onError, autoPlay, 
                 )}
               </button>
             )}
-            {inst.shared && !busy && runningSince === undefined && !launching && (
+            {(installedWithEmulator ? !!inst.shared : recompMenu) && !busy && runningSince === undefined && !launching && (
               <button
                 className="n-btn n-btn--block gd-launcher"
-                title={installedWithEmulator ? `Ouvre ${inst.shared.runtimeName} et ses paramètres` : `Ouvre le launcher de ${inst.shared.runtimeName} (réglages, mods, autres jeux)`}
+                title={
+                  installedWithEmulator
+                    ? `Ouvre ${inst.shared?.runtimeName} et ses paramètres`
+                    : `Ouvre le launcher de ${inst.shared?.runtimeName ?? sel?.name ?? "la recomp"} (réglages, mods${inst.shared ? ", autres jeux" : ""})`
+                }
                 onClick={onOpenMenu}
               >
-                {installedWithEmulator ? "Ouvrir l'émulateur" : "Ouvrir le launcher"}
+                {installedWithEmulator ? "Ouvrir l'émulateur" : "Ouvrir la recomp"}
               </button>
             )}
             {last && <p className="n-hint">{sessionSummary(last)}</p>}
@@ -404,7 +512,7 @@ export function InstallPanel({ game: base, target, installs, onError, autoPlay, 
               disabled={recompOffer ? !recompOffer.available : false}
               onClick={() => installs.start(game.id, installDir ?? undefined, game.pc?.proton ? protonChoice : null, false, null, recompId)}
             >
-              {(base.recomps?.length ?? 0) > 1 && recompOffer ? `Installer ${recompOffer.name}` : base.emulators?.length ? "Installer la recomp" : "Installer"}
+              {recompOffer && !game.pc ? `Installer ${recompOffer.name}` : "Installer"}
             </button>
             {game.pc?.proton && (
               <p className="n-hint">
@@ -441,7 +549,7 @@ export function InstallPanel({ game: base, target, installs, onError, autoPlay, 
         ) : mode === "emulator" && emulatorReady(game) ? (
           <>
             <button className="n-btn n-btn--primary n-btn--block" onClick={() => installs.start(game.id, installDir ?? undefined, null, true, game.emulator?.id)}>
-              Installer
+              {game.emulator ? `Installer ${game.emulator.name}` : "Installer"}
             </button>
             <p className="n-hint gd-install-dest" title={installDir ?? installs.installRoot ?? undefined}>
               {formatSize(emulatorDownloadSize(game, emulatorUpToDate))} · avec {game.emulator?.name}
@@ -524,7 +632,7 @@ export function InstallPanel({ game: base, target, installs, onError, autoPlay, 
         )}
         {reportSent && <p className="n-notice">{reportSent}</p>}
 
-        {inst && !progress && runningSince === undefined && !busy && !launching && (
+        {inst && !switching && !progress && runningSince === undefined && !busy && !launching && (
           <div className="gd-inst-actions">
             <button className="n-link" onClick={() => run(() => backend.openGameFolder(game.id))}>
               Ouvrir le dossier du jeu
@@ -772,7 +880,7 @@ function effectiveEmulatorOf(game: Game, inst: InstalledGame | undefined, chosen
 }
 
 /** Ce qui est choisi dans Informations › Installation, et s'il est déjà installé. */
-interface Selection {
+export interface Selection {
   mode: InstallMode;
   recomp: RecompOffer | null;
   emulator: EmulatorOffer | null;
@@ -782,6 +890,36 @@ interface Selection {
   name: string;
   /** Installation déjà sur le disque pour ce choix. */
   way: InstallWay | undefined;
+}
+
+/** « Jeu en mode recomp : Hookshot », « Jeu en mode émulation : Citron ». */
+function modeTitle(m: { mode: InstallMode; name: string }): string {
+  return `Jeu en mode ${m.mode === "recomp" ? "recomp" : "émulation"} : ${m.name}`;
+}
+
+/**
+ * Mode dans lequel on est : celui en service pour un jeu installé (il ne change qu'en changeant
+ * vraiment de mode), sinon ce qui est choisi pour l'installation.
+ */
+function currentModeOf(base: Game, inst: InstalledGame | undefined, sel: Selection | null): { mode: InstallMode; name: string } | null {
+  if (!sel) return null;
+  const active = inst?.executable ? inst.ways?.find((w) => w.active) : undefined;
+  if (!active) return inst?.executable ? null : { mode: sel.mode, name: sel.name };
+  const name = active.kind === "recomp" ? recompList(base).find((r) => r.id === active.id)?.name : base.emulators?.find((e) => e.id === active.id)?.name;
+  return { mode: active.kind, name: name ?? active.id };
+}
+
+/** Mode dans lequel on est (en-tête de la page du jeu). */
+export function useCurrentMode(base: Game, installs: InstallsState): { mode: InstallMode; name: string } | null {
+  const [choice] = useInstallChoice(base.id);
+  const inst = installs.installed.get(base.id);
+  return currentModeOf(base, inst, selectionOf(base, inst, choice));
+}
+
+/** Recomp ou émulateur choisi sur la page du jeu (en-tête, panneau, Nouveautés), installé ou non. */
+export function useSelection(base: Game, installs: InstallsState): Selection | null {
+  const [choice] = useInstallChoice(base.id);
+  return selectionOf(base, installs.installed.get(base.id), choice);
 }
 
 /** Recomp ou émulateur choisi : le choix du joueur, sinon ce qui est installé, sinon le meilleur. */
@@ -817,7 +955,6 @@ function selectionOf(base: Game, inst: InstalledGame | undefined, choice: Instal
  */
 function InstallChoiceFacts({ game: base, target, installs }: { game: Game; target: Target | null; installs: InstallsState }) {
   const inst = installs.installed.get(base.id);
-  const offline = useOffline();
   const [choice, setChoice] = useInstallChoice(base.id);
   const sel = selectionOf(base, inst, choice);
   if (!sel) return null;
@@ -825,45 +962,9 @@ function InstallChoiceFacts({ game: base, target, installs }: { game: Game; targ
   const emulators = base.emulators ?? [];
   const { mode, recomp, emulator: current } = sel;
   const system = target ? TARGET_LABELS[target] : "ce système";
-  const idle = !installs.running.has(base.id) && !installs.busy.get(base.id) && !installs.progress.get(base.id);
   const ways = inst?.executable ? (inst.ways ?? []) : [];
-  const nameOf = (kind: InstallMode, id: string) =>
-    (kind === "recomp" ? recomps.find((r) => r.id === id)?.name : emulators.find((e) => e.id === id)?.name) ?? id;
   const owned = (kind: InstallMode, id: string | undefined) => ways.some((w) => w.kind === kind && w.id === id);
-  const activeWay = ways.find((w) => w.active);
-  const others = activeWay ? nameOf(activeWay.kind, activeWay.id) : "L'installation actuelle";
-
-  // Jeu installé : ce qui est choisi et pas en service se met en service, ou s'installe à côté.
-  let action: { label: string; hint: string; run: () => void } | null = null;
-  if (inst?.executable && idle && sel.id && !sel.way?.active) {
-    const id = sel.id;
-    if (sel.way) {
-      action = {
-        label: `Jouer avec ${sel.name}`,
-        hint: "Déjà installé : rien n'est retéléchargé.",
-        run: () =>
-          void backend
-            .useInstall(base.id, sel.kind, id)
-            .then(() => {
-              setChoice({ mode: null, recomp: null, emulator: null });
-              return installs.reload();
-            })
-            .catch(() => installs.reload()),
-      };
-    } else if (mode === "emulator" && current && emulatorReady({ ...base, emulator: current })) {
-      action = {
-        label: `Installer ${current.name}`,
-        hint: `${others} reste installé : vous pourrez y revenir. La ROM n'est pas retéléchargée si elle est déjà sur le disque. Les émulateurs partagent la même sauvegarde.`,
-        run: () => void installs.start(base.id, undefined, null, true, current.id),
-      };
-    } else if (mode === "recomp" && recomp?.available && !base.runtime) {
-      action = {
-        label: `Installer ${recomp.name === "Recomp" ? "la recomp" : recomp.name}`,
-        hint: `${others} reste installé : vous pourrez y revenir. La ROM n'est pas retéléchargée si elle est déjà sur le disque. Chaque recomp a ses propres sauvegardes.`,
-        run: () => void installs.start(base.id, undefined, null, false, null, recomp.id),
-      };
-    }
-  }
+  // Installer ou jouer avec ce qui est choisi : le bouton du panneau d'installation s'en charge.
 
   return (
     <>
@@ -945,24 +1046,36 @@ function InstallChoiceFacts({ game: base, target, installs }: { game: Game; targ
         )}
         {mode === "recomp" && recomp?.advice && <Advice text={recomp.advice} />}
         {mode === "emulator" && current?.advice && <Advice text={current.advice} />}
-        {(activeWay || action) && (
-          <p className="n-hint gd-way-line">
-            {activeWay && <>« Jouer » lance {nameOf(activeWay.kind, activeWay.id)}.</>}
-            {action && (
-              <>
-                {activeWay && " "}
-                <button
-                  className="n-link gd-way-action"
-                  disabled={offline && !sel.way}
-                  title={offline && !sel.way ? OFFLINE_TITLE : action.hint}
-                  onClick={action.run}
-                >
-                  {action.label}
-                </button>
-              </>
-            )}
-          </p>
-        )}
+      </dd>
+      <ChangelogFact romId={base.id} console={base.console} kind={mode} id={sel.id} />
+    </>
+  );
+}
+
+/** Ligne « Mods » : le dossier où mettre ses mods, d'après la documentation de la recomp ou de l'émulateur. */
+function ModsFact({ romId, installKey }: { romId: number; installKey: string }) {
+  const [dir, setDir] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    backend
+      .modsFolder(romId)
+      .then((d) => live && setDir(d))
+      .catch(() => live && setDir(null));
+    return () => {
+      live = false;
+    };
+  }, [romId, installKey]);
+  if (!dir) return null;
+  return (
+    <>
+      <dt>Mods</dt>
+      <dd className="gd-savedir" title={dir}>
+        <button className="n-link" onClick={() => backend.openModsFolder(romId).then(() => setError(null), (e) => setError(errorMessage(e)))}>
+          Ouvrir le dossier des mods
+        </button>{" "}
+        <span className="n-hint">{shortPath(dir)}</span>
+        {error && <p className="n-alert">{error}</p>}
       </dd>
     </>
   );
@@ -1242,6 +1355,7 @@ export function InstallFacts({ game: base, target, installs }: { game: Game; tar
           </dd>
         </>
       )}
+      {!preview && inst?.executable && <ModsFact romId={base.id} installKey={`${inst.executable}|${inst.archiveName}|${inst.gameDir}`} />}
       {!preview && inst?.executable && <OptimizedFacts romId={base.id} running={installs.running.has(base.id)} />}
       {(source || rommPage) && (
         <>

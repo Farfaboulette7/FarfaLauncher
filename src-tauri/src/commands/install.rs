@@ -420,18 +420,72 @@ fn find_mods_dir(game_dir: &std::path::Path) -> Option<PathBuf> {
     None
 }
 
+/// Dossier des mods d'un jeu installé : celui de la fiche (documentation de la recomp ou de
+/// l'émulateur, `dossier-mods:`), sinon un dossier `mods` trouvé dans le jeu.
+fn mods_dir_of(state: &AppState, st: &state::InstalledGame) -> Option<PathBuf> {
+    let catalog = state.catalog();
+    let Some(pattern) = catalog.mods_dir_for_install(st) else { return find_mods_dir(&st.game_dir) };
+    let exe_dir = crate::report::exe_dir(&catalog, st);
+    resolve_mods_dir(&pattern, &exe_dir, || crate::switch_saves::title_id(&catalog, &state.config_dir, st))
+}
+
+/// `user/load/{titleid}` → `<dossier de l'exe>/user/load/0100…` ; sans ID de titre connu, le
+/// dossier qui le contient (`user/load`).
+fn resolve_mods_dir(pattern: &str, exe_dir: &std::path::Path, title: impl FnOnce() -> Option<String>) -> Option<PathBuf> {
+    let mut pattern = pattern.to_string();
+    if pattern.contains("{titleid}") {
+        pattern = match title() {
+            Some(t) => pattern.replace("{titleid}", &t.to_uppercase()),
+            None => pattern.split('/').take_while(|p| *p != "{titleid}").collect::<Vec<_>>().join("/"),
+        };
+    }
+    if pattern.starts_with('{') {
+        crate::language::expand(&pattern, exe_dir)
+    } else if pattern.is_empty() || pattern.split('/').any(|p| p.is_empty() || p == "..") {
+        None
+    } else {
+        Some(pattern.split('/').fold(exe_dir.to_path_buf(), |p, part| p.join(part)))
+    }
+}
+
 /// Le jeu installé a-t-il un dossier de mods ?
 #[tauri::command]
 pub fn has_mods_folder(state: State<'_, AppState>, rom_id: i64) -> bool {
-    state::find(&state.config_dir, rom_id).is_some_and(|st| find_mods_dir(&st.game_dir).is_some())
+    mods_folder(state, rom_id).is_some()
 }
 
-/// Ouvre le dossier des mods du jeu installé.
+/// Dossier des mods du jeu installé (affiché dans Informations › Installation).
+#[tauri::command]
+pub fn mods_folder(state: State<'_, AppState>, rom_id: i64) -> Option<String> {
+    let st = state::find(&state.config_dir, rom_id)?;
+    mods_dir_of(&state, &st).map(|d| d.to_string_lossy().into_owned())
+}
+
+/// Ouvre le dossier des mods du jeu installé (créé s'il n'existe pas encore).
 #[tauri::command]
 pub fn open_mods_folder(app: AppHandle, state: State<'_, AppState>, rom_id: i64) -> AppResult<()> {
     let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
-    let dir = find_mods_dir(&st.game_dir).ok_or(AppError::NotInstalled)?;
+    let dir = mods_dir_of(&state, &st).ok_or(AppError::NotInstalled)?;
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        tracing::warn!("dossier des mods non créé ({}): {e}", dir.display());
+    }
     crate::external::open_path(&app, &dir.to_string_lossy(), "ouverture du dossier des mods")
+}
+
+#[cfg(test)]
+mod mods_dir_tests {
+    use super::resolve_mods_dir;
+    use std::path::Path;
+
+    #[test]
+    fn mods_dir_of_the_documentation() {
+        let exe = Path::new("jeu");
+        assert_eq!(resolve_mods_dir("mods", exe, || None), Some(Path::new("jeu").join("mods")));
+        assert_eq!(resolve_mods_dir("user/load/{titleid}", exe, || Some("0100f2c0115b6000".into())), Some(exe.join("user").join("load").join("0100F2C0115B6000")));
+        assert_eq!(resolve_mods_dir("user/load/{titleid}", exe, || None), Some(exe.join("user").join("load")));
+        assert_eq!(resolve_mods_dir("../x", exe, || None), None);
+        assert_eq!(resolve_mods_dir("{exedir}/mods", exe, || None), Some(exe.join("mods")));
+    }
 }
 
 /// Versions de Proton installées et téléchargeables (la recommandée en premier).

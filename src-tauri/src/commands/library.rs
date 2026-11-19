@@ -244,9 +244,20 @@ pub async fn manual_path(state: State<'_, AppState>, rom_id: i64, manual: Manual
 }
 
 /// Dernières nouveautés de la recomp ou de l'émulateur du jeu (catalogue de FarfaRomManager).
+/// `kind` et `id` : le mode choisi sur la page du jeu, même pas installé.
 #[tauri::command]
-pub fn game_changelog(state: State<'_, AppState>, rom_id: i64, console: String) -> Option<crate::manager::Changelog> {
-    state.catalog().changelog(rom_id, &console, crate::platform::detect())
+pub fn game_changelog(state: State<'_, AppState>, rom_id: i64, console: String, kind: Option<String>, id: Option<String>) -> Option<crate::manager::Changelog> {
+    let catalog = state.catalog();
+    match (kind.as_deref(), id.as_deref()) {
+        (Some(k), Some(i)) => catalog.changelog_of(k, i).or_else(|| (k == "recomp").then(|| catalog.changelog(rom_id, &console, crate::platform::detect())).flatten()),
+        _ => catalog.changelog(rom_id, &console, crate::platform::detect()),
+    }
+}
+
+/// La recomp du jeu installé a son propre launcher (bouton « Ouvrir la recomp »).
+#[tauri::command]
+pub fn recomp_menu(state: State<'_, AppState>, rom_id: i64) -> bool {
+    crate::install::state::find(&state.config_dir, rom_id).is_some_and(|st| state.catalog().recomp_menu(&st))
 }
 
 #[tauri::command]

@@ -7,16 +7,22 @@
   place-items: center;
   color: var(--nier-low);
   font-family: var(--nier-font);
-  pointer-events: none;
-  animation: intro-veil 3s ease-in-out forwards;
+  /* Elle prend les clics : rien en dessous ne répond tant qu'elle se joue. */
+  pointer-events: auto;
+  cursor: default;
+  background-color: var(--nier-bg);
 }
+/* Avant le départ (premières images) : papier opaque, emblème caché. */
+.intro:not(.is-running) .intro-mark { opacity: 0; }
+.intro.is-running { animation: intro-veil 3s ease-in-out forwards; }
 .intro-mark {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 18px;
-  animation: intro-mark 3s ease-in-out forwards;
+  will-change: opacity, transform;
 }
+.is-running .intro-mark { animation: intro-mark 3s ease-in-out forwards; }
 .intro-emblem {
   width: 220px;
   height: 254px;
@@ -26,14 +32,14 @@
   font-weight: 300;
   letter-spacing: 0.5em;
   padding-left: 0.5em;
-  animation: intro-title 3s ease-out forwards;
 }
+.is-running .intro-title { animation: intro-title 3s ease-out forwards; }
 .intro-rule {
   width: 0;
   height: var(--nier-line);
   background-color: var(--nier-low);
-  animation: intro-rule 3s ease-in-out forwards;
 }
+.is-running .intro-rule { animation: intro-rule 3s ease-in-out forwards; }
 /* Papier opaque, puis transparent pendant que le flou s'en va. */
 @keyframes intro-veil {
   0%, 50% {
@@ -62,15 +68,31 @@
 }
 
 /* Linux (WebKitGTK) : les flous animés y restent figés, l'ouverture se fait
-   sans eux. */
-.fx-lite .intro { animation-name: intro-veil-lite; }
-.fx-lite .intro-mark { animation-name: intro-mark-lite; }
+   sans eux.
+   Ni changement de taille : l'emblème est un masque, le redessiner à chaque image coûte
+   cher sans accélération. Seule l'opacité bouge. */
+.fx-lite .intro.is-running { animation-name: intro-veil-lite; }
+.fx-lite .is-running .intro-mark { animation-name: intro-mark-lite; }
+.fx-lite .intro-mark { will-change: opacity; }
 @keyframes intro-veil-lite {
   0%, 50% { background-color: var(--nier-bg); }
   100%    { background-color: transparent; }
 }
 @keyframes intro-mark-lite {
-  0%        { opacity: 0; transform: scale(0.94); }
-  28%, 58%  { opacity: 1; transform: scale(1); }
-  85%, 100% { opacity: 0; transform: scale(1.03); }
+  0%        { opacity: 0; }
+  28%, 58%  { opacity: 1; }
+  85%, 100% { opacity: 0; }
+}
+/* Linux : le titre et le trait ne changent pas la mise en page à chaque image
+   (espacement, largeur), ils apparaissent en fondu et en s'étirant. */
+.fx-lite .is-running .intro-title { animation-name: intro-title-lite; }
+.fx-lite .intro-rule { width: 280px; transform-origin: center; }
+.fx-lite .is-running .intro-rule { animation-name: intro-rule-lite; }
+@keyframes intro-title-lite {
+  0%, 15% { opacity: 0; }
+  45%, 100% { opacity: 1; }
+}
+@keyframes intro-rule-lite {
+  0%, 20% { transform: scaleX(0); }
+  50%, 100% { transform: scaleX(1); }
 }

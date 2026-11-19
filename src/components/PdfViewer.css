@@ -43,6 +43,7 @@
 
 /* ---------- Livre : double page et page qui tourne ---------- */
 .pdf-area--book { display: flex; }
+.pdf-area--book.is-fit { overflow: hidden; }
 .pdf-book-wrap {
   margin: auto; /* centré, et défilable une fois zoomé */
   display: flex;

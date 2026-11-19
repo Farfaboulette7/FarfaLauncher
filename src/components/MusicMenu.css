@@ -20,15 +20,16 @@
 .music-next { align-self: flex-start; }
 .music-range { display: grid; grid-template-columns: 5.5em minmax(0, 1fr); align-items: center; gap: 10px; }
 .music-range input { width: 100%; accent-color: var(--nier-low); }
-/* Ouverture : le panneau glisse depuis le bouton en se dépliant (désactivé si le système réduit les animations). */
+.music-mutes { display: flex; flex-direction: column; gap: 6px; padding-top: 4px; border-top: var(--nier-line) solid var(--nier-low); }
+.music-check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.music-check input { accent-color: var(--nier-low); }
+/* Ouverture : le panneau se déplie depuis le bouton, assez lentement pour qu'on le voie
+   (gardée même quand le système réduit les animations). */
 .music-panel {
   transform-origin: top right;
-  animation: music-panel-in var(--nier-normal, 180ms) var(--nier-ease, ease-out) both;
+  animation: music-panel-in 280ms var(--nier-ease, ease-out) both;
 }
 @keyframes music-panel-in {
-  from { opacity: 0; transform: translateY(-6px) scaleY(0.92); }
-  to { opacity: 1; transform: none; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .music-panel { animation: none; }
+  from { opacity: 0; transform: translateY(-12px) scale(0.96, 0.6); clip-path: inset(0 0 100% 0); }
+  to { opacity: 1; transform: none; clip-path: inset(0 0 0 0); }
 }

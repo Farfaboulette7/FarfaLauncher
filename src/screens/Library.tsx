@@ -42,6 +42,7 @@ import { RequestGameButton } from "../components/GameRequests";
 import { MusicMenu } from "../components/MusicMenu";
 import { FriendsMenu } from "../components/FriendsMenu";
 import { StatsDialog } from "../components/StatsDialog";
+import { announceRefresh } from "../refresh";
 
 type Tab = "recent" | "library" | "favorites";
 /** Filtre de la bibliothèque, des favoris et de la recherche. */
@@ -280,6 +281,26 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
   const gameRunning = installs.running.size > 0;
   useEffect(() => setMusicMuted(gameRunning), [gameRunning]);
 
+  /** « Rafraîchir » : tout se relit, la bibliothèque, ce qui s'est chargé à la demande, et
+   * ce que gardent les menus (amis, messages) et la page du jeu ouverte. */
+  const [refreshTick, setRefreshTick] = useState(0);
+  const selectedRef = useRef<number | null>(null);
+  const refreshAll = useCallback(() => {
+    void refresh();
+    reloadFavorites();
+    // Consoles, lettres et index alphabétiques chargés à la demande : relus à la prochaine vue.
+    setConsolePages(new Map());
+    setCharIndexes(new Map());
+    setLetterPages(new Map());
+    const open = selectedRef.current;
+    if (open !== null) backend.gameDetails(open).then((g) => addExtra([g])).catch(() => undefined);
+    backend.flushPlaySessions().catch(() => undefined);
+    backend.flushPendingSaves().catch(() => undefined);
+    backend.statsSync().catch(() => undefined);
+    setRefreshTick((t) => t + 1);
+    announceRefresh();
+  }, [refresh, reloadFavorites, addExtra]);
+
   useEffect(() => {
     backend.systemTarget().then(setTarget);
     loadSounds();
@@ -476,6 +497,22 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
     if (missing.length > 0) backend.gamesByIds(missing).then(addExtra).catch((e) => console.warn("jeux installés non chargés", e));
   }, [tab, kind, installedIds, allGames, extra, addExtra, session.offline]);
 
+  selectedRef.current = selectedId;
+
+  // Manette (B) ou Échap dans les jeux d'une plateforme : retour à toutes les plateformes.
+  useEffect(() => {
+    if (selectedId !== null || showSettings || tab !== "library" || consoleKey === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      if (document.querySelector("[aria-modal='true'], .dialog-backdrop, .lightbox, .music-panel, .friends-panel")) return;
+      listScroll.current = 0;
+      setConsoleKey(null);
+      playSound("retourSelection");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedId, showSettings, tab, consoleKey]);
+
   // Fiche d'un jeu chargé à la demande : ses fichiers, à l'ouverture de sa page.
   useEffect(() => {
     if (selectedId === null || session.offline) return;
@@ -621,13 +658,14 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
    * Écran courant, animé pendant le passage vers une fiche. L'enveloppe est
    * toujours là : l'ajouter en cours de route remonterait l'écran (défilement perdu).
    */
-  function stage(node: ReactNode) {
+  function stage(node: ReactNode, over?: ReactNode) {
     const vars = hack ? ({ "--hx": `${hack.x}px`, "--hy": `${hack.y}px` } as CSSProperties) : undefined;
     return (
       <OfflineContext.Provider value={!!session.offline}>
         <div className={hack ? `hack-stage hack-stage--${hack.phase}` : "hack-stage"} style={vars}>
           {node}
         </div>
+        {over}
         {session.offline && (
           <div className="offline-banner" role="status">
             <strong>Hors ligne</strong> · Serveur injoignable. Les jeux installés restent jouables ; temps de jeu et sauvegardes partiront à son retour.
@@ -636,6 +674,60 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
       </OfflineContext.Provider>
     );
   }
+
+  /** Boutons en haut à droite : les mêmes dans la bibliothèque et sur la page d'un jeu. */
+  const headerActions = (
+    <>
+      {update && (
+        <button className="n-btn n-btn--sm lib-update" onClick={onUpdate} title={`Installer la version ${update.version} (le launcher redémarre)`}>
+          Mettre à jour ({update.version})
+        </button>
+      )}
+      <Downloads installs={installs} nameOf={(id) => known(id)?.name ?? `Jeu ${id}`} />
+      <FriendsMenu
+        offline={session.offline}
+        onOpenGame={(id, el) => {
+          if (!known(id)) return false;
+          openGame(id, el);
+          return true;
+        }}
+        onOpenStats={setStatsFor}
+      />
+      <ReportsInbox offline={session.offline} />
+      <MusicMenu />
+      <button
+        className="n-btn n-icon-btn"
+        title={loading ? "Chargement…" : "Rafraîchir tout"}
+        aria-label="Rafraîchir tout"
+        onClick={refreshAll}
+        disabled={loading || session.offline}
+      >
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" className={loading ? "is-spinning" : undefined}>
+          <path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+        </svg>
+      </button>
+      <FullscreenButton />
+      <button className="n-btn n-icon-btn" title="Paramètres" aria-label="Paramètres" onClick={() => setShowSettings(true)}>
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <path d="M4 7h10M18 7h2M4 17h2M10 17h10" fill="none" stroke="currentColor" strokeWidth="1.8" />
+          <rect x="14" y="5" width="4" height="4" fill="none" stroke="currentColor" strokeWidth="1.8" />
+          <rect x="6" y="15" width="4" height="4" fill="none" stroke="currentColor" strokeWidth="1.8" />
+        </svg>
+      </button>
+    </>
+  );
+  const statsDialog = statsFor !== undefined && (
+    <StatsDialog
+      playerId={statsFor}
+      known={known}
+      onOpenGame={(id, el) => {
+        if (!known(id)) return false;
+        openGame(id, el);
+        return true;
+      }}
+      onClose={() => setStatsFor(undefined)}
+    />
+  );
 
   if (showSettings) {
     return (
@@ -671,7 +763,10 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
         onError={handleError}
         autoPlay={autoPlayId === selected.id}
         onAutoPlayed={() => setAutoPlayId(null)}
+        actions={headerActions}
+        refreshKey={refreshTick}
       />,
+      statsDialog,
     );
   }
 
@@ -706,61 +801,10 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
             {avatar.src && !session.offline && <img className="lib-avatar" src={avatar.src} alt="" draggable={false} />}
             {session.offline ? "Hors ligne" : session.username}
           </span>
-          <div className="lib-actions">
-            {update && (
-              <button className="n-btn n-btn--sm lib-update" onClick={onUpdate} title={`Installer la version ${update.version} (le launcher redémarre)`}>
-                Mettre à jour ({update.version})
-              </button>
-            )}
-            <Downloads installs={installs} nameOf={(id) => known(id)?.name ?? `Jeu ${id}`} />
-            <FriendsMenu
-              offline={session.offline}
-              onOpenGame={(id, el) => {
-                if (!known(id)) return false;
-                openGame(id, el);
-                return true;
-              }}
-              onOpenStats={setStatsFor}
-            />
-            <ReportsInbox offline={session.offline} />
-            <MusicMenu />
-            <button
-              className="n-btn n-icon-btn"
-              title={loading ? "Chargement…" : "Rafraîchir la bibliothèque"}
-              aria-label="Rafraîchir la bibliothèque"
-              onClick={() => {
-                refresh();
-                reloadFavorites();
-              }}
-              disabled={loading || session.offline}
-            >
-              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" className={loading ? "is-spinning" : undefined}>
-                <path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-              </svg>
-            </button>
-            <FullscreenButton />
-            <button className="n-btn n-icon-btn" title="Paramètres" aria-label="Paramètres" onClick={() => setShowSettings(true)}>
-              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-                <path d="M4 7h10M18 7h2M4 17h2M10 17h10" fill="none" stroke="currentColor" strokeWidth="1.8" />
-                <rect x="14" y="5" width="4" height="4" fill="none" stroke="currentColor" strokeWidth="1.8" />
-                <rect x="6" y="15" width="4" height="4" fill="none" stroke="currentColor" strokeWidth="1.8" />
-              </svg>
-            </button>
-          </div>
+          <div className="lib-actions">{headerActions}</div>
         </div>
       </header>
-      {statsFor !== undefined && (
-        <StatsDialog
-          playerId={statsFor}
-          known={known}
-          onOpenGame={(id, el) => {
-            if (!known(id)) return false;
-            openGame(id, el);
-            return true;
-          }}
-          onClose={() => setStatsFor(undefined)}
-        />
-      )}
+      {statsDialog}
       <div className="n-rule lib-rule" />
 
       <div className="lib-toolbar">

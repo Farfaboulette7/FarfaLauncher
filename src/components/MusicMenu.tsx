@@ -1,5 +1,5 @@
 // Menu de la musique : un bouton-icône dans l'en-tête, qui ouvre un petit panneau avec le titre
-// en cours, « changer de musique » et les volumes de la musique et des bruitages.
+// en cours, « changer de musique », les volumes de la musique et des bruitages, et de quoi couper l'un ou l'autre.
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { musicSettings, musicState, nextTrack, setMusicSettings, subscribeMusic } from "../music";
 import { play as playSound, setSoundSettings, soundSettings } from "../sounds";
@@ -105,6 +105,26 @@ export function MusicMenu() {
               onPointerUp={() => playSound("deplacementOption")}
             />
           </label>
+          <div className="music-mutes">
+            <label className="music-check">
+              <input type="checkbox" checked={!music.enabled} onChange={(e) => updateMusic({ enabled: !e.target.checked })} />
+              Couper la musique
+            </label>
+            <label className="music-check">
+              <input
+                type="checkbox"
+                checked={!sound.enabled || sound.volume === 0}
+                onChange={(e) => {
+                  if (e.target.checked) updateSound({ enabled: false });
+                  else {
+                    updateSound({ enabled: true, volume: sound.volume > 0 ? sound.volume : 0.5 });
+                    playSound("deplacementOption");
+                  }
+                }}
+              />
+              Couper les bruitages
+            </label>
+          </div>
         </div>
       )}
     </div>

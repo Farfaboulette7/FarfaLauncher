@@ -30,6 +30,16 @@ pub struct LogPattern {
     pub pattern: String,
 }
 
+/// Dossier des mods d'après la documentation de la recomp ou de l'émulateur : relatif au dossier
+/// de l'exécutable, ou commençant par `{exedir}`, `{appdata}`… ; `{titleid}` : ID de titre Switch.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModsDir {
+    #[serde(default)]
+    pub system: Option<String>,
+    pub path: String,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Catalog {
@@ -91,6 +101,9 @@ pub struct CatalogRecomp {
     /// Journaux à joindre aux rapports de bug (report.rs).
     #[serde(default)]
     pub logs: Vec<LogPattern>,
+    /// Où le joueur met ses mods (`dossier-mods:` du gestionnaire).
+    #[serde(default)]
+    pub mods_dirs: Vec<ModsDir>,
     /// Format d'attribution des manettes aux joueurs (controllers.rs).
     #[serde(default)]
     pub controllers: Option<String>,
@@ -134,6 +147,11 @@ pub struct CatalogRecompGame {
     pub game: Option<String>,
     /// Ancienne fiche `portage-*` du jeu : clé de son installation et de sa sauvegarde RomM d'avant.
     pub previous_rom_id: Option<i64>,
+}
+
+/// Argument qui ne fait que passer le launcher de la recomp : sans lui, elle ouvre son menu.
+fn skips_menu(arg: &str) -> bool {
+    arg == "--play" || arg.starts_with("--game=")
 }
 
 impl CatalogRecomp {
@@ -198,6 +216,9 @@ pub struct Emulator {
     /// Journaux à joindre aux rapports de bug (report.rs).
     #[serde(default)]
     pub logs: Vec<LogPattern>,
+    /// Où le joueur met ses mods (`dossier-mods:` du gestionnaire).
+    #[serde(default)]
+    pub mods_dirs: Vec<ModsDir>,
     /// Format d'attribution des manettes aux joueurs (controllers.rs).
     #[serde(default)]
     pub controllers: Option<String>,
@@ -542,6 +563,16 @@ impl Catalog {
         }
     }
 
+    /// Dossier des mods de la fiche pour ce jeu installé, sur ce système.
+    pub fn mods_dir_for_install(&self, st: &crate::install::state::InstalledGame) -> Option<String> {
+        let dirs = match &st.shared {
+            Some(s) if s.is_emulator() => self.emulator_for_install(st).map(|e| e.mods_dirs.clone()).unwrap_or_default(),
+            _ => self.recomp_for_install(st).map(|r| r.mods_dirs.clone()).unwrap_or_default(),
+        };
+        let me = crate::language::current_system();
+        dirs.iter().find(|d| d.system.as_deref() == Some(me)).or_else(|| dirs.iter().find(|d| d.system.is_none())).map(|d| d.path.clone())
+    }
+
     /// Journaux à joindre à un rapport de bug pour ce jeu installé.
     pub fn logs_for_install(&self, st: &crate::install::state::InstalledGame) -> Vec<LogPattern> {
         match &st.shared {
@@ -618,6 +649,35 @@ impl Catalog {
     /// Exécutable imposé par `exe:` pour une recomp à un seul jeu.
     pub fn recomp_exe(&self, rom_id: i64) -> Option<&str> {
         self.recomp_for_rom(rom_id).filter(|r| !r.is_shared())?.launch.exe.as_deref()
+    }
+
+    /// La recomp de ce jeu installé a un launcher à elle, autre chose que « Jouer » : recomp
+    /// partagée, arguments qui ne font que passer son launcher (`--play`, `--game=…`), ou
+    /// launcher relevé devant le vrai jeu. Bouton « Ouvrir la recomp ».
+    pub fn recomp_menu(&self, st: &crate::install::state::InstalledGame) -> bool {
+        if st.pc.is_some() || st.shared.as_ref().is_some_and(|s| s.is_emulator()) {
+            return false;
+        }
+        if st.shared.is_some() {
+            return true;
+        }
+        if st.direct_launch.as_ref().is_some_and(|d| st.executable.as_deref() != Some(d.exe.as_str())) {
+            return true;
+        }
+        self.recomp_for_rom(st.rom_id)
+            .filter(|r| !r.is_shared())
+            .is_some_and(|r| !r.launch.args.is_empty() && r.launch.args.iter().all(|a| skips_menu(a)))
+    }
+
+    /// Notes de la dernière version d'une recomp ou d'un émulateur précis (mode choisi sur la
+    /// page du jeu, installé ou non).
+    pub fn changelog_of(&self, kind: &str, id: &str) -> Option<Changelog> {
+        let (kind, name, v) = match kind {
+            "recomp" => self.recomps.iter().find(|r| r.id == id).map(|r| ("Recomp", &r.name, &r.version))?,
+            "emulator" => self.emulator(id).map(|e| ("Émulateur", &e.name, &e.version))?,
+            _ => return None,
+        };
+        Some(Changelog { kind, name: name.clone(), version: v.nom.clone(), date: v.date.clone(), url: v.url.clone(), notes: v.notes.clone() })
     }
 
     /// Notes de la dernière version de la recomp du jeu, sinon de l'émulateur de sa console.
@@ -868,6 +928,7 @@ mod tests {
             language: vec![],
             optimize: vec![],
             logs: vec![],
+            mods_dirs: vec![],
             controllers: None,
             dialogs: vec![],
             packs: vec![],
@@ -901,6 +962,18 @@ mod tests {
         let e = c.changelog(7, "gba", Target::Windows).unwrap();
         assert_eq!((e.kind, e.name.as_str(), e.notes.as_str()), ("Émulateur", "mGBA", ""));
         assert!(c.changelog(7, "snes", Target::Windows).is_none());
+        // Mode choisi sur la page : l'émulateur même si le jeu a une recomp.
+        assert_eq!(c.changelog_of("emulator", "mgba").unwrap().name, "mGBA");
+        assert_eq!(c.changelog_of("recomp", "pc").unwrap().kind, "Recomp");
+        assert!(c.changelog_of("emulator", "inconnu").is_none());
+    }
+
+    #[test]
+    fn skipping_arguments_open_the_recomp_menu() {
+        assert!(skips_menu("--play"));
+        assert!(skips_menu("--game=yellow"));
+        assert!(!skips_menu("{rom}"));
+        assert!(!skips_menu("--data-dir"));
     }
 
     #[test]
