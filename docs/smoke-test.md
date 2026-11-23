@@ -29,14 +29,22 @@ disque ne se remplit pas). Il faut donc Rust (`cargo`). Il travaille dans
 `%TEMP%\farfa-smoke`, supprimé à la fin : réglages, journaux, émulateur et jeu de test. Les
 jeux et réglages du vrai launcher ne sont pas touchés.
 
+Ce qui peut rester après un test :
+- `%TEMP%\farfa-smoke-journal` : journal du moteur, seulement en cas d'échec ;
+- `%TEMP%\farfa-smoke-cargo.log` : sortie de cargo, seulement si la compilation échoue.
+
+Le test n'efface qu'un dossier marqué par un fichier `.farfa-smoke` (créé par lui) : un
+dossier `farfa-smoke` qui existe déjà sans ce fichier n'est jamais effacé, le test s'arrête.
+
 Options (à ajouter après `smoke-test.bat`, ou à `smoke-test.ps1`) :
 
 | Option | Effet |
 |---|---|
-| `-Console nes` | console du jeu installé et lancé (slug RomM, `snes` par défaut : Snes9x pèse 5 Mo) |
+| `-Console nes` | console du jeu installé et lancé (slug RomM, `snes` par défaut : Snes9x pèse 5 Mo). Pas de Switch (voir plus bas) |
 | `-RomId 1234` | jeu précis à installer et lancer |
 | `-Secondes 20` | durée pendant laquelle le jeu doit tenir (10 par défaut) |
 | `-SansCompilation` | utilise le moteur déjà compilé |
+| `-Dossier D:\Essais` | crée `farfa-smoke` (et `farfa-smoke-journal`) dans ce dossier au lieu de `%TEMP%` |
 | `-ApiSeulement` | seulement la partie réseau (étapes 1 à 10) |
 | `-Discret` | n'affiche ni noms de jeux ni nom de compte |
 
@@ -74,11 +82,11 @@ Toujours commencer par le **premier** échec : les suivants en découlent souven
 | 8 | Gestionnaire (`/health`) | Gestionnaire arrêté : `touch Z:/FarfaRomManager/redemarrer`, puis vérifier `started`. Sinon, ses journaux Docker. |
 | 9 | Catalogue (`/api/catalog`) | 401 : le gestionnaire ne valide plus le jeton auprès de RomM (`/api/users/me`, voir étape 3). Champs absents : fiches ou format du catalogue changés (`manager.rs`). |
 | 10 | Fichier du gestionnaire (`/files/{sha1}`) | 404 : fichier du catalogue absent du NAS (fiche à revalider). |
-| 11 | Compilation du moteur | Lire `%TEMP%\farfa-smoke-cargo.log`. Ou relancer avec `-SansCompilation`. |
+| 11 | Dossier de travail et compilation | « pas créé par le smoke test » : un dossier `farfa-smoke` existe déjà sans marqueur ; le vider ou le renommer à la main. Sinon, lire `%TEMP%\farfa-smoke-cargo.log`. Ou relancer avec `-SansCompilation`. |
 | 12 | Launcher : connexion | Le code du launcher n'accepte plus le serveur alors que les étapes 2 et 3 passent : comparer avec `romm/auth.rs`. |
 | 13 | Launcher : liste des jeux | Pas d'émulateur pour la console sur ce PC (fiche du gestionnaire), ou réponse de RomM que le launcher ne sait plus lire. |
 | 14 | Launcher : installation | Téléchargement ou extraction en échec : le journal du moteur est gardé dans `%TEMP%\farfa-smoke-journal`. |
-| 15 | Launcher : lancement | « fermé avant N s » : l'émulateur plante (nouvelle version ? fiche ?). ATTENTION « pas de fenêtre vue » : il tourne mais rien ne s'affiche. Journal dans `%TEMP%\farfa-smoke-journal`. |
+| 15 | Launcher : lancement | Erreur « not_available » : jeu refusé par `essai` (jeu PC, recomp ou Switch) : choisir une autre console. « fermé avant N s » : l'émulateur plante (nouvelle version ? fiche ?). ATTENTION « pas de fenêtre vue » : il tourne mais rien ne s'affiche. Journal dans `%TEMP%\farfa-smoke-journal`. |
 
 En cas d'échec, le journal du moteur est copié dans `%TEMP%\farfa-smoke-journal` (sans
 le jeton). Le supprimer une fois lu.
@@ -134,9 +142,15 @@ depuis 60 jours. Un courriel prévient ; il suffit de le réactiver dans l'ongle
   `farfalauncherdeck` (`src-tauri/src/deck.rs`) :
   - le jeton lui est passé par la variable `FARFALAUNCHERDECK_JETON` (jamais écrit sur le
     disque) ;
+  - au démarrage, le moteur retire cette variable de son environnement, et `launch::spawn`
+    la retire aussi : les émulateurs et jeux n'en héritent pas ;
   - la commande `essai <id> <secondes>` lance le jeu comme `jouer`, mais sans rien envoyer :
-    `play::start` avec `SaveChoice::Unchanged` (ni téléchargement ni envoi de sauvegarde),
-    et ni `play::finish` (temps de jeu, sauvegarde, shaders), ni `stats::sync`, ni la
-    présence. Le jeu est ensuite prié de se fermer, puis arrêté.
+    - seulement un jeu d'émulateur hors Switch : ainsi `play::start` ne prépare ni jeu PC
+      (client Call of Duty), ni partage des shaders de Citron et Eden (qui peut envoyer au
+      gestionnaire). Le reste est refusé (`not_available`) ;
+    - `play::start` avec `SaveChoice::Unchanged` : ni téléchargement ni envoi de
+      sauvegarde ;
+    - ni `play::finish` (temps de jeu, sauvegarde, shaders), ni `stats::sync`, ni la
+      présence. Le jeu est ensuite prié de se fermer, puis arrêté.
 - Le jeu est choisi sur la première page de la console : le premier de moins de 5 Mo, de
   préférence fait d'un seul fichier.

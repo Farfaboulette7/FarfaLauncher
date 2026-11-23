@@ -127,6 +127,8 @@ pub fn spawn(game_dir: &Path, launch: Launch<'_>) -> AppResult<RunningGame> {
     cmd.current_dir(&work_dir);
     crate::external::use_system_env(&mut cmd);
     crate::language::linux_locale(&mut cmd);
+    // Jeton du smoke test (moteur Deck) : le jeu n'en hérite jamais.
+    cmd.env_remove("FARFALAUNCHERDECK_JETON");
     for (k, v) in launch.env {
         cmd.env(k, direct::expand_args(std::slice::from_ref(v), game_dir).remove(0));
     }

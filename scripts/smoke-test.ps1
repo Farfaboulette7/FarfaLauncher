@@ -21,7 +21,8 @@
     -Console snes      console du jeu installé et lancé (slug RomM ; il faut un émulateur)
     -RomId 1234        jeu précis à installer et lancer (sinon : le premier de moins de 5 Mo)
     -Secondes 10       durée pendant laquelle le jeu doit tenir
-    -Dossier <chemin>  dossier de travail (supprimé à la fin) ; par défaut %TEMP%\farfa-smoke
+    -Dossier <chemin>  dossier où créer le dossier de travail `farfa-smoke` (supprimé à la fin)
+                       et, en cas d'échec, `farfa-smoke-journal` ; par défaut %TEMP%
     -SansCompilation   utilise le moteur déjà compilé, sans lancer cargo
     -Serveur <url>     serveur RomM (sinon FARFA_SMOKE_URL, sinon celui du launcher)
     -Gestionnaire <url> gestionnaire (sinon FARFA_SMOKE_MANAGER, sinon manager.<domaine>)
@@ -87,12 +88,14 @@ function Resume {
     Write-Host ''
     Write-Host '================ Résumé ================'
     Write-Host "OK : $ok   Attention : $attentions   Échecs : $echecs   Sautées : $sautes"
-    if ($echecs -eq 0) {
+    if ($echecs -eq 0 -and $sautes -eq 0) {
         Write-Host 'Tout marche.' -ForegroundColor Green
+    } elseif ($echecs -eq 0) {
+        Write-Host 'Pas d''échec, mais des étapes ont été sautées.' -ForegroundColor Yellow
     } else {
         Write-Host 'Étapes en échec :' -ForegroundColor Red
         $script:Resultats | Where-Object Etat -eq 'ÉCHEC' | ForEach-Object { Write-Host "  - $($_.Nom) : $($_.Detail)" -ForegroundColor Red }
-        Write-Host 'Que faire : voir docs/smoke-test.md, section « Lire un échec ».'
+        Write-Host 'Que faire : voir docs/smoke-test.md, section « Les étapes, et que faire en cas d''échec ».'
     }
     return $echecs
 }
@@ -382,9 +385,29 @@ $srcTauri = Join-Path $depot 'src-tauri'
 # Dossier de build : CARGO_TARGET_DIR s'il est défini, sinon celui des versions de test.
 $cible = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $srcTauri 'target-test' }
 $moteur = Join-Path $cible 'debug\farfalauncherdeck.exe'
-if (-not $Dossier) { $Dossier = Join-Path $env:TEMP 'farfa-smoke' }
-$config = Join-Path $Dossier 'config'
-$jeux = Join-Path $Dossier 'Jeux'
+# Le test travaille TOUJOURS dans un sous-dossier `farfa-smoke` du chemin donné, marqué par un
+# fichier `.farfa-smoke` : `-Dossier C:\Users\moi\Documents` ne peut rien effacer d'autre.
+if (-not $Dossier) { $Dossier = $env:TEMP }
+$travail = Join-Path $Dossier 'farfa-smoke'
+$garde = Join-Path $Dossier 'farfa-smoke-journal'
+$config = Join-Path $travail 'config'
+$jeux = Join-Path $travail 'Jeux'
+$Marqueur = '.farfa-smoke'
+
+# Crée un dossier du smoke test, avec son marqueur.
+function Creer-DossierSmoke([string]$Chemin) {
+    New-Item -ItemType Directory -Force $Chemin | Out-Null
+    Set-Content -Path (Join-Path $Chemin $Marqueur) -Value 'Dossier du smoke test du Farfa project (effaçable).'
+}
+
+# Efface un dossier du smoke test, seulement s'il porte le marqueur (sinon : refus).
+function Effacer-DossierSmoke([string]$Chemin) {
+    if (-not (Test-Path $Chemin)) { return }
+    if (-not (Test-Path (Join-Path $Chemin $Marqueur))) {
+        throw "$Chemin existe mais n'a pas été créé par le smoke test (pas de fichier $Marqueur) : rien n'est effacé"
+    }
+    Remove-Item $Chemin -Recurse -Force
+}
 
 # Lance une commande du moteur et renvoie son objet `data` (ou lève l'erreur qu'il donne).
 # Le moteur écrit une ligne JSON par message : progression, puis « result » ou « error ».
@@ -397,7 +420,17 @@ function Moteur([string[]]$Arguments) {
     return $fin.data
 }
 
-$okMoteur = Etape 'Compilation du moteur du launcher (cargo)' {
+$env:FARFALAUNCHERDECK_CONFIG = $config
+$env:FARFALAUNCHERDECK_JETON = $Jeton   # lu par le moteur, jamais écrit sur le disque
+$okTravail = $false
+
+$okMoteur = Etape 'Dossier de travail et compilation du moteur (cargo)' {
+    # Dossier de travail neuf, préparé AVANT la première commande du moteur : ses réglages,
+    # journaux et jeux vont là, nulle part ailleurs.
+    Effacer-DossierSmoke $travail
+    Creer-DossierSmoke $travail
+    New-Item -ItemType Directory -Force $config, $jeux | Out-Null
+    $script:okTravail = $true
     if (-not $SansCompilation) {
         if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) { throw 'cargo introuvable (installer Rust), ou relancer avec -SansCompilation' }
         $env:CARGO_TARGET_DIR = $cible
@@ -408,17 +441,12 @@ $okMoteur = Etape 'Compilation du moteur du launcher (cargo)' {
             $journal = Join-Path $env:TEMP 'farfa-smoke-cargo.log'
             $p = Start-Process cargo -ArgumentList 'build', '--no-default-features', '--bin', 'farfalauncherdeck' -NoNewWindow -Wait -PassThru -RedirectStandardError $journal
             if ($p.ExitCode -ne 0) { throw "la compilation a échoué (voir $journal)" }
+            Remove-Item $journal -ErrorAction SilentlyContinue   # réussie : journal inutile
         } finally { Pop-Location }
     }
     if (-not (Test-Path $moteur)) { throw "moteur introuvable : $moteur" }
     "farfalauncherdeck $(Moteur @('version'))"
 }
-
-# Dossier de travail neuf : réglages, journaux et jeux du smoke test, rien d'autre.
-if (Test-Path $Dossier) { Remove-Item $Dossier -Recurse -Force }
-New-Item -ItemType Directory -Force $config, $jeux | Out-Null
-$env:FARFALAUNCHERDECK_CONFIG = $config
-$env:FARFALAUNCHERDECK_JETON = $Jeton   # lu par le moteur, jamais écrit sur le disque
 
 $okConnexion = Etape 'Launcher : connexion à RomM' {
     $info = Moteur @('config', '--serveur', $Serveur, '--gestionnaire', $Gestionnaire, '--dossier', $jeux)
@@ -460,13 +488,17 @@ $null = Etape "Launcher : lancement ($Secondes s, sans rien envoyer au serveur)"
 $echecs = Resume
 Remove-Item Env:FARFALAUNCHERDECK_JETON -ErrorAction SilentlyContinue
 $journaux = Join-Path $config 'logs'
-if ($echecs -gt 0 -and (Test-Path $journaux)) {
-    $garde = "$Dossier-journal"
-    if (Test-Path $garde) { Remove-Item $garde -Recurse -Force }
-    Copy-Item $journaux $garde -Recurse
-    Write-Host "Journal du moteur gardé dans : $garde"
+if ($okTravail -and $echecs -gt 0 -and (Test-Path $journaux)) {
+    try {
+        Effacer-DossierSmoke $garde
+        Creer-DossierSmoke $garde
+        Copy-Item (Join-Path $journaux '*') $garde -Recurse
+        Write-Host "Journal du moteur gardé dans : $garde"
+    } catch { Write-Host "Journal non gardé : $($_.Exception.Message)" -ForegroundColor Yellow }
 }
-Start-Sleep -Seconds 2   # le jeu fermé libère ses fichiers
-try { Remove-Item $Dossier -Recurse -Force; Write-Host "Dossier de travail supprimé : $Dossier" }
-catch { Write-Host "Dossier de travail à supprimer à la main : $Dossier" -ForegroundColor Yellow }
+if ($okTravail) {
+    Start-Sleep -Seconds 2   # le jeu fermé libère ses fichiers
+    try { Effacer-DossierSmoke $travail; Write-Host "Dossier de travail supprimé : $travail" }
+    catch { Write-Host "Dossier de travail à supprimer à la main : $travail" -ForegroundColor Yellow }
+}
 exit ([int]($echecs -gt 0))
