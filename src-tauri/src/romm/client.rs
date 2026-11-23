@@ -75,9 +75,17 @@ impl RommClient {
         Ok(Self { base: base.to_string(), token, http })
     }
 
-    /// Même token, autre serveur (serveur des musiques et bruitages).
+    /// Même token, autre serveur (gestionnaire, musiques et bruitages).
+    /// Le token n'est envoyé qu'à une adresse du même domaine que RomM (ou la même machine) :
+    /// une adresse saisie à la main ailleurs ne le reçoit pas (L16).
     pub fn with_base(&self, base: &str) -> Self {
-        Self { base: base.to_string(), token: self.token.clone(), http: self.http.clone() }
+        let token = if same_site(&self.base, base) {
+            self.token.clone()
+        } else {
+            tracing::warn!("adresse hors du domaine de RomM : le token RomM ne lui est pas envoyé");
+            None
+        };
+        Self { base: base.to_string(), token, http: self.http.clone() }
     }
 
     pub fn base(&self) -> &str {
@@ -159,6 +167,20 @@ impl RommClient {
             other => other?,
         };
         parse_json(resp).await
+    }
+}
+
+/// Même machine (même hôte, port ignoré) ou même domaine enregistrable
+/// (`romm.exemple.fr` et `manager.exemple.fr`, voir `assets::derive_subdomain`).
+fn same_site(a: &str, b: &str) -> bool {
+    let host = |u: &str| Url::parse(u).ok().and_then(|u| u.host_str().map(str::to_ascii_lowercase));
+    let (Some(a), Some(b)) = (host(a), host(b)) else { return false };
+    if a == b {
+        return true;
+    }
+    match (psl::domain_str(&a), psl::domain_str(&b)) {
+        (Some(da), Some(db)) => da == db,
+        _ => false,
     }
 }
 
@@ -310,6 +332,20 @@ mod tests {
         let r = read_body_within(resp, "test", Duration::from_millis(300)).await;
         assert!(matches!(r, Err(AppError::Download)));
         server.abort();
+    }
+
+    // L16 : le token ne part qu'au même domaine que RomM (ou à la même machine).
+    #[test]
+    fn token_only_goes_to_the_same_site() {
+        assert!(same_site("https://romm.poupounas.synology.me", "https://manager.poupounas.synology.me"));
+        assert!(same_site("https://romm.example.org", "https://assets.example.org"));
+        assert!(same_site("http://192.168.1.102:8080", "http://192.168.1.102:5000"));
+        assert!(!same_site("https://romm.poupounas.synology.me", "https://autre.synology.me"));
+        assert!(!same_site("https://romm.example.org", "https://example.com"));
+        assert!(!same_site("http://192.168.1.102:8080", "http://192.168.1.50"));
+        let client = RommClient::new("https://romm.example.org", Some("rmm_x".into())).unwrap();
+        assert!(client.with_base("https://manager.example.org").token.is_some());
+        assert!(client.with_base("https://ailleurs.example.com").token.is_none());
     }
 
     // L4 : seul un 401 en JSON de RomM est un token refusé ; un 401 en page HTML (proxy) et un
