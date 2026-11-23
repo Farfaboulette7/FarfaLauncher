@@ -37,7 +37,7 @@ pub async fn session_status(state: State<'_, AppState>) -> AppResult<SessionInfo
     let Some(server_url) = state.settings().server_url else {
         return Ok(SessionInfo::disconnected(None, None));
     };
-    let Some(token) = secrets::load_token(&server_url)? else {
+    let Some(token) = secrets::load_token(&state.config_dir, &server_url)? else {
         return Ok(SessionInfo::disconnected(Some(server_url), None));
     };
     let client = RommClient::new(&server_url, Some(token))?;
@@ -52,7 +52,7 @@ pub async fn session_status(state: State<'_, AppState>) -> AppResult<SessionInfo
         // page d'erreur d'un proxy) le garde : on passe hors ligne comme pour une panne (L4).
         Err(AppError::AuthInvalid) => {
             tracing::warn!("token refusé au démarrage (auth_invalid), suppression");
-            secrets::delete_token(&server_url)?;
+            secrets::delete_token(&state.config_dir, &server_url)?;
             state.set_client(None);
             Ok(SessionInfo::disconnected(Some(server_url), Some(AppError::AuthInvalid.to_string())))
         }
@@ -176,7 +176,7 @@ async fn finish_login(state: &AppState, server_url: &str, token: String) -> AppR
         AppError::AuthInvalid => AppError::TokenRejected,
         other => other,
     })?;
-    secrets::store_token(server_url, &token)?;
+    secrets::store_token(&state.config_dir, server_url, &token)?;
     state.set_client(Some(client));
     state.set_offline(false);
     tracing::info!("connecté en tant que {}", me.username);
@@ -206,7 +206,7 @@ pub async fn check_connection(state: State<'_, AppState>) -> AppResult<bool> {
 #[tauri::command]
 pub fn logout(state: State<'_, AppState>) -> AppResult<()> {
     if let Some(server_url) = state.settings().server_url {
-        secrets::delete_token(&server_url)?;
+        secrets::delete_token(&state.config_dir, &server_url)?;
     }
     state.set_client(None);
     tracing::info!("déconnexion");
