@@ -800,12 +800,19 @@ pub async fn refresh(state: &AppState) {
             let mut found = crate::switch_saves::fill_all(&catalog, &state.config_dir);
             // ID introuvable sur ce PC (XCI sans ID dans son nom) : celui qu'un autre joueur a
             // déjà appris, d'après les shaders partagés du jeu.
-            for mut st in crate::install::state::list_installed(&state.config_dir) {
+            // Hors ligne, rien n'est tenté ; une première requête sans réponse arrête la boucle
+            // (sinon chaque jeu attendrait son délai, l'un après l'autre : L11).
+            let installed = if state.is_offline() { Vec::new() } else { crate::install::state::list_installed(&state.config_dir) };
+            for mut st in installed {
                 if !crate::switch_saves::waiting(&catalog, &st) {
                     continue;
                 }
                 let Some(emu) = catalog.emulator_for_install(&st).map(|e| e.id.clone()) else { continue };
-                let Ok(info) = client.get_json::<serde_json::Value>(&format!("api/shaders/rom/{}?systeme={}", st.rom_id, crate::language::current_system())).await else { continue };
+                let info = match client.get_json::<serde_json::Value>(&format!("api/shaders/rom/{}?systeme={}", st.rom_id, crate::language::current_system())).await {
+                    Ok(info) => info,
+                    Err(AppError::ServerUnreachable) => break,
+                    Err(_) => continue,
+                };
                 let title = info.as_object().into_iter().flat_map(|m| m.values()).find_map(|v| v.get("titleId")?.as_str().map(str::to_string));
                 if let Some(title) = title {
                     crate::shaders::remember_title(&state.config_dir, &emu, st.rom_id, &title);
