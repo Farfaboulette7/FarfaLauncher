@@ -54,7 +54,12 @@ Commandes (réponses en JSON, une ligne par message) :
   restaurer <id> <version>      remet une version (l'actuelle est gardée dans l'historique)
   desinstaller <id> [--garder-sauvegardes]
   jouer <id>                    sauvegarde du serveur, réglages, jeu, envoi de la sauvegarde
-  synchroniser [<id>]           envoie les sauvegardes changées et le temps de jeu en attente";
+  synchroniser [<id>]           envoie les sauvegardes changées et le temps de jeu en attente
+  essai <id> [<secondes>]       smoke test : lance le jeu sans rien envoyer au serveur, vérifie
+                                qu'il tient <secondes> (10 par défaut), puis le ferme
+
+Variable FARFALAUNCHERDECK_JETON : jeton RomM pris là plutôt que dans le fichier `token`
+(smoke test : le jeton n'est jamais écrit sur le disque).";
 
 /// Fermeture demandée du jeu en cours (`jouer`), levée à la réception du signal d'arrêt de Steam.
 static GAME_STOP: std::sync::OnceLock<Arc<std::sync::atomic::AtomicBool>> = std::sync::OnceLock::new();
@@ -154,6 +159,10 @@ fn token_file(config_dir: &Path) -> PathBuf {
 }
 
 fn load_token(config_dir: &Path) -> Option<String> {
+    // Smoke test : jeton passé par l'environnement, jamais écrit sur le disque.
+    if let Some(t) = std::env::var("FARFALAUNCHERDECK_JETON").ok().map(|t| t.trim().to_string()).filter(|t| !t.is_empty()) {
+        return Some(t);
+    }
     std::fs::read_to_string(token_file(config_dir)).ok().map(|t| t.trim().to_string()).filter(|t| !t.is_empty())
 }
 
@@ -303,6 +312,10 @@ async fn run(args: Vec<String>) -> AppResult<Value> {
             after_game(&open_state(), pid, id, started).await
         }
         "synchroniser" => sync(&open_state(), rest.first().and_then(|a| a.parse().ok())).await,
+        "essai" => {
+            let secs = rest.get(1).and_then(|s| s.parse().ok()).unwrap_or(10);
+            smoke_launch(&open_state(), rom_id(rest.first())?, secs).await
+        }
         _ => {
             eprintln!("{USAGE}");
             Err(AppError::Internal)
@@ -368,6 +381,9 @@ async fn config(state: &AppState, args: &[String]) -> AppResult<Value> {
         crate::romm::auth::me(&client).await?;
         store_token(&state.config_dir, token)?;
         state.set_client(Some(client));
+    } else if let (Some(url), Some(token)) = (server, load_token(&state.config_dir)) {
+        // Serveur changé avec un jeton déjà connu (fichier ou FARFALAUNCHERDECK_JETON) : connecté tout de suite.
+        state.set_client(Some(RommClient::new(&url, Some(token))?));
     }
     info(state).await
 }
@@ -742,6 +758,37 @@ async fn play(state: &AppState, id: i64) -> AppResult<Value> {
     // Fin de partie traitée ici : le veilleur n'a plus que la synchronisation à vérifier.
     let _ = std::fs::write(session_marker(state, id, started.unix_timestamp()), b"");
     Ok(json!({ "finished": finished, "crashed": crashed, "crash": crash }))
+}
+
+/// Smoke test (`scripts/smoke-test.ps1`) : lance un jeu installé comme `jouer`, mais sans
+/// rien écrire sur le serveur. `play::start` avec `SaveChoice::Unchanged` ne télécharge ni
+/// n'envoie de sauvegarde ; on n'appelle ni `play::finish` (temps de jeu, sauvegarde,
+/// shaders), ni `stats::sync`, ni la présence. Le jeu doit tenir `secs` secondes, puis il est
+/// fermé (prié de se fermer, puis arrêté).
+async fn smoke_launch(state: &AppState, id: i64, secs: u64) -> AppResult<Value> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let _lock = lock(state, id)?;
+    state::find(&state.config_dir, id).ok_or(AppError::NotInstalled)?.executable.ok_or(AppError::NoExecutable)?;
+    // Réglages du catalogue à jour (lecture seule), comme `jouer`.
+    if state.client().is_ok() {
+        refresh_catalog(state).await;
+    }
+    let crate::play::Started { running, .. } = crate::play::start(state, id, SaveChoice::Unchanged, None, false, &[]).await?;
+    emit(json!({ "type": "started", "data": { "romId": id } }));
+    let stop = running.stop_flag();
+    let window = Arc::new(AtomicBool::new(false));
+    let seen = window.clone();
+    let mut game = tokio::task::spawn_blocking(move || running.wait_outcome(|| seen.store(true, Ordering::Relaxed)));
+    // Fini avant le délai : le jeu s'est fermé tout seul (planté).
+    let early = tokio::time::timeout(std::time::Duration::from_secs(secs), &mut game).await.ok();
+    let alive = early.is_none();
+    stop.store(true, Ordering::Relaxed);
+    let (_, crash) = match early {
+        Some(r) => r,
+        None => game.await,
+    }
+    .unwrap_or((None, None));
+    Ok(json!({ "romId": id, "alive": alive, "seconds": secs, "window": window.load(Ordering::Relaxed), "crash": crash }))
 }
 
 /// Présence des amis pendant la partie : « en jeu » toutes les 60 s (sauf « Apparaître hors
