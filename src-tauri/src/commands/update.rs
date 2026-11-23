@@ -163,4 +163,43 @@ mod tests {
         assert_eq!(test_endpoint("test-../../x"), None);
         assert_eq!(test_endpoint("test-a/b"), None);
     }
+
+    // Les adresses des deux canaux sont des URL valides (sinon check_update échoue toujours).
+    #[test]
+    fn channel_endpoints_are_valid_urls() {
+        for beta in [false, true] {
+            for u in endpoints(beta) {
+                let url = url::Url::parse(u).unwrap();
+                assert_eq!(url.scheme(), "https");
+                assert!(u.ends_with("/latest.json"));
+            }
+        }
+    }
+
+    // Le canal bêta lit la release « canal-beta » que release.yml remplit à chaque publication.
+    #[test]
+    fn beta_channel_matches_the_release_workflow() {
+        let release = include_str!("../../../.github/workflows/release.yml");
+        assert!(BETA.contains("/releases/download/canal-beta/"));
+        assert!(release.contains("tag: 'canal-beta'"), "release.yml ne remplit plus la release canal-beta");
+    }
+
+    // Les tags acceptés pour une version de test sont ceux que test.yml compile (`test-*`).
+    #[test]
+    fn test_tags_match_the_test_workflow() {
+        let workflow = include_str!("../../../.github/workflows/test.yml");
+        assert!(workflow.contains(r#"tags: ["test-*"]"#));
+        assert!(test_endpoint("test-x").is_some());
+        assert_eq!(test_endpoint("Test-x"), None);
+        assert_eq!(test_endpoint("test-a b"), None);
+    }
+
+    // Un tag de plus de 80 caractères est refusé (garde-fou sur l'adresse construite).
+    #[test]
+    fn test_tag_length_is_bounded() {
+        let ok = format!("test-{}", "1".repeat(75));
+        assert_eq!(ok.len(), 80);
+        assert!(test_endpoint(&ok).is_some());
+        assert_eq!(test_endpoint(&format!("{ok}1")), None);
+    }
 }

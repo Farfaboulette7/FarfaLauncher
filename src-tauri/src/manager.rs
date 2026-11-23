@@ -1120,3 +1120,92 @@ mod saves_tests {
         assert!(old.language.is_empty());
     }
 }
+
+/// Lecture du catalogue de FarfaRomManager (`api/catalog`, gardé dans `catalog.json`) et
+/// adresse du gestionnaire.
+#[cfg(test)]
+mod catalog_tests {
+    use super::*;
+
+    /// Dossier de config temporaire propre à un test.
+    fn temp_config(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("farfa-{name}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    // L'adresse du gestionnaire se déduit de celle de RomM ; celle saisie à la main passe avant.
+    #[test]
+    fn manager_url_is_derived_or_set_by_hand() {
+        let mut s = Settings { server_url: Some("https://romm.example.org".into()), ..Settings::default() };
+        assert_eq!(base_url(&s).as_deref(), Some("https://manager.example.org"));
+        s.manager_url = Some("https://gestion.example.org".into());
+        assert_eq!(base_url(&s).as_deref(), Some("https://gestion.example.org"));
+        // Serveur sur une IP locale : rien à déduire, il faut la saisir.
+        let lan = Settings { server_url: Some("http://192.168.1.20:8080".into()), ..Settings::default() };
+        assert_eq!(base_url(&lan), None);
+        assert_eq!(base_url(&Settings::default()), None);
+    }
+
+    // Catalogue vide ou réduit au minimum : lu, sections manquantes = listes vides.
+    #[test]
+    fn minimal_catalog_is_read() {
+        let c: Catalog = serde_json::from_str("{}").unwrap();
+        assert!(c.recomps.is_empty() && c.emulators.is_empty());
+        let c: Catalog = serde_json::from_str(r#"{"recomps":[{"id":"x"}]}"#).unwrap();
+        let r = c.recomp("x").unwrap();
+        assert!(r.files.is_empty() && r.games.is_empty() && r.version.cle.is_empty());
+    }
+
+    // Les champs ajoutés plus tard par le gestionnaire sont ignorés : un vieux launcher lit
+    // toujours le catalogue d'un gestionnaire plus récent.
+    #[test]
+    fn unknown_fields_are_ignored() {
+        let text = r#"{"format":9,"nouveau":{"a":1},"recomps":[{"id":"x","champNeuf":[1,2]}],
+          "emulators":[{"id":"e","name":"E","consoles":["gba"],"version":{"cle":"k","nom":"1","autre":true},"bientot":"oui"}]}"#;
+        let c: Catalog = serde_json::from_str(text).unwrap();
+        assert_eq!((c.recomps.len(), c.emulators.len()), (1, 1));
+        assert_eq!(c.emulator("e").unwrap().version.nom, "1");
+    }
+
+    // Comportement actuel : un émulateur sans champ obligatoire (ici `version`) fait refuser tout
+    // le catalogue ; refresh garde alors le précédent.
+    #[test]
+    fn emulator_without_version_rejects_the_catalog() {
+        let text = r#"{"recomps":[{"id":"x"}],"emulators":[{"id":"e","name":"E","consoles":["gba"]}]}"#;
+        assert!(serde_json::from_str::<Catalog>(text).is_err());
+    }
+
+    // Le catalogue gardé sur le disque se relit hors ligne ; absent ou abîmé, il est vide.
+    #[test]
+    fn cached_catalog_is_read_back() {
+        let dir = temp_config("catalogue-cache");
+        assert!(Catalog::load_cached(&dir).recomps.is_empty());
+        std::fs::write(dir.join(CACHE_FILE), r#"{"recomps":[{"id":"x","games":[{"romId":7}]}],"emulators":[]}"#).unwrap();
+        let c = Catalog::load_cached(&dir);
+        assert_eq!(c.recomp_for_rom(7).unwrap().id, "x");
+        std::fs::write(dir.join(CACHE_FILE), "{ tronqué").unwrap();
+        assert!(Catalog::load_cached(&dir).recomps.is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    // Un fichier du gestionnaire se télécharge par son SHA-1, et son identifiant en vient.
+    #[test]
+    fn manager_file_is_addressed_by_its_sha1() {
+        let f = ManagerFile { name: "a_Windows.zip".into(), size: 3, sha1: "00000000000f".to_string() + &"0".repeat(28), system: None, dest: None };
+        assert_eq!(f.download_path(), format!("files/{}", f.sha1));
+        let r = f.remote();
+        assert_eq!((r.id, r.file_name.as_str(), r.size, r.from_manager), (0xf, "a_Windows.zip", 3, true));
+        // SHA-1 trop court ou pas en hexadécimal : identifiant 0, sans panique.
+        let short = ManagerFile { sha1: "zz".into(), ..f };
+        assert_eq!(short.remote().id, 0);
+    }
+
+    // L'identifiant d'un émulateur ne change jamais d'une version à l'autre : les
+    // installations existantes (installed.json) y sont rattachées.
+    #[test]
+    fn runtime_ids_never_change() {
+        assert_eq!(runtime_id("mgba"), -1534277117161153806);
+        assert_eq!(runtime_id("eden"), -1052650270587837512);
+    }
+}

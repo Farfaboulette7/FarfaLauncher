@@ -1,45 +1,81 @@
-# Vérifications à chaque push sur main (et sur la branche macos) : types TypeScript,
-# build de l'interface et tests Rust (Windows, plateforme prioritaire, Linux et Mac).
+# Vérifications à chaque push, sur toutes les branches (main, correctifs des rapports…),
+# et sur les pull requests :
+#   - tests : types TypeScript, build de l'interface et tests Rust (tests.yml), sur Windows
+#     (plateforme prioritaire), Linux et Mac ;
+#   - deck : compilation du binaire FarfaLauncherDeck (Steam Deck, sans interface) ;
+#   - mac-app : application Mac téléchargeable dans les artefacts du run.
+# Les tags (v*, test-*) ne passent pas par ici : release.yml et test.yml lancent leurs tests.
 name: CI
 
 on:
   push:
-    branches: [main, macos]
+    branches: ["**"]
   pull_request:
+  # Bouton « Run workflow » de l'onglet Actions (par exemple pour avoir le binaire du Deck).
+  workflow_dispatch:
+
+# Un nouveau push sur la même branche annule le run précédent, devenu inutile.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
-    strategy:
-      fail-fast: false
-      matrix:
-        platform: [windows-latest, ubuntu-22.04, macos-latest]
-    runs-on: ${{ matrix.platform }}
+  tests:
+    uses: ./.github/workflows/tests.yml
+    with:
+      plateformes: '["windows-latest", "ubuntu-22.04", "macos-latest"]'
+
+  # FarfaLauncherDeck : le moteur du launcher sans interface, pour le Steam Deck (plugin
+  # NieRDeck). Compilé à chaque push pour qu'une erreur propre au Deck se voie tout de suite ;
+  # le binaire Linux x86_64 est dans les artefacts du run, pour l'essayer sur le Deck avant
+  # une publication. (Remplace l'ancien deck.yml.)
+  deck:
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
+          key: deck
 
-      - name: Dépendances système (Linux)
-        if: matrix.platform == 'ubuntu-22.04'
+      # SDL (manettes) compilé en statique : libudev pour trouver les manettes ; sa
+      # compilation Linux exige aussi X11 ou Wayland (mêmes paquets que l'AppImage).
+      - name: Dépendances système
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev libudev-dev pkg-config libxss-dev libxkbcommon-dev libwayland-dev libegl1-mesa-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev libxtst-dev libasound2-dev libpulse-dev libdrm-dev libgbm-dev
+          sudo apt-get install -y cmake pkg-config libudev-dev libdbus-1-dev libxss-dev libxkbcommon-dev libwayland-dev libegl1-mesa-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev libxtst-dev libasound2-dev libpulse-dev libdrm-dev libgbm-dev
 
-      - run: npm ci
-      - run: npx tsc --noEmit
-      # Le build de l'interface est requis : Tauri l'embarque à la compilation.
-      - run: npm run build
-      - run: cargo test
+      - name: Compiler
         working-directory: src-tauri
+        # Erreurs reprises en annotations : lisibles sans ouvrir le journal du run.
+        run: |
+          set -o pipefail
+          cargo build --release --no-default-features --bin farfalauncherdeck --message-format short 2>&1 | tee build.log || {
+            grep -E "error|panicked|undefined reference|cannot find|not found" build.log | head -30 | while IFS= read -r l; do echo "::error::$l"; done
+            exit 1
+          }
+
+      # Le binaire démarre et répond, sans serveur ni configuration.
+      - name: Essai
+        working-directory: src-tauri
+        run: |
+          ./target/release/farfalauncherdeck version
+          FARFALAUNCHERDECK_CONFIG="$RUNNER_TEMP/deck" ./target/release/farfalauncherdeck info
+
+      - name: Préparer
+        run: |
+          mkdir -p out
+          cp src-tauri/target/release/farfalauncherdeck out/FarfaLauncherDeck-linux-x86_64
+          chmod +x out/FarfaLauncherDeck-linux-x86_64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FarfaLauncherDeck-linux-x86_64
+          path: out/FarfaLauncherDeck-linux-x86_64
+          retention-days: 14
 
   # Application Mac (Apple Silicon) construite à chaque push : téléchargeable dans
   # les artefacts du run, pour la faire essayer avant une publication.

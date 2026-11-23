@@ -87,3 +87,112 @@ pub fn save(config_dir: &Path, settings: &Settings) -> AppResult<()> {
         .and_then(|_| std::fs::rename(&tmp, &path))
         .map_err(|e| log_err(AppError::Internal, "écriture de settings.json", e))
 }
+
+/// Lecture et écriture de `settings.json`.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Dossier de config temporaire propre à un test.
+    fn temp_config(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("farfa-{name}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    // Ce qui est enregistré par save se relit à l'identique par load.
+    #[test]
+    fn save_then_load_gives_the_same_settings() {
+        let dir = temp_config("reglages-relus");
+        let mut s = Settings::default();
+        s.server_url = Some("https://romm.example.org".into());
+        s.install_dir = Some(PathBuf::from("D:/Jeux"));
+        s.fullscreen = false;
+        s.optimize_off = vec![3, 7];
+        s.recomp_choice.insert(7, "longshot".into());
+        s.reports_seen.insert("20261117-1".into(), 42);
+        s.download_limit_mb = 25;
+        s.beta_channel = true;
+        save(&dir, &s).unwrap();
+
+        let back = load(&dir);
+        assert_eq!(back.server_url, s.server_url);
+        assert_eq!(back.install_dir, s.install_dir);
+        assert_eq!(back.device_id, s.device_id);
+        assert!(!back.fullscreen);
+        assert_eq!(back.optimize_off, [3, 7]);
+        assert_eq!(back.recomp_choice.get(&7).map(String::as_str), Some("longshot"));
+        assert_eq!(back.reports_seen.get("20261117-1"), Some(&42));
+        assert_eq!(back.download_limit_mb, 25);
+        assert!(back.beta_channel);
+        // Écriture atomique : pas de fichier temporaire qui traîne.
+        assert!(!dir.join("settings.json.tmp").exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    // Premier lancement (pas de fichier) : valeurs par défaut, avec un identifiant d'appareil.
+    #[test]
+    fn missing_file_gives_defaults() {
+        let dir = temp_config("reglages-absents");
+        let s = load(&dir);
+        assert!(s.server_url.is_none() && s.install_dir.is_none());
+        assert!(s.fullscreen && !s.beta_channel && !s.presence_hidden);
+        assert_eq!(s.download_limit_mb, 0);
+        assert!(!s.device_id.is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    // Fichier d'une ancienne version (champs manquants) : les champs présents sont gardés, les
+    // autres prennent leur valeur par défaut ; un champ inconnu (version plus récente) est ignoré.
+    #[test]
+    fn old_file_keeps_its_values() {
+        let dir = temp_config("reglages-anciens");
+        std::fs::write(
+            settings_path(&dir),
+            r#"{"server_url":"https://romm.example.org","device_id":"appareil-1","fullscreen":false,"champ_du_futur":1}"#,
+        )
+        .unwrap();
+        let s = load(&dir);
+        assert_eq!(s.server_url.as_deref(), Some("https://romm.example.org"));
+        assert_eq!(s.device_id, "appareil-1");
+        assert!(!s.fullscreen);
+        assert!(!s.beta_channel && s.recomp_choice.is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    // Comportement actuel : fichier illisible = valeurs par défaut, sans panique (voir L3).
+    #[test]
+    fn unreadable_file_gives_defaults() {
+        let dir = temp_config("reglages-illisibles");
+        std::fs::write(settings_path(&dir), "{ tronqué").unwrap();
+        let s = load(&dir);
+        assert!(s.server_url.is_none() && s.fullscreen);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    // save crée le dossier de config s'il n'existe pas encore.
+    #[test]
+    fn save_creates_the_config_folder() {
+        let dir = temp_config("reglages-dossier").join("nouveau");
+        save(&dir, &Settings::default()).unwrap();
+        assert!(settings_path(&dir).is_file());
+        std::fs::remove_dir_all(dir.parent().unwrap()).unwrap();
+    }
+
+    // Au démarrage, un settings.json illisible n'est pas remplacé par les valeurs par défaut :
+    // son contenu (adresse du serveur, dossier des jeux…) reste dans le dossier de config.
+    #[test]
+    #[ignore = "bug L3 de docs/audit-2026-11.md, corrigé à l'étape 3"]
+    fn startup_does_not_overwrite_an_unreadable_file() {
+        let dir = temp_config("reglages-ecrases");
+        let broken = r#"{"server_url":"https://romm.example.org","install_dir":"D:/Jeux""#; // tronqué
+        std::fs::write(settings_path(&dir), broken).unwrap();
+        let _state = crate::state::AppState::new(dir.clone(), dir.join("logs"), dir.join("cache"), dir.join("Jeux"));
+        let kept = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .any(|e| std::fs::read_to_string(e.path()).is_ok_and(|t| t.contains(broken)));
+        assert!(kept, "le contenu de l'ancien settings.json a été perdu");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}

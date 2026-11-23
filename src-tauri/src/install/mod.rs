@@ -1890,3 +1890,52 @@ mod tests {
         std::fs::remove_dir_all(&root).unwrap();
     }
 }
+
+/// Chemins relatifs venus du serveur (manifestes, catalogue) : `rel_to_path` et `path_to_rel`.
+#[cfg(test)]
+mod path_tests {
+    use super::*;
+    use std::path::Component;
+
+    // Un chemin `a/b/c` donne les mêmes dossiers sur tous les systèmes.
+    #[test]
+    fn slash_separated_path_becomes_a_path() {
+        assert_eq!(rel_to_path("ROM/jeu.z64"), Path::new("ROM").join("jeu.z64"));
+        assert_eq!(rel_to_path("a//b/"), Path::new("a").join("b"));
+        assert_eq!(rel_to_path(""), PathBuf::new());
+    }
+
+    // `..` et la barre de début sont retirés : on reste dans le dossier du jeu.
+    #[test]
+    fn dot_dot_and_leading_slash_are_dropped() {
+        assert_eq!(rel_to_path("../../etc/passwd"), Path::new("etc").join("passwd"));
+        assert_eq!(rel_to_path("a/../b"), Path::new("a").join("b"));
+        assert_eq!(rel_to_path("/etc/passwd"), Path::new("etc").join("passwd"));
+        let base = Path::new("jeux").join("Zelda");
+        assert!(base.join(rel_to_path("/../../x")).starts_with(&base));
+    }
+
+    // path_to_rel est l'inverse de rel_to_path (séparateurs `/` dans les fichiers d'état).
+    #[test]
+    fn path_to_rel_round_trips() {
+        for rel in ["ROM/jeu.z64", "bin/x64/jeu.exe", "jeu.exe"] {
+            assert_eq!(path_to_rel(&rel_to_path(rel)), rel);
+        }
+    }
+
+    // Aucun chemin venu du serveur ne sort du dossier du jeu, même écrit à la Windows
+    // (`..\`, lettre de lecteur, chemin UNC).
+    #[test]
+    #[ignore = "bug L5 de docs/audit-2026-11.md, corrigé à l'étape 3"]
+    fn windows_style_paths_stay_inside_the_game_folder() {
+        let base = Path::new("jeux").join("Zelda");
+        for rel in ["..\\..\\x.dll", "a\\..\\..\\x", "C:/Windows/x.dll", "C:x.dll", "\\\\serveur\\partage\\x"] {
+            let p = rel_to_path(rel);
+            assert!(p.components().all(|c| matches!(c, Component::Normal(_))), "{rel} → {}", p.display());
+            assert!(base.join(&p).starts_with(&base), "{rel} sort du dossier du jeu");
+            // Sous Linux, `\` et `:` sont des caractères permis : on les refuse quand même, un
+            // manifeste doit donner le même résultat sur tous les systèmes.
+            assert!(p.components().all(|c| !c.as_os_str().to_string_lossy().contains(['\\', ':'])), "{rel} → {}", p.display());
+        }
+    }
+}

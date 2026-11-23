@@ -691,3 +691,227 @@ mod bo3_tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
+
+/// Registre `installed.json` et fichier d'état de chaque jeu (`farfalauncher.json`) : lecture,
+/// écriture, compatibilité avec les fichiers des anciennes versions.
+#[cfg(test)]
+mod registry_tests {
+    use super::*;
+
+    /// Dossier temporaire propre à un test, avec `config/` (registre) et `Jeux/` (jeux).
+    fn temp_root(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("farfa-{name}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("config")).unwrap();
+        root
+    }
+
+    /// Un jeu installé minimal (recomp Windows) dans `game_dir`, dossier créé.
+    fn game(rom_id: i64, game_dir: PathBuf) -> InstalledGame {
+        std::fs::create_dir_all(&game_dir).unwrap();
+        InstalledGame {
+            ways: Vec::new(),
+            rom_id,
+            name: format!("Jeu {rom_id}"),
+            version: Some("1.0".into()),
+            version_raw: Some("1.0\n".into()),
+            target: Target::Windows,
+            archive_name: "jeu_Windows.zip".into(),
+            executable: Some("bin/jeu.exe".into()),
+            pending_candidates: vec![],
+            roms: vec!["rom.z64".into()],
+            rom_sources: vec![],
+            mods_downloaded: vec![],
+            saves: SaveSync::default(),
+            direct_launch: None,
+            prefer_launcher: false,
+            players: Vec::new(),
+            installed_at: 10,
+            updated_at: 20,
+            game_dir,
+            pc: None,
+            shared: None,
+        }
+    }
+
+    /// Registre écrit à la main, au format des anciennes versions : une seule entrée.
+    fn old_registry(config: &Path, rom_id: i64, game_dir: &Path) {
+        let reg = format!(r#"{{"games":[{{"romId":{rom_id},"gameDir":{}}}]}}"#, serde_json::to_string(game_dir).unwrap());
+        std::fs::write(config.join("installed.json"), reg).unwrap();
+    }
+
+    // Ce qui est écrit par write_state se relit à l'identique par find et list_installed.
+    #[test]
+    fn write_then_read_back() {
+        let root = temp_root("registre-relu");
+        let config = root.join("config");
+        let st = game(5, root.join("Jeux").join("Zelda"));
+        write_state(&config, &st).unwrap();
+
+        let found = find(&config, 5).unwrap();
+        assert_eq!(found.name, "Jeu 5");
+        assert_eq!(found.version.as_deref(), Some("1.0"));
+        assert_eq!(found.version_raw.as_deref(), Some("1.0\n"));
+        assert_eq!(found.executable.as_deref(), Some("bin/jeu.exe"));
+        assert_eq!(found.roms, ["rom.z64"]);
+        assert_eq!((found.installed_at, found.updated_at), (10, 20));
+        assert_eq!(found.game_dir, st.game_dir);
+        assert_eq!(list_installed(&config).len(), 1);
+        assert!(find(&config, 6).is_none());
+        // Le registre est dans installed.json, l'état du jeu dans son dossier.
+        assert!(config.join("installed.json").is_file());
+        assert!(st.game_dir.join(STATE_FILE).is_file());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // Réécrire un jeu remplace son entrée au registre sans la dupliquer.
+    #[test]
+    fn rewriting_a_game_keeps_one_entry() {
+        let root = temp_root("registre-reecrit");
+        let config = root.join("config");
+        let mut st = game(5, root.join("Jeux").join("Zelda"));
+        write_state(&config, &st).unwrap();
+        st.version = Some("2.0".into());
+        write_state(&config, &st).unwrap();
+        let all = list_installed(&config);
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].version.as_deref(), Some("2.0"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // Un jeu dont le dossier a été supprimé à la main n'est plus listé.
+    #[test]
+    fn deleted_game_folder_is_not_listed() {
+        let root = temp_root("registre-supprime");
+        let config = root.join("config");
+        let st = game(5, root.join("Jeux").join("Zelda"));
+        write_state(&config, &st).unwrap();
+        write_state(&config, &game(6, root.join("Jeux").join("Mario"))).unwrap();
+        std::fs::remove_dir_all(&st.game_dir).unwrap();
+        assert!(find(&config, 5).is_none());
+        assert_eq!(list_installed(&config).iter().map(|g| g.rom_id).collect::<Vec<_>>(), [6]);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // Une entrée du registre qui pointe vers le dossier d'un autre jeu est ignorée.
+    #[test]
+    fn registry_entry_must_match_the_game_in_the_folder() {
+        let root = temp_root("registre-autre-jeu");
+        let config = root.join("config");
+        let st = game(6, root.join("Jeux").join("Mario"));
+        write_state(&config, &st).unwrap();
+        old_registry(&config, 5, &st.game_dir);
+        assert!(find(&config, 5).is_none());
+        assert!(list_installed(&config).is_empty());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // Registre des anciennes versions (ni `alternates` ni `page`) : toujours lu.
+    #[test]
+    fn old_registry_format_is_still_read() {
+        let root = temp_root("registre-ancien");
+        let config = root.join("config");
+        let st = game(5, root.join("Jeux").join("Zelda"));
+        write_state(&config, &st).unwrap();
+        old_registry(&config, 5, &st.game_dir);
+        assert_eq!(find(&config, 5).unwrap().name, "Jeu 5");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // Fichier d'état d'une ancienne version (seulement les champs obligatoires) : lu, le
+    // reste prend sa valeur par défaut, et un champ inconnu (version plus récente) est ignoré.
+    #[test]
+    fn old_state_file_is_still_read() {
+        let root = temp_root("etat-ancien");
+        let dir = root.join("Jeux").join("Zelda");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(STATE_FILE),
+            r#"{"romId":5,"name":"Zelda","version":null,"target":"Linux","archiveName":"z_Linux.zip",
+                "executable":"z","installedAt":1,"updatedAt":2,"champDuFutur":true}"#,
+        )
+        .unwrap();
+        let st = read_state(&dir).unwrap();
+        assert_eq!((st.rom_id, st.target, st.executable.as_deref()), (5, Target::Linux, Some("z")));
+        assert!(st.roms.is_empty() && st.saves.dir.is_none() && !st.saves.pending_upload && st.pc.is_none());
+        // Le dossier n'est pas stocké : c'est celui où le fichier a été lu.
+        assert_eq!(st.game_dir, dir);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // Fichier d'état illisible ou absent : pas de jeu (ni panique, ni valeurs inventées).
+    #[test]
+    fn unreadable_state_file_gives_nothing() {
+        let root = temp_root("etat-illisible");
+        let dir = root.join("Jeux").join("Zelda");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(STATE_FILE), "{ pas du json").unwrap();
+        assert!(read_state(&dir).is_none());
+        assert!(read_state(&root.join("absent")).is_none());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // Comportement actuel : registre illisible = aucun jeu installé, sans panique (voir L2).
+    #[test]
+    fn unreadable_registry_lists_nothing() {
+        let root = temp_root("registre-illisible");
+        let config = root.join("config");
+        write_state(&config, &game(5, root.join("Jeux").join("Zelda"))).unwrap();
+        std::fs::write(config.join("installed.json"), "{ tronqué").unwrap();
+        assert!(list_installed(&config).is_empty());
+        assert!(find(&config, 5).is_none());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // Un registre illisible n'est pas écrasé par la prochaine écriture : son contenu (les jeux
+    // installés) reste quelque part dans le dossier de config.
+    #[test]
+    #[ignore = "bug L2 de docs/audit-2026-11.md, corrigé à l'étape 3"]
+    fn unreadable_registry_is_not_overwritten() {
+        let root = temp_root("registre-ecrase");
+        let config = root.join("config");
+        let broken = r#"{"games":[{"romId":5,"gameDir":"C:/Jeux/Zelda"}"#; // fichier tronqué
+        std::fs::write(config.join("installed.json"), broken).unwrap();
+        write_state(&config, &game(6, root.join("Jeux").join("Mario"))).unwrap();
+        let kept = std::fs::read_dir(&config)
+            .unwrap()
+            .filter_map(Result::ok)
+            .any(|e| std::fs::read_to_string(e.path()).is_ok_and(|t| t.contains(broken)));
+        assert!(kept, "le contenu de l'ancien installed.json a été perdu");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // Dossier du jeu déplacé : le registre suit, le jeu est retrouvé au nouvel endroit.
+    #[test]
+    fn relocate_follows_the_moved_folder() {
+        let root = temp_root("registre-deplace");
+        let config = root.join("config");
+        let old = root.join("Jeux").join("Zelda");
+        write_state(&config, &game(5, old.clone())).unwrap();
+        let new = root.join("Autre").join("Zelda");
+        std::fs::create_dir_all(new.parent().unwrap()).unwrap();
+        std::fs::rename(&old, &new).unwrap();
+        assert!(find(&config, 5).is_none());
+        relocate(&config, &old, &new).unwrap();
+        assert_eq!(find(&config, 5).unwrap().game_dir, new);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // Le premier write_state crée le dossier de config s'il n'existe pas encore.
+    #[test]
+    fn first_write_creates_the_config_folder() {
+        let root = temp_root("registre-premier");
+        let config = root.join("config").join("nouveau");
+        write_state(&config, &game(5, root.join("Jeux").join("Zelda"))).unwrap();
+        assert!(find(&config, 5).is_some());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // L'identifiant de recomp se lit dans le nom de l'archive (`<id>_<Système>.zip`).
+    #[test]
+    fn recomp_id_comes_from_the_archive_name() {
+        assert_eq!(recomp_id_of("zelda_Windows.zip").as_deref(), Some("zelda"));
+        assert_eq!(recomp_id_of("ship_of_harkinian_Linux.zip").as_deref(), Some("ship_of_harkinian"));
+        assert_eq!(recomp_id_of("_Windows.zip"), None);
+        assert_eq!(recomp_id_of("sanssysteme.zip"), None);
+    }
+}

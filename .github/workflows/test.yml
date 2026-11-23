@@ -1,6 +1,8 @@
 # Version de test d'une correction, pour un seul joueur : à chaque tag test-<rapport>-<n>
-# (poussé par la surveillance des rapports, outils/surveille-rapports), compile Windows et
-# Linux (AppImage), signe les paquets et publie une pré-release avec son latest.json.
+# (poussé par la surveillance des rapports, outils/surveille-rapports), lance d'abord les tests
+# (tests.yml, Windows et Linux), puis compile Windows et Linux (AppImage), signe les paquets et
+# publie une pré-release avec son latest.json. Si un test échoue, rien n'est publié : le run
+# finit en échec et la surveillance des rapports met le rapport « à décider ».
 #
 # Le joueur l'installe depuis la discussion de son signalement (« Installer la version de
 # test », commands/update.rs : install_test_version). Elle garde le numéro de version du
@@ -20,7 +22,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Tests d'abord : tous les autres jobs en dépendent (needs), directement ou non.
+  tests:
+    uses: ./.github/workflows/tests.yml
+
   create-release:
+    needs: tests
     runs-on: ubuntu-latest
     outputs:
       release_id: ${{ steps.create.outputs.result }}

@@ -220,4 +220,66 @@ mod tests {
         save_queue(&dir, &[]).unwrap();
         assert_eq!(pending_count(&dir), 0);
     }
+
+    /// Dossier de config temporaire et une session de `minutes` minutes sur le jeu `rom_id`.
+    fn temp_config(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("farfa-{name}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+    fn session(rom_id: i64, minutes: i64) -> PendingSession {
+        let start = OffsetDateTime::from_unix_timestamp(1_792_800_000).unwrap();
+        PendingSession::new(rom_id, start, start + time::Duration::minutes(minutes))
+    }
+
+    // Une fin avant le début (horloge changée) donne une durée nulle, jamais négative.
+    #[test]
+    fn end_before_start_gives_zero() {
+        let start = OffsetDateTime::from_unix_timestamp(1_792_800_000).unwrap();
+        assert_eq!(PendingSession::new(1, start, start - time::Duration::minutes(5)).duration_ms, 0);
+    }
+
+    // Plusieurs parties hors ligne : toutes gardées, dans l'ordre, et relues après un redémarrage.
+    #[test]
+    fn several_offline_sessions_are_all_kept() {
+        let dir = temp_config("sessions-plusieurs");
+        enqueue(&dir, session(1, 5)).unwrap();
+        enqueue(&dir, session(2, 10)).unwrap();
+        enqueue(&dir, session(1, 15)).unwrap();
+        let queue = load_queue(&dir);
+        assert_eq!(queue.iter().map(|s| (s.rom_id, s.duration_ms)).collect::<Vec<_>>(), [(1, 300_000), (2, 600_000), (1, 900_000)]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    // File vide : rien n'est envoyé (le serveur, injoignable, n'est même pas contacté).
+    #[tokio::test]
+    async fn empty_queue_sends_nothing() {
+        let dir = temp_config("sessions-vide");
+        let client = RommClient::new("http://127.0.0.1:9", None).unwrap();
+        assert_eq!(flush(&client, &dir).await.unwrap(), 0);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    // Serveur injoignable : l'envoi échoue et les sessions restent dans la file, intactes.
+    #[tokio::test]
+    async fn unreachable_server_keeps_the_queue() {
+        let dir = temp_config("sessions-hors-ligne");
+        enqueue(&dir, session(1, 5)).unwrap();
+        enqueue(&dir, session(2, 10)).unwrap();
+        // Port local fermé : la connexion est refusée tout de suite, sans réseau.
+        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let client = RommClient::new(&format!("http://127.0.0.1:{port}"), None).unwrap();
+        assert!(flush(&client, &dir).await.is_err());
+        assert_eq!(load_queue(&dir), [session(1, 5), session(2, 10)]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    // Comportement actuel : une file illisible compte pour vide (sans panique).
+    #[test]
+    fn unreadable_queue_counts_as_empty() {
+        let dir = temp_config("sessions-illisible");
+        std::fs::write(queue_path(&dir), "[ tronqué").unwrap();
+        assert_eq!(pending_count(&dir), 0);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }
