@@ -315,8 +315,7 @@ pub async fn choose_executable(state: State<'_, AppState>, rom_id: i64, executab
 async fn game_details(state: &AppState, rom_id: i64) -> AppResult<Game> {
     let cached = state
         .library
-        .lock()
-        .unwrap()
+        .lock_or_recover()
         .as_ref()
         .and_then(|s| s.games.iter().find(|g| g.id == rom_id && g.details_loaded).cloned());
     match cached {

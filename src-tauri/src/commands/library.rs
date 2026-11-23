@@ -163,8 +163,7 @@ async fn start_refresh(app: &AppHandle, state: &AppState) -> AppResult<LibrarySn
                 Err(e) => {
                     let name = state
                         .library
-                        .lock()
-                        .unwrap()
+                        .lock_or_recover()
                         .as_ref()
                         .and_then(|s| s.games.iter().find(|g| g.id == id).map(|g| g.name.clone()))
                         .unwrap_or_else(|| id.to_string());
