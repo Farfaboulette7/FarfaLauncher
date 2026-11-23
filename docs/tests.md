@@ -60,7 +60,10 @@ La liste s'affiche avec `cargo test --lib -- --list --ignored`.
 
 Dans chaque fichier Rust, en bas, dans un bloc `#[cfg(test)] mod … { … }`. Chaque test a une
 ligne de commentaire au-dessus qui dit ce qu'il garantit. Les tests qui écrivent des fichiers
-le font dans un dossier temporaire (`%TEMP%\farfa-…`), qu'ils suppriment à la fin.
+le font dans un dossier temporaire (`%TEMP%\farfa-…`). Les nouveaux tests le suppriment à la
+fin s'ils réussissent ; une quinzaine de tests plus anciens laissent encore leurs dossiers
+(`%TEMP%\farfa-test-*`, `farfa-detect-*`, `farfa-queue`, `farfa-cache`) : sans danger, on
+peut les effacer.
 
 Il n'y a pas de tests de l'interface (React) : `tsc` vérifie seulement les types.
 

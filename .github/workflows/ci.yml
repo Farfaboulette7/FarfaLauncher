@@ -14,6 +14,11 @@ on:
   # Bouton « Run workflow » de l'onglet Actions (par exemple pour avoir le binaire du Deck).
   workflow_dispatch:
 
+# Un nouveau push sur la même branche annule le run précédent, devenu inutile.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   tests:
     uses: ./.github/workflows/tests.yml
