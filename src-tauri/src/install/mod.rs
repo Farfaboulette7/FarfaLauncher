@@ -962,12 +962,16 @@ pub fn rel_to_path(rel: &str) -> PathBuf {
 }
 
 /// `C:x.dll` → `x.dll`, `C:` → `` ; le reste ne change pas.
-fn without_drive_letter(s: &str) -> &str {
-    let b = s.as_bytes();
-    if b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':' {
-        &s[2..]
-    } else {
-        s
+/// Retire TOUTES les lettres de lecteur de tête : `C:D:x` → `x` (sinon `D:x` sortirait du
+/// dossier du jeu sous Windows).
+fn without_drive_letter(mut s: &str) -> &str {
+    loop {
+        let b = s.as_bytes();
+        if b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':' {
+            s = &s[2..];
+        } else {
+            return s;
+        }
     }
 }
 
@@ -1951,7 +1955,7 @@ mod path_tests {
     #[test]
     fn windows_style_paths_stay_inside_the_game_folder() {
         let base = Path::new("jeux").join("Zelda");
-        for rel in ["a/C:b.dll", "..\\..\\x.dll", "a\\..\\..\\x", "C:/Windows/x.dll", "C:x.dll", "\\\\serveur\\partage\\x"] {
+        for rel in ["a/C:b.dll", "..\\..\\x.dll", "a\\..\\..\\x", "C:/Windows/x.dll", "C:x.dll", "\\\\serveur\\partage\\x", "a/C:D:x.dll", "C:D:\\x"] {
             let p = rel_to_path(rel);
             assert!(p.components().all(|c| matches!(c, Component::Normal(_))), "{rel} → {}", p.display());
             assert!(base.join(&p).starts_with(&base), "{rel} sort du dossier du jeu");
