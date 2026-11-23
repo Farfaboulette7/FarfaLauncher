@@ -389,6 +389,33 @@ impl RunningGame {
     }
 }
 
+/// Arrête un programme et tous ceux qu'il a lancés (annulation d'une construction, d'un
+/// installateur). Sert à `install/prepare.rs` et `pc/install.rs` (L9).
+/// - Linux, Mac : SIGKILL à tout son groupe de processus (il doit avoir été lancé avec
+///   `process_group(0)`) ;
+/// - Windows : `taskkill /T /F`, qui suit l'arbre des processus (enfants, petits-enfants…).
+pub(crate) fn kill_tree(child: &mut Child) {
+    #[cfg(unix)]
+    signal_group(child.id(), "KILL");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let r = Command::new("taskkill")
+            .args(["/T", "/F", "/PID", &child.id().to_string()])
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        if let Err(e) = r {
+            tracing::warn!("taskkill non lancé: {e}");
+        }
+    }
+    // Le programme lui-même, au cas où (déjà fini : sans effet), puis on attend sa fin.
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 /// Envoie un signal à tout le groupe de processus du jeu.
 #[cfg(unix)]
 fn signal_group(pgid: u32, signal: &str) {
@@ -400,7 +427,7 @@ fn signal_group(pgid: u32, signal: &str) {
 
 /// Un processus non zombie appartient-il encore au groupe `pgid` ?
 #[cfg(target_os = "linux")]
-fn group_alive(pgid: u32) -> bool {
+pub(crate) fn group_alive(pgid: u32) -> bool {
     let Ok(rd) = std::fs::read_dir("/proc") else { return false };
     rd.filter_map(Result::ok)
         .filter(|e| e.file_name().to_string_lossy().bytes().all(|b| b.is_ascii_digit()))
@@ -754,6 +781,33 @@ fn fatal_signal(signal: i32) -> Option<String> {
         _ => return None,
     };
     Some(format!("signal {signal} ({name})"))
+}
+
+#[cfg(test)]
+mod kill_tests {
+    // L9 : annuler arrête aussi les sous-programmes (ici `ping`, lancé par `cmd`).
+    #[cfg(windows)]
+    #[test]
+    fn kill_tree_stops_grandchildren() {
+        use sysinfo::{Pid, ProcessesToUpdate, System};
+        let mut child = std::process::Command::new("cmd").args(["/c", "ping -n 60 127.0.0.1 > nul"]).spawn().unwrap();
+        let parent = Pid::from_u32(child.id());
+        let mut sys = System::new();
+        let mut grandchild = None;
+        for _ in 0..50 {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            sys.refresh_processes(ProcessesToUpdate::All, true);
+            grandchild = sys.processes().iter().find(|(_, p)| p.parent() == Some(parent) && p.name().eq_ignore_ascii_case("ping.exe")).map(|(pid, _)| *pid);
+            if grandchild.is_some() {
+                break;
+            }
+        }
+        let grandchild = grandchild.expect("ping n'a pas démarré");
+        super::kill_tree(&mut child);
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        sys.refresh_processes(ProcessesToUpdate::All, true);
+        assert!(sys.process(grandchild).is_none(), "le sous-programme tourne encore");
+    }
 }
 
 #[cfg(test)]

@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{log_err, AppError, AppResult};
 use crate::install::state::InstalledGame;
 use crate::manager::{self, Catalog};
-use crate::romm::client::{check_status, error_chain, parse_json, RommClient};
+use crate::romm::client::{error_chain, parse_json, RommClient};
 use crate::romm::saves::{self as romm, ServerSave};
 use crate::settings::Settings;
 
@@ -168,14 +168,14 @@ impl RecompSave {
         if resp.status() == StatusCode::NOT_FOUND {
             return Ok(None);
         }
-        let save: ManagerSave = parse_json(check_status(resp).await?).await?;
+        let save: ManagerSave = parse_json(self.manager.check(resp).await?).await?;
         Ok(Some(RemoteSave { updated_at: save.updated_at, romm: None }))
     }
 
     pub async fn download(&self) -> AppResult<Vec<u8>> {
-        let resp = self.manager.send(self.manager.get_stream(&format!("{}/content", self.path))).await?;
-        let bytes = resp.bytes().await.map_err(|e| log_err(AppError::Download, "téléchargement de la sauvegarde", e))?;
-        Ok(bytes.to_vec())
+        // Délai d'attente sur la réponse et entre deux morceaux (L6).
+        let resp = self.manager.send_stream(self.manager.get_stream(&format!("{}/content", self.path))).await?;
+        crate::romm::client::read_body(resp, "téléchargement de la sauvegarde").await
     }
 
     pub async fn upload(&self, zip: Vec<u8>) -> AppResult<String> {

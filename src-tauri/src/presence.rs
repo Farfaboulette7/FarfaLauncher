@@ -12,6 +12,7 @@ use serde_json::{json, Value};
 use crate::error::{AppError, AppResult};
 use crate::romm::client::{parse_json, RommClient};
 use crate::state::AppState;
+use crate::error::LockOrRecover;
 
 /// Intervalle entre deux signaux (le gestionnaire attend 3 min avant d'oublier).
 pub const INTERVAL_SECS: u64 = 60;
@@ -66,7 +67,7 @@ pub fn body(game: Option<FriendGame>) -> Value {
 
 /// Nom d'un jeu : bibliothèque en mémoire, sinon le jeu installé.
 pub fn game_ref(state: &AppState, rom_id: i64) -> FriendGame {
-    let from_library = state.library.lock().unwrap().as_ref().and_then(|l| l.games.iter().find(|g| g.id == rom_id).map(|g| g.name.clone()));
+    let from_library = state.library.lock_or_recover().as_ref().and_then(|l| l.games.iter().find(|g| g.id == rom_id).map(|g| g.name.clone()));
     let name = from_library
         .or_else(|| crate::install::state::find(&state.config_dir, rom_id).map(|g| g.name))
         .unwrap_or_default();
@@ -75,7 +76,7 @@ pub fn game_ref(state: &AppState, rom_id: i64) -> FriendGame {
 
 /// Jeu en cours dans ce launcher (le plus petit identifiant s'il y en a plusieurs).
 pub fn current_game(state: &AppState) -> Option<FriendGame> {
-    let id = state.running.lock().unwrap().iter().copied().min()?;
+    let id = state.running.lock_or_recover().iter().copied().min()?;
     Some(game_ref(state, id))
 }
 

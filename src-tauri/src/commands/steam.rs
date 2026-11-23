@@ -7,6 +7,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use crate::steam;
+use crate::error::LockOrRecover;
 
 /// Jeu demandé par un raccourci Steam, pas encore pris par l'interface.
 static PENDING: Mutex<Option<i64>> = Mutex::new(None);
@@ -24,8 +25,8 @@ pub fn play_arg(args: &[String]) -> Option<i64> {
 pub fn on_start(args: &[String]) {
     if let Some(id) = play_arg(args) {
         tracing::info!("lancé par Steam pour le jeu {id}");
-        *PENDING.lock().unwrap() = Some(id);
-        *OPENED_FOR.lock().unwrap() = Some(id);
+        *PENDING.lock_or_recover() = Some(id);
+        *OPENED_FOR.lock_or_recover() = Some(id);
     }
 }
 
@@ -38,7 +39,7 @@ pub fn on_second_instance(app: &AppHandle, args: &[String]) {
     }
     if let Some(id) = play_arg(args) {
         tracing::info!("raccourci Steam : jeu {id}");
-        *PENDING.lock().unwrap() = Some(id);
+        *PENDING.lock_or_recover() = Some(id);
         let _ = app.emit("play-request", id);
     }
 }
@@ -46,7 +47,7 @@ pub fn on_second_instance(app: &AppHandle, args: &[String]) {
 /// Fin d'une partie : fermer le launcher s'il n'a été ouvert que pour elle (et sans plantage
 /// à signaler).
 pub fn after_game(app: &AppHandle, rom_id: i64, crashed: bool) {
-    let mut opened = OPENED_FOR.lock().unwrap();
+    let mut opened = OPENED_FOR.lock_or_recover();
     if *opened != Some(rom_id) {
         return;
     }
@@ -66,7 +67,7 @@ pub fn after_game(app: &AppHandle, rom_id: i64, crashed: bool) {
 /// Jeu à lancer demandé par Steam (une seule fois).
 #[tauri::command]
 pub fn take_play_request() -> Option<i64> {
-    PENDING.lock().unwrap().take()
+    PENDING.lock_or_recover().take()
 }
 
 #[derive(serde::Serialize)]
@@ -94,7 +95,7 @@ async fn image(state: &State<'_, AppState>, url: Option<String>) -> Option<std::
 pub async fn add_to_steam(state: State<'_, AppState>, rom_id: i64) -> AppResult<steam::Added> {
     let config = steam::steam_root().and_then(|r| steam::user_config_dir(&r)).ok_or(AppError::NotAvailable)?;
     let installed = crate::install::state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
-    let game = state.library.lock().unwrap().as_ref().and_then(|l| l.games.iter().find(|g| g.id == rom_id).cloned());
+    let game = state.library.lock_or_recover().as_ref().and_then(|l| l.games.iter().find(|g| g.id == rom_id).cloned());
     let name = game.as_ref().map(|g| g.name.clone()).unwrap_or(installed.name);
     let cover = image(&state, game.as_ref().and_then(|g| g.cover_url.clone())).await;
     let shot = image(&state, game.as_ref().and_then(|g| g.screenshot_urls.first().cloned())).await;

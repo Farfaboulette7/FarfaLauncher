@@ -380,8 +380,10 @@ fn expand_disc(text: &str, id: Option<&str>) -> Option<String> {
     }
     let id = id?;
     let text = text.replace("{discid}", id);
-    let short = &id[..4];
-    let region = match id.as_bytes()[3] {
+    // ID de moins de 4 octets (ou coupé au milieu d'un caractère) : pas de variable, sans
+    // paniquer (L12).
+    let short = id.get(..4)?;
+    let region = match short.as_bytes()[3] {
         b'E' | b'N' => "USA",
         b'J' => "JAP",
         b'K' | b'Q' | b'T' => "KOR",
@@ -1119,6 +1121,9 @@ mod disc_tests {
         // Sans identifiant lisible : pas de dossier deviné au hasard.
         assert_eq!(expand_disc("GC/{region}", None), None);
         assert_eq!(expand_disc("prb", None).as_deref(), Some("prb"));
+        // ID trop court ou coupé dans un caractère : rien, sans paniquer (L12).
+        assert_eq!(expand_disc("GC/{region}", Some("GZ")), None);
+        assert_eq!(expand_disc("{gameid}", Some("GZXé1")), None);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

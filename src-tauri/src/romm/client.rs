@@ -12,6 +12,9 @@ use crate::error::{log_err, AppError, AppResult};
 
 const USER_AGENT: &str = concat!("FarfaLauncher/", env!("CARGO_PKG_VERSION"));
 const API_TIMEOUT: Duration = Duration::from_secs(45);
+/// Téléchargements (`get_stream`, sans délai global) : temps maximum sans rien recevoir, ni
+/// en-têtes ni données. Un serveur muet ne bloque donc jamais un lancement (L6).
+pub const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Normalise l'adresse saisie par l'utilisateur.
 /// - ajoute `https://` si aucun schéma n'est donné ;
@@ -60,6 +63,9 @@ pub struct RommClient {
     base: String,
     token: Option<String>,
     http: reqwest::Client,
+    /// Faux pour un client `with_base` (gestionnaire, assets) : son 401 ne dit rien du token
+    /// RomM et ne doit jamais déconnecter le joueur.
+    romm: bool,
 }
 
 impl RommClient {
@@ -69,12 +75,20 @@ impl RommClient {
             .connect_timeout(Duration::from_secs(10))
             .build()
             .map_err(|e| log_err(AppError::Internal, "création du client HTTP", e))?;
-        Ok(Self { base: base.to_string(), token, http })
+        Ok(Self { base: base.to_string(), token, http, romm: true })
     }
 
-    /// Même token, autre serveur (serveur des musiques et bruitages).
+    /// Même token, autre serveur (gestionnaire, musiques et bruitages).
+    /// Le token n'est envoyé qu'à une adresse du même domaine que RomM (ou la même machine) :
+    /// une adresse saisie à la main ailleurs ne le reçoit pas (L16).
     pub fn with_base(&self, base: &str) -> Self {
-        Self { base: base.to_string(), token: self.token.clone(), http: self.http.clone() }
+        let token = if same_site(&self.base, base) {
+            self.token.clone()
+        } else {
+            tracing::warn!("adresse hors du domaine de RomM : le token RomM ne lui est pas envoyé");
+            None
+        };
+        Self { base: base.to_string(), token, http: self.http.clone(), romm: false }
     }
 
     pub fn base(&self) -> &str {
@@ -135,7 +149,27 @@ impl RommClient {
 
     pub async fn send(&self, req: RequestBuilder) -> AppResult<Response> {
         let resp = req.send().await.map_err(|e| log_err(AppError::ServerUnreachable, "requête HTTP", error_chain(&e)))?;
-        check_status(resp).await
+        self.check(resp).await
+    }
+
+    /// `check_status`, sauf qu'un 401 d'un autre serveur que RomM (gestionnaire, assets)
+    /// devient une erreur serveur : seul RomM peut dire que le token RomM est refusé, et
+    /// `auth_invalid` renvoie le joueur à l'écran de connexion en effaçant son token.
+    pub async fn check(&self, resp: Response) -> AppResult<Response> {
+        match check_status(resp).await {
+            Err(AppError::AuthInvalid) if !self.romm => {
+                tracing::warn!("401 du gestionnaire ou des assets : le token RomM est gardé");
+                Err(AppError::Server)
+            }
+            other => other,
+        }
+    }
+
+    /// Comme `send`, pour une requête `get_stream` : abandonne si le serveur ne répond pas
+    /// (en-têtes) dans les `IDLE_TIMEOUT`. Le corps se lit ensuite avec `read_body` ou avec
+    /// son propre délai par morceau.
+    pub async fn send_stream(&self, req: RequestBuilder) -> AppResult<Response> {
+        send_within(self.send(req), IDLE_TIMEOUT).await
     }
 
     /// Lecture JSON ; une erreur serveur passagère (5xx) est retentée une fois.
@@ -152,6 +186,55 @@ impl RommClient {
     }
 }
 
+/// Même machine (même hôte, port ignoré) ou même domaine enregistrable
+/// (`romm.exemple.fr` et `manager.exemple.fr`, voir `assets::derive_subdomain`).
+/// Une adresse IP n'a pas de domaine : seulement la même adresse.
+fn same_site(a: &str, b: &str) -> bool {
+    let (Ok(a), Ok(b)) = (Url::parse(a), Url::parse(b)) else { return false };
+    match (a.host(), b.host()) {
+        (Some(url::Host::Domain(a)), Some(url::Host::Domain(b))) => {
+            let (a, b) = (a.to_ascii_lowercase(), b.to_ascii_lowercase());
+            if a == b {
+                return true;
+            }
+            match (psl::domain_str(&a), psl::domain_str(&b)) {
+                (Some(da), Some(db)) => da == db,
+                _ => false,
+            }
+        }
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    }
+}
+
+/// Attend une réponse au plus `limit`, sinon serveur injoignable.
+async fn send_within(fut: impl std::future::Future<Output = AppResult<Response>>, limit: Duration) -> AppResult<Response> {
+    match tokio::time::timeout(limit, fut).await {
+        Ok(result) => result,
+        Err(_) => Err(log_err(AppError::ServerUnreachable, "requête HTTP", format!("aucune réponse depuis {} s", limit.as_secs()))),
+    }
+}
+
+/// Lit tout le corps d'une réponse (sauvegarde…), en abandonnant après `IDLE_TIMEOUT` sans
+/// recevoir de données. Un gros fichier lent mais qui avance n'est jamais coupé.
+pub async fn read_body(resp: Response, what: &str) -> AppResult<Vec<u8>> {
+    read_body_within(resp, what, IDLE_TIMEOUT).await
+}
+
+async fn read_body_within(resp: Response, what: &str, idle: Duration) -> AppResult<Vec<u8>> {
+    use futures_util::StreamExt;
+    let mut body = Vec::new();
+    let mut stream = resp.bytes_stream();
+    loop {
+        match tokio::time::timeout(idle, stream.next()).await {
+            Err(_) => return Err(log_err(AppError::Download, what, format!("aucune donnée reçue depuis {} s", idle.as_secs()))),
+            Ok(None) => return Ok(body),
+            Ok(Some(Err(e))) => return Err(log_err(AppError::Download, what, error_chain(&e))),
+            Ok(Some(Ok(chunk))) => body.extend_from_slice(&chunk),
+        }
+    }
+}
+
 /// Traduit les statuts d'erreur HTTP en erreurs utilisateur.
 pub async fn check_status(resp: Response) -> AppResult<Response> {
     let status = resp.status();
@@ -161,12 +244,26 @@ pub async fn check_status(resp: Response) -> AppResult<Response> {
     let url = resp.url().path().to_string();
     let body = resp.text().await.unwrap_or_default();
     tracing::warn!("HTTP {status} sur {url}: {}", truncate(&body, 300));
-    Err(match status {
-        StatusCode::UNAUTHORIZED => AppError::AuthInvalid,
+    Err(status_error(status, &body))
+}
+
+/// Erreur correspondant à un statut HTTP d'échec et au corps de la réponse.
+/// Un 401 ne veut dire « token refusé » (`AuthInvalid`, le token est alors oublié) que s'il
+/// vient vraiment de RomM, qui répond toujours en JSON (`{"detail": …}`). Un 401 en page HTML
+/// vient d'un intermédiaire (proxy, portail) : erreur serveur passagère, le token est gardé.
+fn status_error(status: StatusCode, body: &str) -> AppError {
+    match status {
+        StatusCode::UNAUTHORIZED if serde_json::from_str::<serde_json::Value>(body).is_ok_and(|v| v.get("detail").is_some()) => {
+            AppError::AuthInvalid
+        }
+        StatusCode::UNAUTHORIZED => {
+            tracing::warn!("401 qui ne vient pas de RomM (pas de JSON) : proxy ? Le token est gardé");
+            AppError::Server
+        }
         StatusCode::FORBIDDEN => AppError::Forbidden,
         StatusCode::TOO_MANY_REQUESTS => AppError::RateLimited,
         _ => AppError::Server,
-    })
+    }
 }
 
 pub async fn parse_json<T: DeserializeOwned>(resp: Response) -> AppResult<T> {
@@ -222,6 +319,98 @@ pub fn truncate(s: &str, max: usize) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // L6 : un serveur (local) qui accepte la connexion mais ne répond jamais ne bloque pas.
+    #[tokio::test]
+    async fn silent_server_times_out() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        // Accepte et garde la connexion ouverte, sans jamais rien envoyer.
+        let server = tokio::spawn(async move {
+            let (_sock, _) = listener.accept().await.unwrap();
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+        let client = RommClient::new(&format!("http://{addr}"), None).unwrap();
+        let r = send_within(client.send(client.get_stream("api/x")), Duration::from_millis(300)).await;
+        assert!(matches!(r, Err(AppError::ServerUnreachable)));
+        server.abort();
+    }
+
+    // L6 : en-têtes reçus puis plus rien : la lecture du corps abandonne au lieu d'attendre.
+    #[tokio::test]
+    async fn stalled_body_times_out() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = sock.read(&mut buf).await;
+            // Annonce 100 octets, n'en envoie que 10, puis se tait.
+            sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n0123456789").await.unwrap();
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+        let client = RommClient::new(&format!("http://{addr}"), None).unwrap();
+        let resp = send_within(client.send(client.get_stream("api/x")), Duration::from_secs(5)).await.unwrap();
+        let r = read_body_within(resp, "test", Duration::from_millis(300)).await;
+        assert!(matches!(r, Err(AppError::Download)));
+        server.abort();
+    }
+
+    // Un 401 en JSON venant du gestionnaire (client `with_base`) ne déconnecte jamais de RomM ;
+    // le même 401 venant de RomM, si.
+    #[tokio::test]
+    async fn manager_401_never_logs_out() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            for _ in 0..2 {
+                let (mut sock, _) = listener.accept().await.unwrap();
+                let mut buf = [0u8; 1024];
+                let _ = sock.read(&mut buf).await;
+                let body = r#"{"detail":"Invalid token"}"#;
+                let head = format!("HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+                sock.write_all(head.as_bytes()).await.unwrap();
+                sock.write_all(body.as_bytes()).await.unwrap();
+            }
+        });
+        let romm = RommClient::new(&format!("http://{addr}"), Some("rmm_x".into())).unwrap();
+        assert!(matches!(romm.send(romm.get("api/users/me")).await, Err(AppError::AuthInvalid)));
+        let manager = romm.with_base(&format!("http://{addr}"));
+        assert!(matches!(manager.send(manager.get("api/catalog")).await, Err(AppError::Server)));
+        server.abort();
+    }
+
+    // L16 : le token ne part qu'au même domaine que RomM (ou à la même machine).
+    #[test]
+    fn token_only_goes_to_the_same_site() {
+        assert!(same_site("https://romm.poupounas.synology.me", "https://manager.poupounas.synology.me"));
+        assert!(same_site("https://romm.example.org", "https://assets.example.org"));
+        assert!(same_site("http://192.168.1.102:8080", "http://192.168.1.102:5000"));
+        assert!(!same_site("https://romm.poupounas.synology.me", "https://autre.synology.me"));
+        assert!(!same_site("https://romm.example.org", "https://example.com"));
+        assert!(!same_site("http://192.168.1.102:8080", "http://192.168.1.50"));
+        // Des IP différentes ne partagent jamais un « domaine » (pas de liste des suffixes).
+        assert!(!same_site("http://10.0.0.5", "http://192.168.0.5"));
+        assert!(!same_site("http://[::1]:8080", "http://[::2]:8080"));
+        assert!(same_site("http://[::1]:8080", "http://[::1]:5000"));
+        assert!(!same_site("http://romm.example.org", "http://10.0.0.5"));
+        let client = RommClient::new("https://romm.example.org", Some("rmm_x".into())).unwrap();
+        assert!(client.with_base("https://manager.example.org").token.is_some());
+        assert!(client.with_base("https://ailleurs.example.com").token.is_none());
+    }
+
+    // L4 : seul un 401 en JSON de RomM est un token refusé ; un 401 en page HTML (proxy) et un
+    // 403 ne le sont pas (le token est gardé au démarrage).
+    #[test]
+    fn only_a_romm_401_rejects_the_token() {
+        assert!(matches!(status_error(StatusCode::UNAUTHORIZED, r#"{"detail":"Invalid token"}"#), AppError::AuthInvalid));
+        assert!(matches!(status_error(StatusCode::UNAUTHORIZED, "<html><body>401 Authorization Required</body></html>"), AppError::Server));
+        assert!(matches!(status_error(StatusCode::UNAUTHORIZED, ""), AppError::Server));
+        assert!(matches!(status_error(StatusCode::FORBIDDEN, "<html>403 Forbidden</html>"), AppError::Forbidden));
+        assert!(matches!(status_error(StatusCode::BAD_GATEWAY, ""), AppError::Server));
+    }
 
     #[test]
     fn normalize_adds_https_and_strips_slash() {

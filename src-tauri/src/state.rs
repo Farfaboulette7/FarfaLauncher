@@ -11,6 +11,7 @@ use crate::cache::LibrarySnapshot;
 use crate::error::{AppError, AppResult};
 use crate::romm::client::RommClient;
 use crate::settings::{self, Settings};
+use crate::error::LockOrRecover;
 
 pub struct PendingDevice {
     pub server_url: String,
@@ -65,14 +66,20 @@ fn keep_installed_recomps(catalog: &mut crate::manager::Catalog, config_dir: &st
 
 impl AppState {
     pub fn new(config_dir: PathBuf, log_dir: PathBuf, cache_dir: PathBuf, default_install_root: PathBuf) -> Self {
+        crate::safe_file::remove_stale_tmp(&config_dir);
         let settings = settings::load(&config_dir);
         let mut catalog = crate::manager::Catalog::load_cached(&config_dir);
         catalog.choices = settings.recomp_choice.clone();
         keep_installed_recomps(&mut catalog, &config_dir);
         let manifest = crate::runtimes::Manifest::load_cached(&config_dir).with_catalog(&catalog);
-        // Persiste immédiatement le device_id généré au premier lancement.
-        if let Err(e) = settings::save(&config_dir, &settings) {
-            tracing::error!("impossible d'enregistrer les paramètres initiaux: {e}");
+        // Persiste immédiatement le device_id généré au premier lancement. Seulement si le
+        // fichier n'existe pas : un settings.json qu'on n'a pas pu lire n'est pas écrasé par les
+        // valeurs par défaut (un fichier abîmé a déjà été mis de côté par `load`).
+        let missing = !settings::settings_path(&config_dir).exists();
+        if missing {
+            if let Err(e) = settings::save(&config_dir, &settings) {
+                tracing::error!("impossible d'enregistrer les paramètres initiaux: {e}");
+            }
         }
         Self {
             config_dir,
@@ -100,24 +107,43 @@ impl AppState {
     }
 
     /// Marque le jeu occupé jusqu'à la fin de la garde renvoyée.
+    /// Vérifié et inscrit sous les mêmes verrous que `start_running`, pris dans le même ordre
+    /// (installs, puis running, puis busy) : une désinstallation et un lancement du même jeu
+    /// ne peuvent plus se croiser (L13).
     pub fn mark_busy(&self, rom_id: i64) -> AppResult<BusyGuard<'_>> {
-        if self.running.lock().unwrap().contains(&rom_id) {
+        let installs = self.installs.lock_or_recover();
+        let running = self.running.lock_or_recover();
+        if running.contains(&rom_id) {
             return Err(AppError::AlreadyRunning);
         }
-        if self.installs.lock().unwrap().contains_key(&rom_id) || !self.busy.lock().unwrap().insert(rom_id) {
+        if installs.contains_key(&rom_id) || !self.busy.lock_or_recover().insert(rom_id) {
             return Err(AppError::Busy);
         }
         Ok(BusyGuard { state: self, rom_id })
     }
 
+    /// Inscrit le jeu comme lancé, s'il n'est ni en installation, ni occupé (désinstallation,
+    /// déplacement…), ni déjà lancé. Mêmes verrous et même ordre que `mark_busy` (L13).
+    pub fn start_running(&self, rom_id: i64) -> AppResult<()> {
+        let installs = self.installs.lock_or_recover();
+        let mut running = self.running.lock_or_recover();
+        if installs.contains_key(&rom_id) || self.is_busy(rom_id) {
+            return Err(AppError::Busy);
+        }
+        if !running.insert(rom_id) {
+            return Err(AppError::AlreadyRunning);
+        }
+        Ok(())
+    }
+
     pub fn manifest(&self) -> crate::runtimes::Manifest {
-        self.manifest.lock().unwrap().clone()
+        self.manifest.lock_or_recover().clone()
     }
 
     /// Catalogue du gestionnaire, avec les recomps choisies par le joueur.
     pub fn catalog(&self) -> crate::manager::Catalog {
-        let mut catalog = self.catalog.lock().unwrap().clone();
-        catalog.choices = self.settings.lock().unwrap().recomp_choice.clone();
+        let mut catalog = self.catalog.lock_or_recover().clone();
+        catalog.choices = self.settings.lock_or_recover().recomp_choice.clone();
         keep_installed_recomps(&mut catalog, &self.config_dir);
         catalog
     }
@@ -130,17 +156,17 @@ impl AppState {
             family.extend(crate::install::state::pages_in(&self.config_dir, &st.game_dir));
         }
         let others: Vec<i64> = family.into_iter().filter(|id| *id != rom_id).collect();
-        if others.iter().any(|id| self.running.lock().unwrap().contains(id)) {
+        if others.iter().any(|id| self.running.lock_or_recover().contains(id)) {
             return Err(AppError::AlreadyRunning);
         }
-        if others.iter().any(|id| self.installs.lock().unwrap().contains_key(id) || self.is_busy(*id)) {
+        if others.iter().any(|id| self.installs.lock_or_recover().contains_key(id) || self.is_busy(*id)) {
             return Err(AppError::Busy);
         }
         Ok(())
     }
 
     pub fn is_busy(&self, rom_id: i64) -> bool {
-        self.busy.lock().unwrap().contains(&rom_id)
+        self.busy.lock_or_recover().contains(&rom_id)
     }
 
     pub fn install_root(&self) -> PathBuf {
@@ -148,11 +174,11 @@ impl AppState {
     }
 
     pub fn settings(&self) -> Settings {
-        self.settings.lock().unwrap().clone()
+        self.settings.lock_or_recover().clone()
     }
 
     pub fn update_settings(&self, f: impl FnOnce(&mut Settings)) -> AppResult<Settings> {
-        let mut guard = self.settings.lock().unwrap();
+        let mut guard = self.settings.lock_or_recover();
         f(&mut guard);
         settings::save(&self.config_dir, &guard)?;
         Ok(guard.clone())
@@ -164,11 +190,11 @@ impl AppState {
 
     /// Client authentifié courant, ou `AuthInvalid` si déconnecté.
     pub fn client(&self) -> AppResult<RommClient> {
-        self.client.lock().unwrap().clone().ok_or(AppError::AuthInvalid)
+        self.client.lock_or_recover().clone().ok_or(AppError::AuthInvalid)
     }
 
     pub fn set_client(&self, client: Option<RommClient>) {
-        *self.client.lock().unwrap() = client;
+        *self.client.lock_or_recover() = client;
     }
 
     /// Le serveur était injoignable au dernier essai.
@@ -202,6 +228,27 @@ pub struct BusyGuard<'a> {
 
 impl Drop for BusyGuard<'_> {
     fn drop(&mut self) {
-        self.state.busy.lock().unwrap().remove(&self.rom_id);
+        self.state.busy.lock_or_recover().remove(&self.rom_id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // L13 : un lancement et une désinstallation du même jeu, en même temps : jamais les deux.
+    #[test]
+    fn launch_and_uninstall_never_both_start() {
+        let dir = std::env::temp_dir().join(format!("farfa-etat-{}", uuid::Uuid::new_v4()));
+        let state = AppState::new(dir.clone(), dir.join("logs"), dir.join("cache"), dir.join("Jeux"));
+        for rom_id in 0..300 {
+            let (launched, busy) = std::thread::scope(|s| {
+                let launch = s.spawn(|| state.start_running(rom_id).is_ok());
+                let uninstall = s.spawn(|| state.mark_busy(rom_id).map(std::mem::forget).is_ok());
+                (launch.join().unwrap(), uninstall.join().unwrap())
+            });
+            assert!(launched != busy, "jeu {rom_id} : lancé {launched}, occupé {busy}");
+        }
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

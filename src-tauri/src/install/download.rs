@@ -15,7 +15,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
 use crate::error::{log_err, AppError, AppResult};
-use crate::romm::client::{check_status, error_chain, RommClient};
+use crate::romm::client::{error_chain, RommClient};
 use crate::romm::library::{file_content_path, RemoteFile};
 
 /// Délai sans recevoir un octet avant d'abandonner (connexion bloquée).
@@ -142,13 +142,17 @@ async fn download_once(
     if have > 0 {
         req = req.header(RANGE, format!("bytes={have}-"));
     }
-    let resp = req.send().await.map_err(|e| log_err(AppError::Download, "requête de téléchargement", error_chain(&e)))?;
+    // Délai d'attente de la réponse (en-têtes) ; le corps a ensuite son délai par morceau (L6).
+    let resp = match tokio::time::timeout(STALL_TIMEOUT, req.send()).await {
+        Ok(sent) => sent.map_err(|e| log_err(AppError::Download, "requête de téléchargement", error_chain(&e)))?,
+        Err(_) => return Err(log_err(AppError::Download, "requête de téléchargement", "aucune réponse depuis 60 s")),
+    };
     if resp.status() == StatusCode::RANGE_NOT_SATISFIABLE {
         // Fichier .part incohérent : on repart de zéro.
         let _ = tokio::fs::remove_file(part).await;
         return Err(AppError::Download);
     }
-    let resp = check_status(resp).await.map_err(|e| match e {
+    let resp = client.check(resp).await.map_err(|e| match e {
         AppError::Server => AppError::Download,
         other => other,
     })?;

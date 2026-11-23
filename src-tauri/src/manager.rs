@@ -15,6 +15,7 @@ use crate::platform::{ArchiveKind, Target, ALL_TARGETS};
 use crate::romm::library::{PlatformArchive, RemoteFile};
 use crate::settings::Settings;
 use crate::state::AppState;
+use crate::error::LockOrRecover;
 
 const SUBDOMAIN: &str = "manager";
 const CACHE_FILE: &str = "catalog.json";
@@ -799,12 +800,19 @@ pub async fn refresh(state: &AppState) {
             let mut found = crate::switch_saves::fill_all(&catalog, &state.config_dir);
             // ID introuvable sur ce PC (XCI sans ID dans son nom) : celui qu'un autre joueur a
             // déjà appris, d'après les shaders partagés du jeu.
-            for mut st in crate::install::state::list_installed(&state.config_dir) {
+            // Hors ligne, rien n'est tenté ; une première requête sans réponse arrête la boucle
+            // (sinon chaque jeu attendrait son délai, l'un après l'autre : L11).
+            let installed = if state.is_offline() { Vec::new() } else { crate::install::state::list_installed(&state.config_dir) };
+            for mut st in installed {
                 if !crate::switch_saves::waiting(&catalog, &st) {
                     continue;
                 }
                 let Some(emu) = catalog.emulator_for_install(&st).map(|e| e.id.clone()) else { continue };
-                let Ok(info) = client.get_json::<serde_json::Value>(&format!("api/shaders/rom/{}?systeme={}", st.rom_id, crate::language::current_system())).await else { continue };
+                let info = match client.get_json::<serde_json::Value>(&format!("api/shaders/rom/{}?systeme={}", st.rom_id, crate::language::current_system())).await {
+                    Ok(info) => info,
+                    Err(AppError::ServerUnreachable) => break,
+                    Err(_) => continue,
+                };
                 let title = info.as_object().into_iter().flat_map(|m| m.values()).find_map(|v| v.get("titleId")?.as_str().map(str::to_string));
                 if let Some(title) = title {
                     crate::shaders::remember_title(&state.config_dir, &emu, st.rom_id, &title);
@@ -816,7 +824,7 @@ pub async fn refresh(state: &AppState) {
             if found > 0 {
                 tracing::info!("sauvegardes Switch : dossier trouvé pour {found} jeu(x) au démarrage");
             }
-            *state.catalog.lock().unwrap() = catalog;
+            *state.catalog.lock_or_recover() = catalog;
         }
         Err(e) => tracing::warn!("FarfaRomManager indisponible ({}), catalogue précédent gardé", e.code()),
     }

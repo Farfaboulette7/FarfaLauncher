@@ -20,6 +20,7 @@ use crate::platform::Target;
 use crate::romm::client::RommClient;
 use crate::romm::library::{self, Game, GameRuntime};
 use crate::state::AppState;
+use crate::error::LockOrRecover;
 
 const REMOTE_FILE: &str = "assets.json";
 const CACHE_FILE: &str = "recomps.json";
@@ -228,7 +229,7 @@ pub fn link(runtime: &Runtime, game: &RuntimeGame) -> GameRuntime {
 /// Manifeste en vigueur, d'après les dernières copies d'`assets.json` et du catalogue.
 pub fn combine(state: &AppState) {
     let manifest = Manifest::load_cached(&state.config_dir).with_catalog(&state.catalog());
-    *state.manifest.lock().unwrap() = manifest;
+    *state.manifest.lock_or_recover() = manifest;
 }
 
 /// Programme d'un runtime : décrit par le catalogue, sinon par son entrée RomM.

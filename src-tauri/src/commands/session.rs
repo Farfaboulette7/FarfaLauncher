@@ -9,6 +9,7 @@ use crate::romm::auth::{self, DevicePoll};
 use crate::romm::client::{normalize_server_url, RommClient};
 use crate::secrets;
 use crate::state::{AppState, PendingDevice};
+use crate::error::LockOrRecover;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -30,13 +31,17 @@ impl SessionInfo {
     }
 }
 
+/// Message de l'écran de connexion après un 403 au démarrage.
+const FORBIDDEN_NOTICE: &str =
+    "Le serveur refuse l'accès à votre compte (erreur 403). Reconnectez-vous ; si cela continue, le serveur ou son proxy bloque l'accès.";
+
 /// Au démarrage : reprend la session à partir du token du trousseau.
 #[tauri::command]
 pub async fn session_status(state: State<'_, AppState>) -> AppResult<SessionInfo> {
     let Some(server_url) = state.settings().server_url else {
         return Ok(SessionInfo::disconnected(None, None));
     };
-    let Some(token) = secrets::load_token(&server_url)? else {
+    let Some(token) = secrets::load_token(&state.config_dir, &server_url)? else {
         return Ok(SessionInfo::disconnected(Some(server_url), None));
     };
     let client = RommClient::new(&server_url, Some(token))?;
@@ -47,11 +52,21 @@ pub async fn session_status(state: State<'_, AppState>) -> AppResult<SessionInfo
             let avatar_url = me.avatar_url(&server_url);
             Ok(SessionInfo { server_url: Some(server_url), connected: true, offline: false, username: Some(me.username), avatar_url, notice: None })
         }
-        Err(e @ (AppError::AuthInvalid | AppError::Forbidden)) => {
-            tracing::warn!("token refusé au démarrage ({}), suppression", e.code());
-            secrets::delete_token(&server_url)?;
+        // Seul un 401 de RomM (token révoqué ou expiré) efface le token (L4).
+        Err(AppError::AuthInvalid) => {
+            tracing::warn!("token refusé au démarrage (auth_invalid), suppression");
+            secrets::delete_token(&state.config_dir, &server_url)?;
             state.set_client(None);
             Ok(SessionInfo::disconnected(Some(server_url), Some(AppError::AuthInvalid.to_string())))
+        }
+        // 403 (droit manquant sur le token, ou page d'erreur d'un proxy) : retour à l'écran de
+        // connexion avec une explication, mais le token est gardé. Se reconnecter le remplace ;
+        // si c'était un proxy passager, il resservira au prochain démarrage. Ainsi le joueur
+        // n'est jamais bloqué « hors ligne » pour toujours (L4).
+        Err(AppError::Forbidden) => {
+            tracing::warn!("accès refusé (403) au démarrage : écran de connexion, token gardé");
+            state.set_client(None);
+            Ok(SessionInfo::disconnected(Some(server_url), Some(FORBIDDEN_NOTICE.to_string())))
         }
         Err(AppError::ServerUnreachable | AppError::Server) => {
             state.set_client(Some(client));
@@ -99,7 +114,7 @@ pub async fn start_device_auth(state: State<'_, AppState>) -> AppResult<DeviceAu
     let client = RommClient::new(&server_url, None)?;
     let name = format!("FaRFa project — {}", device_name());
     let init = auth::device_init(&client, &state.settings().device_id, &name).await?;
-    *state.pending_device.lock().unwrap() = Some(PendingDevice { server_url: server_url.clone(), device_code: init.device_code });
+    *state.pending_device.lock_or_recover() = Some(PendingDevice { server_url: server_url.clone(), device_code: init.device_code });
     Ok(DeviceAuthStart {
         user_code: init.user_code,
         verification_url: client.url(&init.verification_path_complete),
@@ -120,7 +135,7 @@ pub enum DeviceAuthPoll {
 
 #[tauri::command]
 pub async fn poll_device_auth(state: State<'_, AppState>) -> AppResult<DeviceAuthPoll> {
-    let (server_url, device_code) = match state.pending_device.lock().unwrap().as_ref() {
+    let (server_url, device_code) = match state.pending_device.lock_or_recover().as_ref() {
         Some(p) => (p.server_url.clone(), p.device_code.clone()),
         None => return Ok(DeviceAuthPoll::Expired),
     };
@@ -129,15 +144,15 @@ pub async fn poll_device_auth(state: State<'_, AppState>) -> AppResult<DeviceAut
         DevicePoll::Pending => DeviceAuthPoll::Pending,
         DevicePoll::SlowDown => DeviceAuthPoll::SlowDown,
         DevicePoll::Denied => {
-            state.pending_device.lock().unwrap().take();
+            state.pending_device.lock_or_recover().take();
             DeviceAuthPoll::Denied
         }
         DevicePoll::Expired => {
-            state.pending_device.lock().unwrap().take();
+            state.pending_device.lock_or_recover().take();
             DeviceAuthPoll::Expired
         }
         DevicePoll::Approved { token, scopes } => {
-            state.pending_device.lock().unwrap().take();
+            state.pending_device.lock_or_recover().take();
             let missing: Vec<_> = auth::REQUIRED_SCOPES.iter().filter(|s| !scopes.iter().any(|g| g == *s)).collect();
             if !missing.is_empty() {
                 tracing::warn!("scopes non accordés: {missing:?}");
@@ -149,7 +164,7 @@ pub async fn poll_device_auth(state: State<'_, AppState>) -> AppResult<DeviceAut
 
 #[tauri::command]
 pub fn cancel_device_auth(state: State<'_, AppState>) {
-    state.pending_device.lock().unwrap().take();
+    state.pending_device.lock_or_recover().take();
 }
 
 #[tauri::command]
@@ -173,7 +188,7 @@ async fn finish_login(state: &AppState, server_url: &str, token: String) -> AppR
         AppError::AuthInvalid => AppError::TokenRejected,
         other => other,
     })?;
-    secrets::store_token(server_url, &token)?;
+    secrets::store_token(&state.config_dir, server_url, &token)?;
     state.set_client(Some(client));
     state.set_offline(false);
     tracing::info!("connecté en tant que {}", me.username);
@@ -203,7 +218,7 @@ pub async fn check_connection(state: State<'_, AppState>) -> AppResult<bool> {
 #[tauri::command]
 pub fn logout(state: State<'_, AppState>) -> AppResult<()> {
     if let Some(server_url) = state.settings().server_url {
-        secrets::delete_token(&server_url)?;
+        secrets::delete_token(&state.config_dir, &server_url)?;
     }
     state.set_client(None);
     tracing::info!("déconnexion");

@@ -8,8 +8,10 @@ export interface AppError {
   message: string;
 }
 
-/** Codes d'erreur qui imposent un retour à l'écran de connexion. */
-export const AUTH_ERROR_CODES = new Set(["auth_invalid", "forbidden"]);
+/** Codes d'erreur qui imposent un retour à l'écran de connexion (et effacent le token).
+ *  Seulement un vrai 401 de RomM : un 403 (droit manquant, page d'erreur d'un proxy)
+ *  s'affiche comme une erreur, sans déconnecter (L4). */
+export const AUTH_ERROR_CODES = new Set(["auth_invalid"]);
 
 export function isAppError(e: unknown): e is AppError {
   return typeof e === "object" && e !== null && "code" in e && "message" in e;

@@ -41,9 +41,10 @@ pub async fn find(client: &RommClient, rom_id: i64) -> AppResult<Option<ServerSa
 }
 
 pub async fn download(client: &RommClient, save: &ServerSave) -> AppResult<Vec<u8>> {
-    let resp = client.send(client.get_stream(&format!("api/saves/{}/content", save.id))).await.map_err(scope_error)?;
-    let bytes = resp.bytes().await.map_err(|e| log_err(AppError::Download, "téléchargement de la sauvegarde", e))?;
-    Ok(bytes.to_vec())
+    // Délai d'attente sur la réponse et entre deux morceaux : un serveur muet ne bloque pas le
+    // lancement du jeu (L6).
+    let resp = client.send_stream(client.get_stream(&format!("api/saves/{}/content", save.id))).await.map_err(scope_error)?;
+    crate::romm::client::read_body(resp, "téléchargement de la sauvegarde").await
 }
 
 /// Envoie l'archive (remplace la précédente) et renvoie la sauvegarde créée.

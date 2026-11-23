@@ -945,8 +945,34 @@ fn exe_parent(exe_rel: &Path) -> PathBuf {
     exe_rel.parent().map(Path::to_path_buf).unwrap_or_default()
 }
 
+/// Chemin relatif d'un manifeste (`a/b/c`) en chemin du système, qui reste toujours dans le
+/// dossier où on le pose. Même résultat sous Windows, Linux et Mac :
+/// - `/` et `\` séparent les dossiers ;
+/// - on retire les morceaux vides, `.` et `..` (remonter) ;
+/// - une lettre de lecteur en tête d'un morceau (`C:`, `C:x.dll`) est retirée. Sous Windows,
+///   ajouter `x/C:y` à un chemin repartirait du lecteur C:, d'où ce filtre sur chaque morceau,
+///   pas seulement le premier. Les autres `:` restent (noms permis sous Linux et sur le NAS).
+///
+/// Un chemin absolu ou UNC (`/x`, `\\serveur\partage`) devient donc relatif.
 pub fn rel_to_path(rel: &str) -> PathBuf {
-    rel.split('/').filter(|s| !s.is_empty() && *s != "..").collect()
+    rel.split(['/', '\\'])
+        .map(without_drive_letter)
+        .filter(|s| !s.is_empty() && *s != "." && *s != "..")
+        .collect()
+}
+
+/// `C:x.dll` → `x.dll`, `C:` → `` ; le reste ne change pas.
+/// Retire TOUTES les lettres de lecteur de tête : `C:D:x` → `x` (sinon `D:x` sortirait du
+/// dossier du jeu sous Windows).
+fn without_drive_letter(mut s: &str) -> &str {
+    loop {
+        let b = s.as_bytes();
+        if b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':' {
+            s = &s[2..];
+        } else {
+            return s;
+        }
+    }
 }
 
 pub fn path_to_rel(p: &Path) -> String {
@@ -1918,7 +1944,8 @@ mod path_tests {
     // path_to_rel est l'inverse de rel_to_path (séparateurs `/` dans les fichiers d'état).
     #[test]
     fn path_to_rel_round_trips() {
-        for rel in ["ROM/jeu.z64", "bin/x64/jeu.exe", "jeu.exe"] {
+        // Un `:` qui n'est pas une lettre de lecteur reste dans le nom (L5).
+        for rel in ["ROM/jeu.z64", "bin/x64/jeu.exe", "jeu.exe", "Zelda: Link/save:1.sav"] {
             assert_eq!(path_to_rel(&rel_to_path(rel)), rel);
         }
     }
@@ -1926,10 +1953,9 @@ mod path_tests {
     // Aucun chemin venu du serveur ne sort du dossier du jeu, même écrit à la Windows
     // (`..\`, lettre de lecteur, chemin UNC).
     #[test]
-    #[ignore = "bug L5 de docs/audit-2026-11.md, corrigé à l'étape 3"]
     fn windows_style_paths_stay_inside_the_game_folder() {
         let base = Path::new("jeux").join("Zelda");
-        for rel in ["..\\..\\x.dll", "a\\..\\..\\x", "C:/Windows/x.dll", "C:x.dll", "\\\\serveur\\partage\\x"] {
+        for rel in ["a/C:b.dll", "..\\..\\x.dll", "a\\..\\..\\x", "C:/Windows/x.dll", "C:x.dll", "\\\\serveur\\partage\\x", "a/C:D:x.dll", "C:D:\\x"] {
             let p = rel_to_path(rel);
             assert!(p.components().all(|c| matches!(c, Component::Normal(_))), "{rel} → {}", p.display());
             assert!(base.join(&p).starts_with(&base), "{rel} sort du dossier du jeu");

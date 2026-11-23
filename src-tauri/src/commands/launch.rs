@@ -12,6 +12,7 @@ use crate::play::{self, CodChoice};
 use crate::romm::playtime;
 use crate::save_sync::{SaveChoice, SaveUpload};
 use crate::state::AppState;
+use crate::error::LockOrRecover;
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,7 +57,7 @@ pub fn set_crash_prompt(state: State<'_, AppState>, rom_id: i64, ask: bool) -> A
 
 #[tauri::command]
 pub fn running_games(state: State<'_, AppState>) -> Vec<i64> {
-    state.running.lock().unwrap().iter().copied().collect()
+    state.running.lock_or_recover().iter().copied().collect()
 }
 
 /// Lance le jeu. `save_choice` : réponse à `save_check` (sauvegarde locale ou
@@ -73,23 +74,19 @@ pub async fn play_game(
 ) -> AppResult<()> {
     let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
     st.executable.as_ref().ok_or(AppError::NoExecutable)?;
-    if state.installs.lock().unwrap().contains_key(&rom_id) || state.is_busy(rom_id) {
-        return Err(AppError::Busy);
-    }
     // Même programme et mêmes données pour tous les jeux d'un runtime : un seul à la fois.
     state.check_family_idle(rom_id)?;
-    if !state.running.lock().unwrap().insert(rom_id) {
-        return Err(AppError::AlreadyRunning);
-    }
+    // Ni en installation, ni occupé, ni déjà lancé : vérifié et inscrit d'un bloc (L13).
+    state.start_running(rom_id)?;
     let started = match play::start(&state, rom_id, save_choice, cod, menu == Some(true), &gamepad::connected()).await {
         Ok(s) => s,
         Err(e) => {
-            state.running.lock().unwrap().remove(&rom_id);
+            state.running.lock_or_recover().remove(&rom_id);
             return Err(e);
         }
     };
     let play::Started { running, started, shader_job, game: st } = started;
-    state.playing.lock().unwrap().insert(rom_id, crate::ingame::Playing { started: std::time::Instant::now(), stop: running.stop_flag(), control: running.control() });
+    state.playing.lock_or_recover().insert(rom_id, crate::ingame::Playing { started: std::time::Instant::now(), stop: running.stop_flag(), control: running.control() });
     let _ = app.emit("game-started", rom_id);
     crate::commands::presence::notify(&app);
     crate::ingame::prepare(&app);
@@ -108,10 +105,10 @@ pub async fn play_game(
         .unwrap_or((None, None));
         ended_flag.store(true, std::sync::atomic::Ordering::Relaxed);
         let state = app.state::<AppState>();
-        state.running.lock().unwrap().remove(&rom_id);
-        state.playing.lock().unwrap().remove(&rom_id);
+        state.running.lock_or_recover().remove(&rom_id);
+        state.playing.lock_or_recover().remove(&rom_id);
         crate::commands::presence::notify(&app);
-        if state.playing.lock().unwrap().is_empty() {
+        if state.playing.lock_or_recover().is_empty() {
             crate::ingame::close(&app);
         }
         gamepad::game_stopped();

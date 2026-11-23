@@ -14,6 +14,7 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 
 use crate::error::{log_err, AppError, AppResult};
 use crate::state::AppState;
+use crate::error::LockOrRecover;
 
 const STABLE: &str = "https://github.com/Farfaboulette7/FarfaLauncher/releases/latest/download/latest.json";
 const BETA: &str = "https://github.com/Farfaboulette7/FarfaLauncher/releases/download/canal-beta/latest.json";
@@ -74,14 +75,14 @@ pub async fn check_update(app: AppHandle, state: State<'_, AppState>, pending: S
     if let Some(i) = &info {
         tracing::info!("mise à jour disponible : {} → {} (canal {})", i.current_version, i.version, if beta { "bêta" } else { "stable" });
     }
-    *pending.0.lock().unwrap() = found;
+    *pending.0.lock_or_recover() = found;
     Ok(info)
 }
 
 /// Télécharge et installe la mise à jour trouvée ; l'interface relance ensuite le launcher.
 #[tauri::command]
 pub async fn install_update(app: AppHandle) -> AppResult<()> {
-    let update = app.state::<PendingUpdate>().0.lock().unwrap().clone().ok_or(AppError::NotAvailable)?;
+    let update = app.state::<PendingUpdate>().0.lock_or_recover().clone().ok_or(AppError::NotAvailable)?;
     let mut done = 0u64;
     let emitter = app.clone();
     update
@@ -123,7 +124,7 @@ pub async fn install_test_version(app: AppHandle, tag: String) -> AppResult<()> 
         .map_err(|e| log_err(AppError::ServerUnreachable, "version de test", e))?
         .ok_or(AppError::NotAvailable)?;
     tracing::info!("version de test {tag} : {} → {}", update.current_version, update.version);
-    *app.state::<PendingUpdate>().0.lock().unwrap() = Some(update);
+    *app.state::<PendingUpdate>().0.lock_or_recover() = Some(update);
     install_update(app).await
 }
 
