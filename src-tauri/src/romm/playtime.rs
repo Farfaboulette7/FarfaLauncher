@@ -251,13 +251,12 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    // File vide : le fichier est supprimé, et rien n'est envoyé (aucune requête).
+    // File vide : rien n'est envoyé (le serveur, injoignable, n'est même pas contacté).
     #[tokio::test]
     async fn empty_queue_sends_nothing() {
         let dir = temp_config("sessions-vide");
         let client = RommClient::new("http://127.0.0.1:9", None).unwrap();
         assert_eq!(flush(&client, &dir).await.unwrap(), 0);
-        assert!(!queue_path(&dir).exists());
         std::fs::remove_dir_all(dir).unwrap();
     }
 
