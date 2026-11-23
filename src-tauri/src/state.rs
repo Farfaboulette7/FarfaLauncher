@@ -106,14 +106,33 @@ impl AppState {
     }
 
     /// Marque le jeu occupé jusqu'à la fin de la garde renvoyée.
+    /// Vérifié et inscrit sous les mêmes verrous que `start_running`, pris dans le même ordre
+    /// (installs, puis running, puis busy) : une désinstallation et un lancement du même jeu
+    /// ne peuvent plus se croiser (L13).
     pub fn mark_busy(&self, rom_id: i64) -> AppResult<BusyGuard<'_>> {
-        if self.running.lock_or_recover().contains(&rom_id) {
+        let installs = self.installs.lock_or_recover();
+        let running = self.running.lock_or_recover();
+        if running.contains(&rom_id) {
             return Err(AppError::AlreadyRunning);
         }
-        if self.installs.lock_or_recover().contains_key(&rom_id) || !self.busy.lock_or_recover().insert(rom_id) {
+        if installs.contains_key(&rom_id) || !self.busy.lock_or_recover().insert(rom_id) {
             return Err(AppError::Busy);
         }
         Ok(BusyGuard { state: self, rom_id })
+    }
+
+    /// Inscrit le jeu comme lancé, s'il n'est ni en installation, ni occupé (désinstallation,
+    /// déplacement…), ni déjà lancé. Mêmes verrous et même ordre que `mark_busy` (L13).
+    pub fn start_running(&self, rom_id: i64) -> AppResult<()> {
+        let installs = self.installs.lock_or_recover();
+        let mut running = self.running.lock_or_recover();
+        if installs.contains_key(&rom_id) || self.is_busy(rom_id) {
+            return Err(AppError::Busy);
+        }
+        if !running.insert(rom_id) {
+            return Err(AppError::AlreadyRunning);
+        }
+        Ok(())
     }
 
     pub fn manifest(&self) -> crate::runtimes::Manifest {
@@ -209,5 +228,26 @@ pub struct BusyGuard<'a> {
 impl Drop for BusyGuard<'_> {
     fn drop(&mut self) {
         self.state.busy.lock_or_recover().remove(&self.rom_id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // L13 : un lancement et une désinstallation du même jeu, en même temps : jamais les deux.
+    #[test]
+    fn launch_and_uninstall_never_both_start() {
+        let dir = std::env::temp_dir().join(format!("farfa-etat-{}", uuid::Uuid::new_v4()));
+        let state = AppState::new(dir.clone(), dir.join("logs"), dir.join("cache"), dir.join("Jeux"));
+        for rom_id in 0..300 {
+            let (launched, busy) = std::thread::scope(|s| {
+                let launch = s.spawn(|| state.start_running(rom_id).is_ok());
+                let uninstall = s.spawn(|| state.mark_busy(rom_id).map(std::mem::forget).is_ok());
+                (launch.join().unwrap(), uninstall.join().unwrap())
+            });
+            assert!(launched != busy, "jeu {rom_id} : lancé {launched}, occupé {busy}");
+        }
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

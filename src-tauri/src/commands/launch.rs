@@ -74,14 +74,10 @@ pub async fn play_game(
 ) -> AppResult<()> {
     let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
     st.executable.as_ref().ok_or(AppError::NoExecutable)?;
-    if state.installs.lock_or_recover().contains_key(&rom_id) || state.is_busy(rom_id) {
-        return Err(AppError::Busy);
-    }
     // Même programme et mêmes données pour tous les jeux d'un runtime : un seul à la fois.
     state.check_family_idle(rom_id)?;
-    if !state.running.lock_or_recover().insert(rom_id) {
-        return Err(AppError::AlreadyRunning);
-    }
+    // Ni en installation, ni occupé, ni déjà lancé : vérifié et inscrit d'un bloc (L13).
+    state.start_running(rom_id)?;
     let started = match play::start(&state, rom_id, save_choice, cod, menu == Some(true), &gamepad::connected()).await {
         Ok(s) => s,
         Err(e) => {
