@@ -945,8 +945,14 @@ fn exe_parent(exe_rel: &Path) -> PathBuf {
     exe_rel.parent().map(Path::to_path_buf).unwrap_or_default()
 }
 
+/// Chemin relatif d'un manifeste (`a/b/c`) en chemin du système, qui reste toujours dans le
+/// dossier où on le pose. Même résultat sous Windows, Linux et Mac :
+/// - `/` et `\` séparent les dossiers ;
+/// - on retire les morceaux vides, `.` et `..` (remonter), et ceux qui contiennent `:` (lettre
+///   de lecteur `C:`, `C:x.dll`). Un chemin absolu ou UNC (`/x`, `\\serveur\partage`) devient
+///   donc relatif.
 pub fn rel_to_path(rel: &str) -> PathBuf {
-    rel.split('/').filter(|s| !s.is_empty() && *s != "..").collect()
+    rel.split(['/', '\\']).filter(|s| !s.is_empty() && *s != "." && *s != ".." && !s.contains(':')).collect()
 }
 
 pub fn path_to_rel(p: &Path) -> String {
@@ -1926,7 +1932,6 @@ mod path_tests {
     // Aucun chemin venu du serveur ne sort du dossier du jeu, même écrit à la Windows
     // (`..\`, lettre de lecteur, chemin UNC).
     #[test]
-    #[ignore = "bug L5 de docs/audit-2026-11.md, corrigé à l'étape 3"]
     fn windows_style_paths_stay_inside_the_game_folder() {
         let base = Path::new("jeux").join("Zelda");
         for rel in ["..\\..\\x.dll", "a\\..\\..\\x", "C:/Windows/x.dll", "C:x.dll", "\\\\serveur\\partage\\x"] {
