@@ -32,6 +32,7 @@ mod runtimes;
 mod save_store;
 mod save_sync;
 mod saves;
+mod safe_file;
 #[cfg(feature = "gui")]
 mod secrets;
 mod settings;

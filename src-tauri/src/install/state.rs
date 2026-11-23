@@ -231,11 +231,40 @@ fn registry_path(config_dir: &Path) -> PathBuf {
     config_dir.join("installed.json")
 }
 
+/// Verrou des modifications du registre : lire, changer et réécrire `installed.json` se fait
+/// d'un bloc, sinon deux installations finies en même temps pourraient s'effacer l'une l'autre.
+static REGISTRY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Prend le verrou du registre (un verrou empoisonné par une panique reste utilisable : il ne
+/// protège aucune donnée en mémoire).
+fn lock_registry() -> std::sync::MutexGuard<'static, ()> {
+    REGISTRY_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Lit le registre.
+/// - Absent : registre vide.
+/// - Illisible (JSON abîmé) : le fichier est mis de côté (`installed.json.illisible-<date>`,
+///   voir `safe_file`) et on repart d'un registre vide : il n'est jamais écrasé.
+/// - Impossible à lire (droits, disque) : erreur, pour ne pas le réécrire vide par-dessus.
+fn read_registry(config_dir: &Path) -> AppResult<Registry> {
+    let path = registry_path(config_dir);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Registry::default()),
+        Err(e) => return Err(log_err(AppError::Disk, "lecture de installed.json", e)),
+    };
+    match serde_json::from_str(&text) {
+        Ok(reg) => Ok(reg),
+        Err(e) => {
+            crate::safe_file::set_aside(&path, &e.to_string());
+            Ok(Registry::default())
+        }
+    }
+}
+
+/// Lecture seule du registre : vide s'il ne peut pas être lu.
 fn load_registry(config_dir: &Path) -> Registry {
-    std::fs::read_to_string(registry_path(config_dir))
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_default()
+    read_registry(config_dir).unwrap_or_default()
 }
 
 fn save_registry(config_dir: &Path, reg: &Registry) -> AppResult<()> {
@@ -245,10 +274,7 @@ fn save_registry(config_dir: &Path, reg: &Registry) -> AppResult<()> {
 }
 
 fn write_atomic(path: &Path, text: &str) -> AppResult<()> {
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, text)
-        .and_then(|_| std::fs::rename(&tmp, path))
-        .map_err(|e| log_err(AppError::Disk, "écriture d'un fichier d'état", e))
+    crate::safe_file::write_atomic(path, text).map_err(|e| log_err(AppError::Disk, "écriture d'un fichier d'état", e))
 }
 
 pub fn read_state(game_dir: &Path) -> Option<InstalledGame> {
@@ -347,7 +373,8 @@ pub fn write_state(config_dir: &Path, st: &InstalledGame) -> AppResult<()> {
     } else {
         write_atomic(&st.game_dir.join(STATE_FILE), &text)?;
     }
-    let mut reg = load_registry(config_dir);
+    let _verrou = lock_registry();
+    let mut reg = read_registry(config_dir)?;
     let entry = RegistryEntry { rom_id: st.rom_id, game_dir: st.game_dir.clone(), page: st.shared.is_some() };
     // Installé d'une autre façon jusqu'ici : l'ancienne installation reste, en réserve.
     for old in reg.games.iter().filter(|g| g.rom_id == st.rom_id && !g.same_place(&entry)) {
@@ -374,7 +401,8 @@ pub fn all_installs(config_dir: &Path, rom_id: i64) -> Vec<InstalledGame> {
 /// Met en service l'installation en réserve qui a cette façon de jouer ; celle d'avant passe
 /// en réserve à son tour.
 pub fn activate(config_dir: &Path, rom_id: i64, kind: &str, id: &str) -> AppResult<InstalledGame> {
-    let mut reg = load_registry(config_dir);
+    let _verrou = lock_registry();
+    let mut reg = read_registry(config_dir)?;
     let pos = reg
         .alternates
         .iter()
@@ -401,7 +429,8 @@ pub fn pages_in(config_dir: &Path, game_dir: &Path) -> Vec<i64> {
 
 /// Dossier déplacé : tout ce qui y est inscrit le suit.
 pub fn relocate(config_dir: &Path, old: &Path, new: &Path) -> AppResult<()> {
-    let mut reg = load_registry(config_dir);
+    let _verrou = lock_registry();
+    let mut reg = read_registry(config_dir)?;
     let Registry { games, alternates } = &mut reg;
     for g in games.iter_mut().chain(alternates.iter_mut()).filter(|g| g.game_dir == old) {
         g.game_dir = new.to_path_buf();
@@ -412,7 +441,8 @@ pub fn relocate(config_dir: &Path, old: &Path, new: &Path) -> AppResult<()> {
 /// Oublie l'installation en service d'un jeu. S'il en a une autre en réserve, elle passe en
 /// service.
 pub fn forget(config_dir: &Path, rom_id: i64) -> AppResult<()> {
-    let mut reg = load_registry(config_dir);
+    let _verrou = lock_registry();
+    let mut reg = read_registry(config_dir)?;
     for g in reg.games.iter().filter(|g| g.rom_id == rom_id && g.page) {
         let _ = std::fs::remove_file(page_path(&g.game_dir, rom_id));
     }
@@ -850,7 +880,7 @@ mod registry_tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
-    // Comportement actuel : registre illisible = aucun jeu installé, sans panique (voir L2).
+    // Registre illisible = aucun jeu installé, sans panique (il est mis de côté, voir L2).
     #[test]
     fn unreadable_registry_lists_nothing() {
         let root = temp_root("registre-illisible");
@@ -865,7 +895,6 @@ mod registry_tests {
     // Un registre illisible n'est pas écrasé par la prochaine écriture : son contenu (les jeux
     // installés) reste quelque part dans le dossier de config.
     #[test]
-    #[ignore = "bug L2 de docs/audit-2026-11.md, corrigé à l'étape 3"]
     fn unreadable_registry_is_not_overwritten() {
         let root = temp_root("registre-ecrase");
         let config = root.join("config");
@@ -877,6 +906,24 @@ mod registry_tests {
             .filter_map(Result::ok)
             .any(|e| std::fs::read_to_string(e.path()).is_ok_and(|t| t.contains(broken)));
         assert!(kept, "le contenu de l'ancien installed.json a été perdu");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // Plusieurs installations finies en même temps : aucune ne disparaît du registre (verrou).
+    #[test]
+    fn simultaneous_writes_keep_every_game() {
+        let root = temp_root("registre-simultane");
+        let config = root.join("config");
+        let threads: Vec<_> = (1..=16)
+            .map(|id| {
+                let (config, dir) = (config.clone(), root.join("Jeux").join(format!("Jeu{id}")));
+                std::thread::spawn(move || write_state(&config, &game(id, dir)).unwrap())
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        assert_eq!(list_installed(&config).len(), 16);
         std::fs::remove_dir_all(root).unwrap();
     }
 
