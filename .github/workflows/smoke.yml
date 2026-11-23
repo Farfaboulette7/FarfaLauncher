@@ -1,0 +1,44 @@
+# Smoke test quotidien de l'API RomM et du gestionnaire (sans lancement de jeu).
+# But : être prévenu quand une mise à jour de RomM (watchtower, chaque nuit) casse un appel
+# du launcher. Seulement des lectures (GET) : rien n'est écrit sur les serveurs.
+# Voir docs/smoke-test.md (secrets à créer, lecture des échecs).
+name: Smoke test RomM
+
+on:
+  schedule:
+    - cron: '30 6 * * *'   # chaque jour vers 7 h 30 (heure de Paris en hiver)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # Sans les secrets, le job s'arrête proprement (en vert) avec un message.
+      - name: Secrets présents ?
+        id: secrets
+        env:
+          TOKEN: ${{ secrets.ROMM_SMOKE_TOKEN }}
+          URL: ${{ secrets.ROMM_SMOKE_URL }}
+        run: |
+          if [ -z "$TOKEN" ] || [ -z "$URL" ]; then
+            echo "::warning title=Smoke test::Secrets ROMM_SMOKE_TOKEN et/ou ROMM_SMOKE_URL absents : rien n'est vérifié. Voir docs/smoke-test.md."
+            echo "pret=non" >> "$GITHUB_OUTPUT"
+          else
+            echo "pret=oui" >> "$GITHUB_OUTPUT"
+          fi
+
+      # -Discret : ni noms de jeux ni nom de compte dans les journaux (le dépôt est public).
+      - name: Appels du launcher vers RomM et le gestionnaire
+        if: steps.secrets.outputs.pret == 'oui'
+        shell: pwsh
+        env:
+          FARFA_SMOKE_TOKEN: ${{ secrets.ROMM_SMOKE_TOKEN }}
+          FARFA_SMOKE_URL: ${{ secrets.ROMM_SMOKE_URL }}
+          FARFA_SMOKE_MANAGER: ${{ secrets.MANAGER_SMOKE_URL }}
+        run: ./scripts/smoke-test.ps1 -ApiSeulement -Discret
