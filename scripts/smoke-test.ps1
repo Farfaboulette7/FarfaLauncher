@@ -421,7 +421,6 @@ function Moteur([string[]]$Arguments) {
 }
 
 $env:FARFALAUNCHERDECK_CONFIG = $config
-$env:FARFALAUNCHERDECK_JETON = $Jeton   # lu par le moteur, jamais écrit sur le disque
 $okTravail = $false
 
 $okMoteur = Etape 'Dossier de travail et compilation du moteur (cargo)' {
@@ -447,6 +446,9 @@ $okMoteur = Etape 'Dossier de travail et compilation du moteur (cargo)' {
     if (-not (Test-Path $moteur)) { throw "moteur introuvable : $moteur" }
     "farfalauncherdeck $(Moteur @('version'))"
 }
+
+# Posé seulement après la compilation, pour que cargo n'en hérite pas.
+$env:FARFALAUNCHERDECK_JETON = $Jeton   # lu par le moteur, jamais écrit sur le disque
 
 $okConnexion = Etape 'Launcher : connexion à RomM' {
     $info = Moteur @('config', '--serveur', $Serveur, '--gestionnaire', $Gestionnaire, '--dossier', $jeux)
