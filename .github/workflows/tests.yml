@@ -1,0 +1,61 @@
+# Tests du launcher, partagés par les autres workflows (ils ne se lancent pas seuls) :
+#   - ci.yml      : à chaque push, sur Windows, Linux et Mac ;
+#   - release.yml : avant de compiler et de publier une version ;
+#   - test.yml    : avant de compiler la version de test d'un rapport.
+#
+# Ce qui est vérifié, sur chaque système :
+#   1. les types TypeScript de l'interface (tsc) ;
+#   2. le build de l'interface (Tauri l'embarque à la compilation du Rust) ;
+#   3. les tests Rust (cargo test : bibliothèque et binaires).
+# Les tests marqués #[ignore] (e2e avec un vrai serveur, bugs connus) ne sont pas lancés.
+name: Tests
+
+on:
+  workflow_call:
+    inputs:
+      plateformes:
+        description: "Systèmes où lancer les tests (liste JSON de runners GitHub)"
+        type: string
+        default: '["windows-latest", "ubuntu-22.04"]'
+
+jobs:
+  tests:
+    name: Tests (${{ matrix.platform }})
+    strategy:
+      # Un échec sur un système n'arrête pas les autres : on voit tout d'un coup.
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJSON(inputs.plateformes) }}
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Dépendances système (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev libudev-dev pkg-config libxss-dev libxkbcommon-dev libwayland-dev libegl1-mesa-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev libxtst-dev libasound2-dev libpulse-dev libdrm-dev libgbm-dev
+
+      - run: npm ci
+
+      - name: Types TypeScript (tsc)
+        run: npx tsc --noEmit
+
+      # Le build de l'interface est requis : Tauri l'embarque à la compilation.
+      - name: Build de l'interface
+        run: npm run build
+
+      - name: Tests Rust (cargo test)
+        working-directory: src-tauri
+        run: cargo test
