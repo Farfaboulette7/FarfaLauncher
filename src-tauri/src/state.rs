@@ -70,9 +70,14 @@ impl AppState {
         catalog.choices = settings.recomp_choice.clone();
         keep_installed_recomps(&mut catalog, &config_dir);
         let manifest = crate::runtimes::Manifest::load_cached(&config_dir).with_catalog(&catalog);
-        // Persiste immédiatement le device_id généré au premier lancement.
-        if let Err(e) = settings::save(&config_dir, &settings) {
-            tracing::error!("impossible d'enregistrer les paramètres initiaux: {e}");
+        // Persiste immédiatement le device_id généré au premier lancement. Seulement si le
+        // fichier n'existe pas : un settings.json qu'on n'a pas pu lire n'est pas écrasé par les
+        // valeurs par défaut (un fichier abîmé a déjà été mis de côté par `load`).
+        let missing = !settings::settings_path(&config_dir).exists();
+        if missing {
+            if let Err(e) = settings::save(&config_dir, &settings) {
+                tracing::error!("impossible d'enregistrer les paramètres initiaux: {e}");
+            }
         }
         Self {
             config_dir,

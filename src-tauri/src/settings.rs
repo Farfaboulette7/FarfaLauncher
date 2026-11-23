@@ -64,14 +64,22 @@ pub fn settings_path(config_dir: &Path) -> PathBuf {
     config_dir.join("settings.json")
 }
 
+/// Lit les réglages. Absent : valeurs par défaut. Illisible (JSON abîmé) : le fichier est mis
+/// de côté (`settings.json.illisible-<date>`, voir `safe_file`) avant de repartir des valeurs
+/// par défaut, pour qu'elles ne l'écrasent jamais.
 pub fn load(config_dir: &Path) -> Settings {
     let path = settings_path(config_dir);
     match std::fs::read_to_string(&path) {
         Ok(text) => serde_json::from_str(&text).unwrap_or_else(|e| {
-            tracing::warn!("settings.json illisible, valeurs par défaut: {e}");
+            crate::safe_file::set_aside(&path, &e.to_string());
             Settings::default()
         }),
-        Err(_) => Settings::default(),
+        Err(e) => {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                tracing::error!("settings.json impossible à lire, valeurs par défaut: {e}");
+            }
+            Settings::default()
+        }
     }
 }
 
@@ -80,11 +88,8 @@ pub fn save(config_dir: &Path, settings: &Settings) -> AppResult<()> {
         .map_err(|e| log_err(AppError::Internal, "création du dossier de config", e))?;
     let text = serde_json::to_string_pretty(settings)
         .map_err(|e| log_err(AppError::Internal, "sérialisation des paramètres", e))?;
-    // Écriture atomique : fichier temporaire puis renommage.
-    let path = settings_path(config_dir);
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, text)
-        .and_then(|_| std::fs::rename(&tmp, &path))
+    // Écriture atomique : fichier temporaire au nom unique puis renommage.
+    crate::safe_file::write_atomic(&settings_path(config_dir), &text)
         .map_err(|e| log_err(AppError::Internal, "écriture de settings.json", e))
 }
 
@@ -182,7 +187,6 @@ mod tests {
     // Au démarrage, un settings.json illisible n'est pas remplacé par les valeurs par défaut :
     // son contenu (adresse du serveur, dossier des jeux…) reste dans le dossier de config.
     #[test]
-    #[ignore = "bug L3 de docs/audit-2026-11.md, corrigé à l'étape 3"]
     fn startup_does_not_overwrite_an_unreadable_file() {
         let dir = temp_config("reglages-ecrases");
         let broken = r#"{"server_url":"https://romm.example.org","install_dir":"D:/Jeux""#; // tronqué
