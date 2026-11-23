@@ -633,11 +633,34 @@ async fn update_plutonium(game_dir: &Path, root: &Path, runner: Option<&Runner>)
             tracing::info!("Plutonium à jour");
             break;
         }
-        if matches!(child.try_wait(), Ok(Some(_))) && runner.is_none() {
+        // Installateur fermé : on arrête d'attendre. Sous Proton, le processus lancé (le script
+        // de Proton) peut finir avant le programme Windows : on attend alors que tout son groupe
+        // de processus soit fini (L1 de docs/audit-2026-11.md).
+        if matches!(child.try_wait(), Ok(Some(_))) && !group_alive(child.id()) {
+            tracing::info!("installateur de Plutonium fermé avant la fin de la mise à jour");
             break;
         }
     }
     kill_tree(&mut child);
+}
+
+/// Un processus du groupe `pgid` tourne encore (Linux, Mac : le groupe créé par
+/// `process_group(0)`). Toujours faux sous Windows, où Proton n'existe pas.
+fn group_alive(pgid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        // `kill -0` n'envoie rien : il dit seulement si un processus du groupe existe.
+        std::process::Command::new("kill")
+            .args(["-0", &format!("-{pgid}")])
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pgid;
+        false
+    }
 }
 
 fn kill_tree(child: &mut std::process::Child) {
@@ -664,6 +687,25 @@ mod tests {
         std::fs::create_dir_all(staging.join("Jeu")).unwrap();
         assert_eq!(chunk_root(&staging, Path::new("Jeu")), staging.join("Jeu"));
         std::fs::remove_dir_all(staging).unwrap();
+    }
+
+    // Fin de l'installateur de Plutonium (L1) : un groupe de processus vivant est vu vivant,
+    // puis fini une fois tous ses processus arrêtés.
+    #[cfg(unix)]
+    #[test]
+    fn group_alive_follows_the_process_group() {
+        use std::os::unix::process::CommandExt;
+        let mut child = std::process::Command::new("sleep").arg("30").process_group(0).spawn().unwrap();
+        assert!(group_alive(child.id()));
+        kill_tree(&mut child);
+        assert!(!group_alive(child.id()));
+    }
+
+    // Sous Windows, pas de groupe à suivre : la fin du processus suffit.
+    #[cfg(windows)]
+    #[test]
+    fn group_alive_is_false_on_windows() {
+        assert!(!group_alive(std::process::id()));
     }
 
     #[test]
