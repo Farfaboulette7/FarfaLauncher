@@ -650,11 +650,17 @@ async fn update_plutonium(game_dir: &Path, root: &Path, runner: Option<&Runner>)
 /// Un processus du groupe `pgid` tourne encore (Linux, Mac : le groupe créé par
 /// `process_group(0)`). Toujours faux sous Windows, où Proton n'existe pas.
 fn group_alive(pgid: u32) -> bool {
-    #[cfg(unix)]
+    // Linux : lecture de /proc, en ignorant les zombies (comme le suivi des parties).
+    #[cfg(target_os = "linux")]
     {
-        // `kill -0` n'envoie rien : il dit seulement si un processus du groupe existe.
+        crate::launch::group_alive(pgid)
+    }
+    // Mac : `kill -0` n'envoie rien, il dit seulement si un processus du groupe existe. Le `--`
+    // est indispensable : sans lui, `-1234` serait lu comme une option.
+    #[cfg(all(unix, not(target_os = "linux")))]
+    {
         std::process::Command::new("kill")
-            .args(["-0", &format!("-{pgid}")])
+            .args(["-0", "--", &format!("-{pgid}")])
             .stderr(std::process::Stdio::null())
             .status()
             .is_ok_and(|s| s.success())

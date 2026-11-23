@@ -427,7 +427,7 @@ fn signal_group(pgid: u32, signal: &str) {
 
 /// Un processus non zombie appartient-il encore au groupe `pgid` ?
 #[cfg(target_os = "linux")]
-fn group_alive(pgid: u32) -> bool {
+pub(crate) fn group_alive(pgid: u32) -> bool {
     let Ok(rd) = std::fs::read_dir("/proc") else { return false };
     rd.filter_map(Result::ok)
         .filter(|e| e.file_name().to_string_lossy().bytes().all(|b| b.is_ascii_digit()))
