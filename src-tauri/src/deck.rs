@@ -54,7 +54,12 @@ Commandes (réponses en JSON, une ligne par message) :
   restaurer <id> <version>      remet une version (l'actuelle est gardée dans l'historique)
   desinstaller <id> [--garder-sauvegardes]
   jouer <id>                    sauvegarde du serveur, réglages, jeu, envoi de la sauvegarde
-  synchroniser [<id>]           envoie les sauvegardes changées et le temps de jeu en attente";
+  synchroniser [<id>]           envoie les sauvegardes changées et le temps de jeu en attente
+  essai <id> [<secondes>]       smoke test : lance le jeu sans rien envoyer au serveur, vérifie
+                                qu'il tient <secondes> (10 par défaut), puis le ferme
+
+Variable FARFALAUNCHERDECK_JETON : jeton RomM pris là plutôt que dans le fichier `token`
+(smoke test : le jeton n'est jamais écrit sur le disque).";
 
 /// Fermeture demandée du jeu en cours (`jouer`), levée à la réception du signal d'arrêt de Steam.
 static GAME_STOP: std::sync::OnceLock<Arc<std::sync::atomic::AtomicBool>> = std::sync::OnceLock::new();
@@ -76,6 +81,8 @@ pub fn main() {
         emit(json!({ "type": "error", "code": "internal", "message": format!("panique à {place} : {msg}") }));
     }));
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // Avant tout autre fil : retirer la variable de l'environnement est alors sans risque.
+    take_env_token();
     // Journal écrit par un fil à part : sa garde le vide à la fin du programme.
     let log_guard = crate::logging::init(&config_dir().join("logs"));
     let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
@@ -153,8 +160,27 @@ fn token_file(config_dir: &Path) -> PathBuf {
     config_dir.join("token")
 }
 
+/// Variable du jeton pour le smoke test (jamais écrit sur le disque).
+const TOKEN_VAR: &str = "FARFALAUNCHERDECK_JETON";
+
+/// Jeton lu dans `TOKEN_VAR` au démarrage, puis retiré de l'environnement : les jeux,
+/// émulateurs et outils lancés ensuite n'en héritent pas.
+static ENV_TOKEN: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+
+fn take_env_token() {
+    let token = std::env::var(TOKEN_VAR).ok();
+    std::env::remove_var(TOKEN_VAR);
+    let _ = ENV_TOKEN.set(token);
+}
+
 fn load_token(config_dir: &Path) -> Option<String> {
-    std::fs::read_to_string(token_file(config_dir)).ok().map(|t| t.trim().to_string()).filter(|t| !t.is_empty())
+    pick_token(ENV_TOKEN.get().cloned().flatten(), config_dir)
+}
+
+/// Le jeton de l'environnement d'abord (smoke test), sinon celui du fichier `token`.
+fn pick_token(env: Option<String>, config_dir: &Path) -> Option<String> {
+    let clean = |t: String| Some(t.trim().to_string()).filter(|t| !t.is_empty());
+    env.and_then(clean).or_else(|| std::fs::read_to_string(token_file(config_dir)).ok().and_then(clean))
 }
 
 /// Écrit le jeton, lisible par l'utilisateur seul.
@@ -303,6 +329,10 @@ async fn run(args: Vec<String>) -> AppResult<Value> {
             after_game(&open_state(), pid, id, started).await
         }
         "synchroniser" => sync(&open_state(), rest.first().and_then(|a| a.parse().ok())).await,
+        "essai" => {
+            let secs = rest.get(1).and_then(|s| s.parse().ok()).unwrap_or(10);
+            smoke_launch(&open_state(), rom_id(rest.first())?, secs).await
+        }
         _ => {
             eprintln!("{USAGE}");
             Err(AppError::Internal)
@@ -368,6 +398,9 @@ async fn config(state: &AppState, args: &[String]) -> AppResult<Value> {
         crate::romm::auth::me(&client).await?;
         store_token(&state.config_dir, token)?;
         state.set_client(Some(client));
+    } else if let (Some(url), Some(token)) = (server, load_token(&state.config_dir)) {
+        // Serveur changé avec un jeton déjà connu (fichier ou FARFALAUNCHERDECK_JETON) : connecté tout de suite.
+        state.set_client(Some(RommClient::new(&url, Some(token))?));
     }
     info(state).await
 }
@@ -744,6 +777,49 @@ async fn play(state: &AppState, id: i64) -> AppResult<Value> {
     Ok(json!({ "finished": finished, "crashed": crashed, "crash": crash }))
 }
 
+/// Smoke test (`scripts/smoke-test.ps1`) : lance un jeu installé comme `jouer`, mais sans
+/// rien écrire sur le serveur.
+/// - Seulement un jeu d'émulateur, hors Switch : `play::start` ne prépare alors ni jeu PC
+///   (client Call of Duty) ni partage des shaders (Citron, Eden : `shaders::Job::before`
+///   peut envoyer au gestionnaire). Le reste est refusé.
+/// - `SaveChoice::Unchanged` : ni téléchargement ni envoi de sauvegarde.
+/// - Ni `play::finish` (temps de jeu, sauvegarde, shaders), ni `stats::sync`, ni la présence.
+/// Le jeu doit tenir `secs` secondes, puis il est fermé (prié de se fermer, puis arrêté).
+async fn smoke_launch(state: &AppState, id: i64, secs: u64) -> AppResult<Value> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let _lock = lock(state, id)?;
+    let st = state::find(&state.config_dir, id).ok_or(AppError::NotInstalled)?;
+    st.executable.as_ref().ok_or(AppError::NoExecutable)?;
+    // Réglages du catalogue à jour (lecture seule), comme `jouer`.
+    if state.client().is_ok() {
+        refresh_catalog(state).await;
+    }
+    let allowed = st.pc.is_none()
+        && state.catalog().emulator_for_install(&st).is_some_and(|e| !e.consoles.iter().any(|c| c.starts_with("switch")));
+    if !allowed {
+        tracing::warn!("essai refusé pour « {} » : seulement un jeu d'émulateur hors Switch (rien ne doit partir au serveur)", st.name);
+        return Err(AppError::NotAvailable);
+    }
+    let crate::play::Started { running, shader_job, .. } = crate::play::start(state, id, SaveChoice::Unchanged, None, false, &[]).await?;
+    // Impossible hors Switch ; vérifié quand même : aucun partage de shaders.
+    debug_assert!(shader_job.is_none());
+    emit(json!({ "type": "started", "data": { "romId": id } }));
+    let stop = running.stop_flag();
+    let window = Arc::new(AtomicBool::new(false));
+    let seen = window.clone();
+    let mut game = tokio::task::spawn_blocking(move || running.wait_outcome(|| seen.store(true, Ordering::Relaxed)));
+    // Fini avant le délai : le jeu s'est fermé tout seul (planté).
+    let early = tokio::time::timeout(std::time::Duration::from_secs(secs), &mut game).await.ok();
+    let alive = early.is_none();
+    stop.store(true, Ordering::Relaxed);
+    let (_, crash) = match early {
+        Some(r) => r,
+        None => game.await,
+    }
+    .unwrap_or((None, None));
+    Ok(json!({ "romId": id, "alive": alive, "seconds": secs, "window": window.load(Ordering::Relaxed), "crash": crash }))
+}
+
 /// Présence des amis pendant la partie : « en jeu » toutes les 60 s (sauf « Apparaître hors
 /// ligne » ou hors ligne). Si Steam arrête ce programme, le gestionnaire l'oublie après 3 min.
 fn presence_while_playing(state: &AppState, id: i64) -> Option<(tokio::task::JoinHandle<()>, crate::romm::client::RommClient)> {
@@ -834,4 +910,25 @@ async fn sync(state: &AppState, only: Option<i64>) -> AppResult<Value> {
     }
     let pending = crate::romm::playtime::flush(&client, &state.config_dir).await.unwrap_or_else(|_| crate::romm::playtime::pending_count(&state.config_dir));
     Ok(json!({ "games": out, "pendingSessions": pending }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn token_from_env_first_then_file() {
+        let dir = std::env::temp_dir().join(format!("farfa-deck-token-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // Ni variable ni fichier.
+        assert_eq!(pick_token(None, &dir), None);
+        std::fs::write(token_file(&dir), " rmm_fichier \n").unwrap();
+        // Fichier seul, nettoyé.
+        assert_eq!(pick_token(None, &dir).as_deref(), Some("rmm_fichier"));
+        // La variable passe avant le fichier.
+        assert_eq!(pick_token(Some("rmm_variable".into()), &dir).as_deref(), Some("rmm_variable"));
+        // Variable vide : le fichier.
+        assert_eq!(pick_token(Some("  ".into()), &dir).as_deref(), Some("rmm_fichier"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
