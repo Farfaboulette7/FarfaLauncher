@@ -66,6 +66,7 @@ fn keep_installed_recomps(catalog: &mut crate::manager::Catalog, config_dir: &st
 
 impl AppState {
     pub fn new(config_dir: PathBuf, log_dir: PathBuf, cache_dir: PathBuf, default_install_root: PathBuf) -> Self {
+        crate::safe_file::remove_stale_tmp(&config_dir);
         let settings = settings::load(&config_dir);
         let mut catalog = crate::manager::Catalog::load_cached(&config_dir);
         catalog.choices = settings.recomp_choice.clone();

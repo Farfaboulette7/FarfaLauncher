@@ -26,6 +26,20 @@ pub fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
     result
 }
 
+/// Au démarrage : efface les fichiers temporaires de `write_atomic` laissés par un arrêt
+/// brutal (`installed.json.<…>.tmp`, `settings.json.<…>.tmp`) de plus d'une heure.
+pub fn remove_stale_tmp(config_dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(config_dir) else { return };
+    for e in entries.filter_map(Result::ok) {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let ours = (name.starts_with("installed.json.") || name.starts_with("settings.json.")) && name.ends_with(".tmp");
+        let old = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age.as_secs() > 3600);
+        if ours && old && std::fs::remove_file(e.path()).is_ok() {
+            tracing::info!("fichier temporaire abandonné effacé : {name}");
+        }
+    }
+}
+
 /// Met de côté un fichier illisible : il est renommé en `<nom>.illisible-<date>` et l'opération
 /// est journalisée. Renvoie le nouveau chemin (`None` si le renommage a échoué).
 pub fn set_aside(path: &Path, why: &str) -> Option<PathBuf> {
@@ -79,6 +93,28 @@ mod tests {
         let second = set_aside(&path, "test").unwrap();
         assert_ne!(second, aside);
         assert_eq!(std::fs::read_to_string(&aside).unwrap(), "{ tronqué");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    // Seuls nos fichiers temporaires de plus d'une heure sont effacés au démarrage.
+    #[test]
+    fn stale_tmp_files_are_removed() {
+        let dir = std::env::temp_dir().join(format!("farfa-tmp-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = dir.join("installed.json.12-3.tmp");
+        let recent = dir.join("settings.json.12-4.tmp");
+        let other = dir.join("autre.tmp");
+        for p in [&old, &recent, &other] {
+            std::fs::write(p, "x").unwrap();
+        }
+        let two_hours_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(7200);
+        for p in [&old, &other] {
+            std::fs::File::options().write(true).open(p).unwrap().set_modified(two_hours_ago).unwrap();
+        }
+        remove_stale_tmp(&dir);
+        assert!(!old.exists());
+        assert!(recent.exists(), "une écriture en cours ne doit pas être effacée");
+        assert!(other.exists(), "un fichier qui n'est pas à nous reste");
         std::fs::remove_dir_all(dir).unwrap();
     }
 
