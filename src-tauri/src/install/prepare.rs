@@ -184,13 +184,8 @@ pub fn run(game_dir: &Path, program: &str, args: &[String], env: &[(String, Stri
     });
     let status = loop {
         if cancel.is_cancelled() {
-            #[cfg(unix)]
-            {
-                // Tout le groupe (le programme et ses sous-programmes).
-                let _ = Command::new("kill").args(["-KILL", "--", &format!("-{}", child.id())]).stdout(Stdio::null()).stderr(Stdio::null()).status();
-            }
-            let _ = child.kill();
-            let _ = child.wait();
+            // Le programme et ses sous-programmes, sous Windows comme sous Linux.
+            crate::launch::kill_tree(&mut child);
             return Err(AppError::Cancelled);
         }
         match child.try_wait() {

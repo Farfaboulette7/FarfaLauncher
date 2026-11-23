@@ -21,6 +21,8 @@ use crate::launch::{self, Launch};
 use crate::platform::{ArchiveKind, Target};
 use crate::romm::library::{Game, RemoteFile};
 use crate::error::LockOrRecover;
+// Arrêt d'un programme et de ses sous-programmes : une seule fonction pour tout le launcher.
+use crate::launch::kill_tree;
 
 /// Téléchargements simultanés.
 const PARALLEL_DOWNLOADS: usize = 6;
@@ -664,14 +666,6 @@ fn group_alive(pgid: u32) -> bool {
     }
 }
 
-fn kill_tree(child: &mut std::process::Child) {
-    #[cfg(unix)]
-    {
-        let _ = std::process::Command::new("kill").args(["-TERM", &format!("-{}", child.id())]).status();
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-}
 
 #[cfg(test)]
 mod tests {
