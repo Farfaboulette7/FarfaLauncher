@@ -15,7 +15,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
 use crate::error::{log_err, AppError, AppResult};
-use crate::romm::client::{check_status, error_chain, RommClient};
+use crate::romm::client::{error_chain, RommClient};
 use crate::romm::library::{file_content_path, RemoteFile};
 
 /// Délai sans recevoir un octet avant d'abandonner (connexion bloquée).
@@ -152,7 +152,7 @@ async fn download_once(
         let _ = tokio::fs::remove_file(part).await;
         return Err(AppError::Download);
     }
-    let resp = check_status(resp).await.map_err(|e| match e {
+    let resp = client.check(resp).await.map_err(|e| match e {
         AppError::Server => AppError::Download,
         other => other,
     })?;

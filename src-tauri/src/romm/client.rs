@@ -63,6 +63,9 @@ pub struct RommClient {
     base: String,
     token: Option<String>,
     http: reqwest::Client,
+    /// Faux pour un client `with_base` (gestionnaire, assets) : son 401 ne dit rien du token
+    /// RomM et ne doit jamais déconnecter le joueur.
+    romm: bool,
 }
 
 impl RommClient {
@@ -72,7 +75,7 @@ impl RommClient {
             .connect_timeout(Duration::from_secs(10))
             .build()
             .map_err(|e| log_err(AppError::Internal, "création du client HTTP", e))?;
-        Ok(Self { base: base.to_string(), token, http })
+        Ok(Self { base: base.to_string(), token, http, romm: true })
     }
 
     /// Même token, autre serveur (gestionnaire, musiques et bruitages).
@@ -85,7 +88,7 @@ impl RommClient {
             tracing::warn!("adresse hors du domaine de RomM : le token RomM ne lui est pas envoyé");
             None
         };
-        Self { base: base.to_string(), token, http: self.http.clone() }
+        Self { base: base.to_string(), token, http: self.http.clone(), romm: false }
     }
 
     pub fn base(&self) -> &str {
@@ -146,7 +149,20 @@ impl RommClient {
 
     pub async fn send(&self, req: RequestBuilder) -> AppResult<Response> {
         let resp = req.send().await.map_err(|e| log_err(AppError::ServerUnreachable, "requête HTTP", error_chain(&e)))?;
-        check_status(resp).await
+        self.check(resp).await
+    }
+
+    /// `check_status`, sauf qu'un 401 d'un autre serveur que RomM (gestionnaire, assets)
+    /// devient une erreur serveur : seul RomM peut dire que le token RomM est refusé, et
+    /// `auth_invalid` renvoie le joueur à l'écran de connexion en effaçant son token.
+    pub async fn check(&self, resp: Response) -> AppResult<Response> {
+        match check_status(resp).await {
+            Err(AppError::AuthInvalid) if !self.romm => {
+                tracing::warn!("401 du gestionnaire ou des assets : le token RomM est gardé");
+                Err(AppError::Server)
+            }
+            other => other,
+        }
     }
 
     /// Comme `send`, pour une requête `get_stream` : abandonne si le serveur ne répond pas
@@ -172,14 +188,21 @@ impl RommClient {
 
 /// Même machine (même hôte, port ignoré) ou même domaine enregistrable
 /// (`romm.exemple.fr` et `manager.exemple.fr`, voir `assets::derive_subdomain`).
+/// Une adresse IP n'a pas de domaine : seulement la même adresse.
 fn same_site(a: &str, b: &str) -> bool {
-    let host = |u: &str| Url::parse(u).ok().and_then(|u| u.host_str().map(str::to_ascii_lowercase));
-    let (Some(a), Some(b)) = (host(a), host(b)) else { return false };
-    if a == b {
-        return true;
-    }
-    match (psl::domain_str(&a), psl::domain_str(&b)) {
-        (Some(da), Some(db)) => da == db,
+    let (Ok(a), Ok(b)) = (Url::parse(a), Url::parse(b)) else { return false };
+    match (a.host(), b.host()) {
+        (Some(url::Host::Domain(a)), Some(url::Host::Domain(b))) => {
+            let (a, b) = (a.to_ascii_lowercase(), b.to_ascii_lowercase());
+            if a == b {
+                return true;
+            }
+            match (psl::domain_str(&a), psl::domain_str(&b)) {
+                (Some(da), Some(db)) => da == db,
+                _ => false,
+            }
+        }
+        (Some(a), Some(b)) => a == b,
         _ => false,
     }
 }
@@ -334,6 +357,31 @@ mod tests {
         server.abort();
     }
 
+    // Un 401 en JSON venant du gestionnaire (client `with_base`) ne déconnecte jamais de RomM ;
+    // le même 401 venant de RomM, si.
+    #[tokio::test]
+    async fn manager_401_never_logs_out() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            for _ in 0..2 {
+                let (mut sock, _) = listener.accept().await.unwrap();
+                let mut buf = [0u8; 1024];
+                let _ = sock.read(&mut buf).await;
+                let body = r#"{"detail":"Invalid token"}"#;
+                let head = format!("HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+                sock.write_all(head.as_bytes()).await.unwrap();
+                sock.write_all(body.as_bytes()).await.unwrap();
+            }
+        });
+        let romm = RommClient::new(&format!("http://{addr}"), Some("rmm_x".into())).unwrap();
+        assert!(matches!(romm.send(romm.get("api/users/me")).await, Err(AppError::AuthInvalid)));
+        let manager = romm.with_base(&format!("http://{addr}"));
+        assert!(matches!(manager.send(manager.get("api/catalog")).await, Err(AppError::Server)));
+        server.abort();
+    }
+
     // L16 : le token ne part qu'au même domaine que RomM (ou à la même machine).
     #[test]
     fn token_only_goes_to_the_same_site() {
@@ -343,6 +391,11 @@ mod tests {
         assert!(!same_site("https://romm.poupounas.synology.me", "https://autre.synology.me"));
         assert!(!same_site("https://romm.example.org", "https://example.com"));
         assert!(!same_site("http://192.168.1.102:8080", "http://192.168.1.50"));
+        // Des IP différentes ne partagent jamais un « domaine » (pas de liste des suffixes).
+        assert!(!same_site("http://10.0.0.5", "http://192.168.0.5"));
+        assert!(!same_site("http://[::1]:8080", "http://[::2]:8080"));
+        assert!(same_site("http://[::1]:8080", "http://[::1]:5000"));
+        assert!(!same_site("http://romm.example.org", "http://10.0.0.5"));
         let client = RommClient::new("https://romm.example.org", Some("rmm_x".into())).unwrap();
         assert!(client.with_base("https://manager.example.org").token.is_some());
         assert!(client.with_base("https://ailleurs.example.com").token.is_none());

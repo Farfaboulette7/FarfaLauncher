@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{log_err, AppError, AppResult};
 use crate::install::state::InstalledGame;
 use crate::manager::{self, Catalog};
-use crate::romm::client::{check_status, error_chain, parse_json, RommClient};
+use crate::romm::client::{error_chain, parse_json, RommClient};
 use crate::romm::saves::{self as romm, ServerSave};
 use crate::settings::Settings;
 
@@ -168,7 +168,7 @@ impl RecompSave {
         if resp.status() == StatusCode::NOT_FOUND {
             return Ok(None);
         }
-        let save: ManagerSave = parse_json(check_status(resp).await?).await?;
+        let save: ManagerSave = parse_json(self.manager.check(resp).await?).await?;
         Ok(Some(RemoteSave { updated_at: save.updated_at, romm: None }))
     }
 
