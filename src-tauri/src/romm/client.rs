@@ -12,6 +12,9 @@ use crate::error::{log_err, AppError, AppResult};
 
 const USER_AGENT: &str = concat!("FarfaLauncher/", env!("CARGO_PKG_VERSION"));
 const API_TIMEOUT: Duration = Duration::from_secs(45);
+/// Téléchargements (`get_stream`, sans délai global) : temps maximum sans rien recevoir, ni
+/// en-têtes ni données. Un serveur muet ne bloque donc jamais un lancement (L6).
+pub const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Normalise l'adresse saisie par l'utilisateur.
 /// - ajoute `https://` si aucun schéma n'est donné ;
@@ -138,6 +141,13 @@ impl RommClient {
         check_status(resp).await
     }
 
+    /// Comme `send`, pour une requête `get_stream` : abandonne si le serveur ne répond pas
+    /// (en-têtes) dans les `IDLE_TIMEOUT`. Le corps se lit ensuite avec `read_body` ou avec
+    /// son propre délai par morceau.
+    pub async fn send_stream(&self, req: RequestBuilder) -> AppResult<Response> {
+        send_within(self.send(req), IDLE_TIMEOUT).await
+    }
+
     /// Lecture JSON ; une erreur serveur passagère (5xx) est retentée une fois.
     pub async fn get_json<T: DeserializeOwned>(&self, path: &str) -> AppResult<T> {
         let resp = match self.send(self.get(path)).await {
@@ -149,6 +159,34 @@ impl RommClient {
             other => other?,
         };
         parse_json(resp).await
+    }
+}
+
+/// Attend une réponse au plus `limit`, sinon serveur injoignable.
+async fn send_within(fut: impl std::future::Future<Output = AppResult<Response>>, limit: Duration) -> AppResult<Response> {
+    match tokio::time::timeout(limit, fut).await {
+        Ok(result) => result,
+        Err(_) => Err(log_err(AppError::ServerUnreachable, "requête HTTP", format!("aucune réponse depuis {} s", limit.as_secs()))),
+    }
+}
+
+/// Lit tout le corps d'une réponse (sauvegarde…), en abandonnant après `IDLE_TIMEOUT` sans
+/// recevoir de données. Un gros fichier lent mais qui avance n'est jamais coupé.
+pub async fn read_body(resp: Response, what: &str) -> AppResult<Vec<u8>> {
+    read_body_within(resp, what, IDLE_TIMEOUT).await
+}
+
+async fn read_body_within(resp: Response, what: &str, idle: Duration) -> AppResult<Vec<u8>> {
+    use futures_util::StreamExt;
+    let mut body = Vec::new();
+    let mut stream = resp.bytes_stream();
+    loop {
+        match tokio::time::timeout(idle, stream.next()).await {
+            Err(_) => return Err(log_err(AppError::Download, what, format!("aucune donnée reçue depuis {} s", idle.as_secs()))),
+            Ok(None) => return Ok(body),
+            Ok(Some(Err(e))) => return Err(log_err(AppError::Download, what, error_chain(&e))),
+            Ok(Some(Ok(chunk))) => body.extend_from_slice(&chunk),
+        }
     }
 }
 
@@ -236,6 +274,43 @@ pub fn truncate(s: &str, max: usize) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // L6 : un serveur (local) qui accepte la connexion mais ne répond jamais ne bloque pas.
+    #[tokio::test]
+    async fn silent_server_times_out() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        // Accepte et garde la connexion ouverte, sans jamais rien envoyer.
+        let server = tokio::spawn(async move {
+            let (_sock, _) = listener.accept().await.unwrap();
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+        let client = RommClient::new(&format!("http://{addr}"), None).unwrap();
+        let r = send_within(client.send(client.get_stream("api/x")), Duration::from_millis(300)).await;
+        assert!(matches!(r, Err(AppError::ServerUnreachable)));
+        server.abort();
+    }
+
+    // L6 : en-têtes reçus puis plus rien : la lecture du corps abandonne au lieu d'attendre.
+    #[tokio::test]
+    async fn stalled_body_times_out() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = sock.read(&mut buf).await;
+            // Annonce 100 octets, n'en envoie que 10, puis se tait.
+            sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n0123456789").await.unwrap();
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+        let client = RommClient::new(&format!("http://{addr}"), None).unwrap();
+        let resp = send_within(client.send(client.get_stream("api/x")), Duration::from_secs(5)).await.unwrap();
+        let r = read_body_within(resp, "test", Duration::from_millis(300)).await;
+        assert!(matches!(r, Err(AppError::Download)));
+        server.abort();
+    }
 
     // L4 : seul un 401 en JSON de RomM est un token refusé ; un 401 en page HTML (proxy) et un
     // 403 ne le sont pas (le token est gardé au démarrage).

@@ -173,9 +173,9 @@ impl RecompSave {
     }
 
     pub async fn download(&self) -> AppResult<Vec<u8>> {
-        let resp = self.manager.send(self.manager.get_stream(&format!("{}/content", self.path))).await?;
-        let bytes = resp.bytes().await.map_err(|e| log_err(AppError::Download, "téléchargement de la sauvegarde", e))?;
-        Ok(bytes.to_vec())
+        // Délai d'attente sur la réponse et entre deux morceaux (L6).
+        let resp = self.manager.send_stream(self.manager.get_stream(&format!("{}/content", self.path))).await?;
+        crate::romm::client::read_body(resp, "téléchargement de la sauvegarde").await
     }
 
     pub async fn upload(&self, zip: Vec<u8>) -> AppResult<String> {

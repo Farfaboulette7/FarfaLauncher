@@ -149,13 +149,23 @@ pub async fn cached_download(
         return Ok(path);
     }
     tokio::fs::create_dir_all(dir).await.map_err(|e| log_err(AppError::Cache, "création du cache", e))?;
-    let resp = client.send(client.get_stream(url_path)).await?;
+    // Délai d'attente sur la réponse, puis entre deux morceaux (L6).
+    let resp = client.send_stream(client.get_stream(url_path)).await?;
     // Nom temporaire unique : deux demandes simultanées du même fichier ne se marchent pas dessus.
     let tmp = path.with_extension(format!("{ext}.part-{}", uuid::Uuid::new_v4().simple()));
     let mut out = tokio::fs::File::create(&tmp).await.map_err(|e| log_err(AppError::Cache, "fichier de cache", e))?;
     let mut body = resp.bytes_stream();
-    while let Some(chunk) = body.next().await {
-        let chunk = chunk.map_err(|e| log_err(AppError::Download, "téléchargement vers le cache", e))?;
+    loop {
+        let next = tokio::time::timeout(crate::romm::client::IDLE_TIMEOUT, body.next()).await;
+        let chunk = match next {
+            Ok(Some(chunk)) => chunk.map_err(|e| log_err(AppError::Download, "téléchargement vers le cache", e))?,
+            Ok(None) => break,
+            Err(_) => {
+                drop(out);
+                let _ = tokio::fs::remove_file(&tmp).await;
+                return Err(log_err(AppError::Download, "téléchargement vers le cache", "aucune donnée reçue depuis 60 s"));
+            }
+        };
         out.write_all(&chunk).await.map_err(|e| log_err(AppError::Cache, "écriture du cache", e))?;
     }
     out.flush().await.map_err(|e| log_err(AppError::Cache, "écriture du cache", e))?;
