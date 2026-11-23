@@ -161,12 +161,26 @@ pub async fn check_status(resp: Response) -> AppResult<Response> {
     let url = resp.url().path().to_string();
     let body = resp.text().await.unwrap_or_default();
     tracing::warn!("HTTP {status} sur {url}: {}", truncate(&body, 300));
-    Err(match status {
-        StatusCode::UNAUTHORIZED => AppError::AuthInvalid,
+    Err(status_error(status, &body))
+}
+
+/// Erreur correspondant à un statut HTTP d'échec et au corps de la réponse.
+/// Un 401 ne veut dire « token refusé » (`AuthInvalid`, le token est alors oublié) que s'il
+/// vient vraiment de RomM, qui répond toujours en JSON (`{"detail": …}`). Un 401 en page HTML
+/// vient d'un intermédiaire (proxy, portail) : erreur serveur passagère, le token est gardé.
+fn status_error(status: StatusCode, body: &str) -> AppError {
+    match status {
+        StatusCode::UNAUTHORIZED if serde_json::from_str::<serde_json::Value>(body).is_ok_and(|v| v.get("detail").is_some()) => {
+            AppError::AuthInvalid
+        }
+        StatusCode::UNAUTHORIZED => {
+            tracing::warn!("401 qui ne vient pas de RomM (pas de JSON) : proxy ? Le token est gardé");
+            AppError::Server
+        }
         StatusCode::FORBIDDEN => AppError::Forbidden,
         StatusCode::TOO_MANY_REQUESTS => AppError::RateLimited,
         _ => AppError::Server,
-    })
+    }
 }
 
 pub async fn parse_json<T: DeserializeOwned>(resp: Response) -> AppResult<T> {
@@ -222,6 +236,17 @@ pub fn truncate(s: &str, max: usize) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // L4 : seul un 401 en JSON de RomM est un token refusé ; un 401 en page HTML (proxy) et un
+    // 403 ne le sont pas (le token est gardé au démarrage).
+    #[test]
+    fn only_a_romm_401_rejects_the_token() {
+        assert!(matches!(status_error(StatusCode::UNAUTHORIZED, r#"{"detail":"Invalid token"}"#), AppError::AuthInvalid));
+        assert!(matches!(status_error(StatusCode::UNAUTHORIZED, "<html><body>401 Authorization Required</body></html>"), AppError::Server));
+        assert!(matches!(status_error(StatusCode::UNAUTHORIZED, ""), AppError::Server));
+        assert!(matches!(status_error(StatusCode::FORBIDDEN, "<html>403 Forbidden</html>"), AppError::Forbidden));
+        assert!(matches!(status_error(StatusCode::BAD_GATEWAY, ""), AppError::Server));
+    }
 
     #[test]
     fn normalize_adds_https_and_strips_slash() {

@@ -47,13 +47,15 @@ pub async fn session_status(state: State<'_, AppState>) -> AppResult<SessionInfo
             let avatar_url = me.avatar_url(&server_url);
             Ok(SessionInfo { server_url: Some(server_url), connected: true, offline: false, username: Some(me.username), avatar_url, notice: None })
         }
-        Err(e @ (AppError::AuthInvalid | AppError::Forbidden)) => {
-            tracing::warn!("token refusé au démarrage ({}), suppression", e.code());
+        // Seul un 401 de RomM (token révoqué ou expiré) efface le token. Un 403 (droit manquant,
+        // page d'erreur d'un proxy) le garde : on passe hors ligne comme pour une panne (L4).
+        Err(AppError::AuthInvalid) => {
+            tracing::warn!("token refusé au démarrage (auth_invalid), suppression");
             secrets::delete_token(&server_url)?;
             state.set_client(None);
             Ok(SessionInfo::disconnected(Some(server_url), Some(AppError::AuthInvalid.to_string())))
         }
-        Err(AppError::ServerUnreachable | AppError::Server) => {
+        Err(AppError::ServerUnreachable | AppError::Server | AppError::Forbidden) => {
             state.set_client(Some(client));
             state.set_offline(true);
             Ok(SessionInfo { server_url: Some(server_url), connected: true, offline: true, username: None, avatar_url: None, notice: None })
