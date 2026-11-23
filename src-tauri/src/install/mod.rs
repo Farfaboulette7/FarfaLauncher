@@ -29,7 +29,6 @@ use crate::runtimes::{self, Manifest, Runtime, RuntimeGame};
 use download::disk_error;
 use extract::INTERNAL_DIR;
 use state::InstalledGame;
-use crate::error::LockOrRecover;
 
 /// Marge gardée libre sur le disque en plus du nécessaire.
 const SPACE_MARGIN: u64 = 200 * 1024 * 1024;
@@ -1801,7 +1800,7 @@ mod tests {
             runtime_lock: Arc::new(tokio::sync::Mutex::new(())),
             on_progress: Arc::new(move |p| {
                 let line = format!("{} {}", p.phase, if p.total > 0 { p.done * 100 / p.total } else { 0 });
-                let mut l = seen.lock_or_recover();
+                let mut l = seen.lock().unwrap();
                 if *l != line {
                     println!("{line}");
                     *l = line;
