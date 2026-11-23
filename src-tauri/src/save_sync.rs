@@ -17,6 +17,7 @@ use crate::romm::client::RommClient;
 use crate::save_store::SaveStore;
 use crate::saves::{self, SaveLocation};
 use crate::state::AppState;
+use crate::error::LockOrRecover;
 
 /// Copies de secours gardées avant d'écraser une sauvegarde locale.
 const KEEP_BACKUPS: usize = 5;
@@ -405,7 +406,7 @@ pub async fn flush_pending(state: &AppState) -> usize {
     let mut left = 0;
     for mut st in pending {
         // Jeu en cours : il enverra lui-même à la fin de la partie.
-        if state.running.lock().unwrap().contains(&st.rom_id) {
+        if state.running.lock_or_recover().contains(&st.rom_id) {
             left += 1;
             continue;
         }

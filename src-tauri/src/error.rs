@@ -155,3 +155,43 @@ pub fn log_err<E: std::fmt::Display>(err: AppError, context: &str, detail: E) ->
     tracing::error!("{context}: {detail}");
     err
 }
+
+/// Prise d'un verrou (`Mutex`) qui ne panique jamais.
+///
+/// Si une commande a paniqué en tenant le verrou, Rust le marque « empoisonné » et chaque
+/// `lock().unwrap()` suivant panique à son tour : plus rien ne marche jusqu'au redémarrage du
+/// launcher (L7 de docs/audit-2026-11.md). Ici on reprend la valeur telle qu'elle est (un
+/// jeu peut rester marqué « occupé », ce qui vaut mieux que tout bloquer) et on le journalise.
+pub trait LockOrRecover<T> {
+    fn lock_or_recover(&self) -> std::sync::MutexGuard<'_, T>;
+}
+
+impl<T> LockOrRecover<T> for std::sync::Mutex<T> {
+    fn lock_or_recover(&self) -> std::sync::MutexGuard<'_, T> {
+        self.lock().unwrap_or_else(|poisoned| {
+            tracing::error!("verrou empoisonné par une panique précédente : valeur reprise telle quelle");
+            poisoned.into_inner()
+        })
+    }
+}
+
+#[cfg(test)]
+mod lock_tests {
+    use super::LockOrRecover;
+    use std::sync::{Arc, Mutex};
+
+    // Un verrou empoisonné (panique en le tenant) reste utilisable, avec sa valeur.
+    #[test]
+    fn poisoned_mutex_is_recovered() {
+        let m = Arc::new(Mutex::new(vec![1]));
+        let m2 = m.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = m2.lock().unwrap();
+            panic!("panique volontaire du test");
+        })
+        .join();
+        assert!(m.is_poisoned());
+        m.lock_or_recover().push(2);
+        assert_eq!(*m.lock_or_recover(), vec![1, 2]);
+    }
+}

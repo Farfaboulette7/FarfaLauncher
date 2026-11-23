@@ -15,6 +15,7 @@ use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State, 
 use crate::error::{AppError, AppResult};
 use crate::gamepad;
 use crate::state::AppState;
+use crate::error::LockOrRecover;
 
 /// Fenêtre de la colonne (aussi dans capabilities/default.json et main.tsx).
 pub const LABEL: &str = "ingame";
@@ -48,7 +49,7 @@ static SHOWN: Mutex<Option<MenuInfo>> = Mutex::new(None);
 
 /// Nom et console du jeu, d'après la bibliothèque (sinon l'installation).
 fn describe(state: &AppState, rom_id: i64) -> (String, Option<String>) {
-    if let Some(lib) = state.library.lock().unwrap().as_ref() {
+    if let Some(lib) = state.library.lock_or_recover().as_ref() {
         if let Some(g) = lib.games.iter().find(|g| g.id == rom_id) {
             let platform = lib.platforms.iter().find(|p| p.id == g.platform_id).map(|p| p.name.clone());
             return (g.name.clone(), platform);
@@ -68,14 +69,14 @@ pub fn prepare(app: &AppHandle) {
 /// Ouvre le menu sur la partie la plus récente (appelé par le fil des manettes).
 pub fn open(app: &AppHandle) {
     let state = app.state::<AppState>();
-    let latest = state.playing.lock().unwrap().iter().max_by_key(|(_, p)| p.started).map(|(id, p)| (*id, p.started.elapsed(), p.control.clone()));
+    let latest = state.playing.lock_or_recover().iter().max_by_key(|(_, p)| p.started).map(|(id, p)| (*id, p.started.elapsed(), p.control.clone()));
     let Some((rom_id, elapsed, control)) = latest else { return };
     // Le jeu ne reçoit plus rien (manette, clavier) tant que le joueur choisit.
     control.pause();
     let (name, platform) = describe(&state, rom_id);
     tracing::info!("menu en jeu ouvert ({name})");
     let info = MenuInfo { rom_id, name, platform, session_ms: elapsed.as_millis() as u64, quitting: false };
-    *SHOWN.lock().unwrap() = Some(info.clone());
+    *SHOWN.lock_or_recover() = Some(info.clone());
     gamepad::set_menu(true);
     let _ = app.emit_to(LABEL, EVENT, Some(info));
     let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
@@ -92,13 +93,13 @@ pub fn open(app: &AppHandle) {
 /// Referme le menu : la colonne repart vers la gauche, la manette retourne au jeu.
 pub fn close(app: &AppHandle) {
     gamepad::set_menu(false);
-    for p in app.state::<AppState>().playing.lock().unwrap().values() {
+    for p in app.state::<AppState>().playing.lock_or_recover().values() {
         p.control.resume();
     }
-    *SHOWN.lock().unwrap() = None;
+    *SHOWN.lock_or_recover() = None;
     let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
     let Some(w) = app.get_webview_window(LABEL) else { return };
-    let Some(rect) = *RECT.lock().unwrap() else { return };
+    let Some(rect) = *RECT.lock_or_recover() else { return };
     let app = app.clone();
     std::thread::spawn(move || {
         if slide(&w, rect, generation, false) {
@@ -155,7 +156,7 @@ fn screen_rect(app: &AppHandle) -> Option<Rect> {
         w: (WIDTH * m.scale_factor()).round() as i32,
         h: m.size().height as i32,
     };
-    *RECT.lock().unwrap() = Some(rect);
+    *RECT.lock_or_recover() = Some(rect);
     Some(rect)
 }
 
@@ -234,7 +235,7 @@ fn column(app: &AppHandle) -> tauri::Result<WebviewWindow> {
 /// Menu affiché, pour la colonne qui vient de se charger.
 #[tauri::command]
 pub fn ingame_state() -> Option<MenuInfo> {
-    SHOWN.lock().unwrap().clone()
+    SHOWN.lock_or_recover().clone()
 }
 
 /// Reprendre la partie : la colonne disparaît.
@@ -247,13 +248,13 @@ pub fn ingame_resume(app: AppHandle) {
 /// La colonne reste affichée (« Fermeture du jeu… ») jusqu'à la fin du jeu.
 #[tauri::command]
 pub fn quit_game(app: AppHandle, state: State<'_, AppState>, rom_id: i64) -> AppResult<()> {
-    let (stop, control) = state.playing.lock().unwrap().get(&rom_id).map(|p| (p.stop.clone(), p.control.clone())).ok_or(AppError::NotInstalled)?;
+    let (stop, control) = state.playing.lock_or_recover().get(&rom_id).map(|p| (p.stop.clone(), p.control.clone())).ok_or(AppError::NotInstalled)?;
     // Relancé pour qu'il puisse se fermer proprement.
     control.resume();
     tracing::info!("quitter le jeu {rom_id} depuis le menu en jeu");
     gamepad::set_menu(false);
     stop.store(true, Ordering::Relaxed);
-    let info = SHOWN.lock().unwrap().as_mut().map(|i| {
+    let info = SHOWN.lock_or_recover().as_mut().map(|i| {
         i.quitting = true;
         i.clone()
     });

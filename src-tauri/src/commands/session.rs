@@ -9,6 +9,7 @@ use crate::romm::auth::{self, DevicePoll};
 use crate::romm::client::{normalize_server_url, RommClient};
 use crate::secrets;
 use crate::state::{AppState, PendingDevice};
+use crate::error::LockOrRecover;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -101,7 +102,7 @@ pub async fn start_device_auth(state: State<'_, AppState>) -> AppResult<DeviceAu
     let client = RommClient::new(&server_url, None)?;
     let name = format!("FaRFa project — {}", device_name());
     let init = auth::device_init(&client, &state.settings().device_id, &name).await?;
-    *state.pending_device.lock().unwrap() = Some(PendingDevice { server_url: server_url.clone(), device_code: init.device_code });
+    *state.pending_device.lock_or_recover() = Some(PendingDevice { server_url: server_url.clone(), device_code: init.device_code });
     Ok(DeviceAuthStart {
         user_code: init.user_code,
         verification_url: client.url(&init.verification_path_complete),
@@ -122,7 +123,7 @@ pub enum DeviceAuthPoll {
 
 #[tauri::command]
 pub async fn poll_device_auth(state: State<'_, AppState>) -> AppResult<DeviceAuthPoll> {
-    let (server_url, device_code) = match state.pending_device.lock().unwrap().as_ref() {
+    let (server_url, device_code) = match state.pending_device.lock_or_recover().as_ref() {
         Some(p) => (p.server_url.clone(), p.device_code.clone()),
         None => return Ok(DeviceAuthPoll::Expired),
     };
@@ -131,15 +132,15 @@ pub async fn poll_device_auth(state: State<'_, AppState>) -> AppResult<DeviceAut
         DevicePoll::Pending => DeviceAuthPoll::Pending,
         DevicePoll::SlowDown => DeviceAuthPoll::SlowDown,
         DevicePoll::Denied => {
-            state.pending_device.lock().unwrap().take();
+            state.pending_device.lock_or_recover().take();
             DeviceAuthPoll::Denied
         }
         DevicePoll::Expired => {
-            state.pending_device.lock().unwrap().take();
+            state.pending_device.lock_or_recover().take();
             DeviceAuthPoll::Expired
         }
         DevicePoll::Approved { token, scopes } => {
-            state.pending_device.lock().unwrap().take();
+            state.pending_device.lock_or_recover().take();
             let missing: Vec<_> = auth::REQUIRED_SCOPES.iter().filter(|s| !scopes.iter().any(|g| g == *s)).collect();
             if !missing.is_empty() {
                 tracing::warn!("scopes non accordés: {missing:?}");
@@ -151,7 +152,7 @@ pub async fn poll_device_auth(state: State<'_, AppState>) -> AppResult<DeviceAut
 
 #[tauri::command]
 pub fn cancel_device_auth(state: State<'_, AppState>) {
-    state.pending_device.lock().unwrap().take();
+    state.pending_device.lock_or_recover().take();
 }
 
 #[tauri::command]

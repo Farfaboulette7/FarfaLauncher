@@ -11,6 +11,7 @@ use crate::cache::LibrarySnapshot;
 use crate::error::{AppError, AppResult};
 use crate::romm::client::RommClient;
 use crate::settings::{self, Settings};
+use crate::error::LockOrRecover;
 
 pub struct PendingDevice {
     pub server_url: String,
@@ -106,23 +107,23 @@ impl AppState {
 
     /// Marque le jeu occupé jusqu'à la fin de la garde renvoyée.
     pub fn mark_busy(&self, rom_id: i64) -> AppResult<BusyGuard<'_>> {
-        if self.running.lock().unwrap().contains(&rom_id) {
+        if self.running.lock_or_recover().contains(&rom_id) {
             return Err(AppError::AlreadyRunning);
         }
-        if self.installs.lock().unwrap().contains_key(&rom_id) || !self.busy.lock().unwrap().insert(rom_id) {
+        if self.installs.lock_or_recover().contains_key(&rom_id) || !self.busy.lock_or_recover().insert(rom_id) {
             return Err(AppError::Busy);
         }
         Ok(BusyGuard { state: self, rom_id })
     }
 
     pub fn manifest(&self) -> crate::runtimes::Manifest {
-        self.manifest.lock().unwrap().clone()
+        self.manifest.lock_or_recover().clone()
     }
 
     /// Catalogue du gestionnaire, avec les recomps choisies par le joueur.
     pub fn catalog(&self) -> crate::manager::Catalog {
-        let mut catalog = self.catalog.lock().unwrap().clone();
-        catalog.choices = self.settings.lock().unwrap().recomp_choice.clone();
+        let mut catalog = self.catalog.lock_or_recover().clone();
+        catalog.choices = self.settings.lock_or_recover().recomp_choice.clone();
         keep_installed_recomps(&mut catalog, &self.config_dir);
         catalog
     }
@@ -135,17 +136,17 @@ impl AppState {
             family.extend(crate::install::state::pages_in(&self.config_dir, &st.game_dir));
         }
         let others: Vec<i64> = family.into_iter().filter(|id| *id != rom_id).collect();
-        if others.iter().any(|id| self.running.lock().unwrap().contains(id)) {
+        if others.iter().any(|id| self.running.lock_or_recover().contains(id)) {
             return Err(AppError::AlreadyRunning);
         }
-        if others.iter().any(|id| self.installs.lock().unwrap().contains_key(id) || self.is_busy(*id)) {
+        if others.iter().any(|id| self.installs.lock_or_recover().contains_key(id) || self.is_busy(*id)) {
             return Err(AppError::Busy);
         }
         Ok(())
     }
 
     pub fn is_busy(&self, rom_id: i64) -> bool {
-        self.busy.lock().unwrap().contains(&rom_id)
+        self.busy.lock_or_recover().contains(&rom_id)
     }
 
     pub fn install_root(&self) -> PathBuf {
@@ -153,11 +154,11 @@ impl AppState {
     }
 
     pub fn settings(&self) -> Settings {
-        self.settings.lock().unwrap().clone()
+        self.settings.lock_or_recover().clone()
     }
 
     pub fn update_settings(&self, f: impl FnOnce(&mut Settings)) -> AppResult<Settings> {
-        let mut guard = self.settings.lock().unwrap();
+        let mut guard = self.settings.lock_or_recover();
         f(&mut guard);
         settings::save(&self.config_dir, &guard)?;
         Ok(guard.clone())
@@ -169,11 +170,11 @@ impl AppState {
 
     /// Client authentifié courant, ou `AuthInvalid` si déconnecté.
     pub fn client(&self) -> AppResult<RommClient> {
-        self.client.lock().unwrap().clone().ok_or(AppError::AuthInvalid)
+        self.client.lock_or_recover().clone().ok_or(AppError::AuthInvalid)
     }
 
     pub fn set_client(&self, client: Option<RommClient>) {
-        *self.client.lock().unwrap() = client;
+        *self.client.lock_or_recover() = client;
     }
 
     /// Le serveur était injoignable au dernier essai.
@@ -207,6 +208,6 @@ pub struct BusyGuard<'a> {
 
 impl Drop for BusyGuard<'_> {
     fn drop(&mut self) {
-        self.state.busy.lock().unwrap().remove(&self.rom_id);
+        self.state.busy.lock_or_recover().remove(&self.rom_id);
     }
 }

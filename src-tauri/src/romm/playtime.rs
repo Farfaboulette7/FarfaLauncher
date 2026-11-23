@@ -14,6 +14,7 @@ use time::OffsetDateTime;
 
 use super::client::{parse_json, RommClient};
 use crate::error::{log_err, AppError, AppResult};
+use crate::error::LockOrRecover;
 
 const PAGE: usize = 500;
 /// Taille maximale d'un lot accepté par RomM.
@@ -97,7 +98,7 @@ fn save_queue(config_dir: &Path, queue: &[PendingSession]) -> AppResult<()> {
 
 /// Ajoute une session terminée à la file locale.
 pub fn enqueue(config_dir: &Path, session: PendingSession) -> AppResult<()> {
-    let _guard = QUEUE_LOCK.lock().unwrap();
+    let _guard = QUEUE_LOCK.lock_or_recover();
     let mut queue = load_queue(config_dir);
     if !queue.contains(&session) {
         queue.push(session);
@@ -106,7 +107,7 @@ pub fn enqueue(config_dir: &Path, session: PendingSession) -> AppResult<()> {
 }
 
 pub fn pending_count(config_dir: &Path) -> usize {
-    let _guard = QUEUE_LOCK.lock().unwrap();
+    let _guard = QUEUE_LOCK.lock_or_recover();
     load_queue(config_dir).len()
 }
 
@@ -134,7 +135,7 @@ struct IngestResult {
 /// Envoie la file à RomM. Renvoie le nombre de sessions restant en attente.
 pub async fn flush(client: &RommClient, config_dir: &Path) -> AppResult<usize> {
     let queue = {
-        let _guard = QUEUE_LOCK.lock().unwrap();
+        let _guard = QUEUE_LOCK.lock_or_recover();
         load_queue(config_dir)
     };
     if queue.is_empty() {
@@ -178,7 +179,7 @@ pub async fn flush(client: &RommClient, config_dir: &Path) -> AppResult<usize> {
         }
     }
     let remaining = {
-        let _guard = QUEUE_LOCK.lock().unwrap();
+        let _guard = QUEUE_LOCK.lock_or_recover();
         let mut current = load_queue(config_dir);
         current.retain(|s| !done.contains(s));
         save_queue(config_dir, &current)?;

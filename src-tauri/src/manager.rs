@@ -15,6 +15,7 @@ use crate::platform::{ArchiveKind, Target, ALL_TARGETS};
 use crate::romm::library::{PlatformArchive, RemoteFile};
 use crate::settings::Settings;
 use crate::state::AppState;
+use crate::error::LockOrRecover;
 
 const SUBDOMAIN: &str = "manager";
 const CACHE_FILE: &str = "catalog.json";
@@ -816,7 +817,7 @@ pub async fn refresh(state: &AppState) {
             if found > 0 {
                 tracing::info!("sauvegardes Switch : dossier trouvé pour {found} jeu(x) au démarrage");
             }
-            *state.catalog.lock().unwrap() = catalog;
+            *state.catalog.lock_or_recover() = catalog;
         }
         Err(e) => tracing::warn!("FarfaRomManager indisponible ({}), catalogue précédent gardé", e.code()),
     }

@@ -20,6 +20,7 @@ use crate::install::{blocking, detect, download, ensure_space, finalize, path_to
 use crate::launch::{self, Launch};
 use crate::platform::{ArchiveKind, Target};
 use crate::romm::library::{Game, RemoteFile};
+use crate::error::LockOrRecover;
 
 /// Téléchargements simultanés.
 const PARALLEL_DOWNLOADS: usize = 6;
@@ -191,7 +192,7 @@ struct DownloadProgress {
 
 impl DownloadProgress {
     fn report(&self, job: &InstallJob, verifying: bool) {
-        let mut last = self.last.lock().unwrap();
+        let mut last = self.last.lock_or_recover();
         if verifying || last.elapsed() >= Duration::from_millis(200) {
             *last = Instant::now();
             let done = self.received.load(Ordering::Relaxed);

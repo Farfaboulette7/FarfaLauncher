@@ -15,6 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::{make_executable, rel_to_path};
 use crate::error::{AppError, AppResult};
+use crate::error::LockOrRecover;
 
 /// Programme de construction parmi les exécutables du jeu : le premier nom de la liste
 /// (`HookshotBuilder, Hookshot-`) qui correspond, au nom exact ou par son début.
@@ -161,7 +162,7 @@ pub fn run(game_dir: &Path, program: &str, args: &[String], env: &[(String, Stri
                     }
                     on_progress(phase, (f * 1000.0) as u64);
                 } else if let Some(e) = line.strip_prefix("error ").map(str::to_string).or_else(|| json_error(&line)) {
-                    *error.lock().unwrap() = Some(e.to_string());
+                    *error.lock_or_recover() = Some(e.to_string());
                 }
                 tracing::debug!("construction : {line}");
             }
@@ -173,7 +174,7 @@ pub fn run(game_dir: &Path, program: &str, args: &[String], env: &[(String, Stri
         let tail = err_tail.clone();
         std::thread::spawn(move || {
             for line in BufReader::new(e).lines().map_while(Result::ok) {
-                let mut t = tail.lock().unwrap();
+                let mut t = tail.lock_or_recover();
                 t.push(line);
                 if t.len() > 30 {
                     t.remove(0);
@@ -213,8 +214,8 @@ pub fn run(game_dir: &Path, program: &str, args: &[String], env: &[(String, Stri
     }
     tracing::error!(
         "construction échouée ({status}) : {} | {}",
-        error.lock().unwrap().clone().unwrap_or_default(),
-        err_tail.lock().unwrap().join(" / ")
+        error.lock_or_recover().clone().unwrap_or_default(),
+        err_tail.lock_or_recover().join(" / ")
     );
     Err(AppError::InstallerFailed)
 }

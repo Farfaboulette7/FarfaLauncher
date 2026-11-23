@@ -15,6 +15,7 @@ use crate::install::{download, extract::MODS_DIR, state};
 use crate::platform;
 use crate::runtimes;
 use crate::state::AppState;
+use crate::error::LockOrRecover;
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -60,7 +61,7 @@ pub async fn download_mod(app: AppHandle, state: State<'_, AppState>, rom_id: i6
     let key = (rom_id, file_id);
     let cancel = CancellationToken::new();
     {
-        let mut jobs = state.mod_downloads.lock().unwrap();
+        let mut jobs = state.mod_downloads.lock_or_recover();
         if jobs.contains(&key) {
             return Err(AppError::Busy);
         }
@@ -89,7 +90,7 @@ pub async fn download_mod(app: AppHandle, state: State<'_, AppState>, rom_id: i6
         )
         .await;
         let state = app.state::<AppState>();
-        state.mod_downloads.lock().unwrap().remove(&key);
+        state.mod_downloads.lock_or_recover().remove(&key);
         if result.is_ok() {
             if let Some(mut st) = state::find(&state.config_dir, rom_id) {
                 if !st.mods_downloaded.contains(&file.file_name) {

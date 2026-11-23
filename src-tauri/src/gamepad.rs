@@ -22,6 +22,7 @@ use sdl3_sys::hints::*;
 use sdl3_sys::init::{SDL_InitSubSystem, SDL_QuitSubSystem, SDL_INIT_GAMEPAD};
 use sdl3_sys::joystick::SDL_JoystickID;
 use serde::Serialize;
+use crate::error::LockOrRecover;
 #[cfg(feature = "gui")]
 use tauri::{AppHandle, Emitter};
 
@@ -171,7 +172,7 @@ unsafe fn bindings(pad: *mut SDL_Gamepad) -> Vec<(&'static str, String)> {
 }
 
 pub fn connected() -> Vec<PadInfo> {
-    let mut pads: Vec<PadInfo> = PADS.lock().unwrap().values().cloned().collect();
+    let mut pads: Vec<PadInfo> = PADS.lock_or_recover().values().cloned().collect();
     pads.sort_by_key(|p| p.order);
     pads
 }
@@ -376,7 +377,7 @@ impl Session {
         if self.watch {
             return;
         }
-        let old = std::mem::take(&mut *PADS.lock().unwrap());
+        let old = std::mem::take(&mut *PADS.lock_or_recover());
         for pad in old.keys() {
             let _ = app.emit(EVENT, PadEvent::Disconnected { pad: *pad });
         }
@@ -401,7 +402,7 @@ impl Session {
                 }
                 tracing::info!("manette « {} » ({}, {}{})", info.name, info.layout, info.guid,
                     info.xinput.map(|i| format!(", XInput {i}")).unwrap_or_default());
-                PADS.lock().unwrap().insert(info.pad, info.clone());
+                PADS.lock_or_recover().insert(info.pad, info.clone());
                 Some(PadEvent::Connected(info))
             }
             SDL_EventType::GAMEPAD_REMOVED => {
@@ -417,7 +418,7 @@ impl Session {
                     self.layouts.remove(&pad);
                     return;
                 }
-                PADS.lock().unwrap().remove(&pad);
+                PADS.lock_or_recover().remove(&pad);
                 Some(PadEvent::Disconnected { pad })
             }
             SDL_EventType::GAMEPAD_BUTTON_DOWN | SDL_EventType::GAMEPAD_BUTTON_UP => {

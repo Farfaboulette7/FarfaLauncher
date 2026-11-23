@@ -22,6 +22,7 @@ use crate::romm::library::{self, Game, Manual};
 use crate::romm::playtime;
 use crate::runtimes;
 use crate::state::AppState;
+use crate::error::LockOrRecover;
 
 /// Détails chargés simultanément (on ménage le serveur).
 const DETAIL_CONCURRENCY: usize = 2;
@@ -35,7 +36,7 @@ pub fn system_target() -> Target {
 #[tauri::command]
 pub fn library_cached(state: State<'_, AppState>) -> AppResult<Option<LibrarySnapshot>> {
     let server = state.server_url()?;
-    let mut current = state.library.lock().unwrap();
+    let mut current = state.library.lock_or_recover();
     // Déjà en mémoire (rafraîchissement en cours ou terminé) : ne pas l'écraser
     // avec un cache plus ancien, ou vide.
     if current.as_ref().is_some_and(|s| s.server_url == server) {
@@ -65,7 +66,7 @@ struct RefreshDone {
 #[tauri::command]
 pub async fn library_refresh(app: AppHandle, state: State<'_, AppState>) -> AppResult<RefreshStarted> {
     if state.refreshing.swap(true, Ordering::SeqCst) {
-        let snapshot = state.library.lock().unwrap().clone();
+        let snapshot = state.library.lock_or_recover().clone();
         return Ok(RefreshStarted { snapshot, started: false });
     }
     match start_refresh(&app, &state).await {
@@ -110,7 +111,7 @@ async fn start_refresh(app: &AppHandle, state: &AppState) -> AppResult<LibrarySn
         p.has_emulator = catalog.offer(&p.slug, target).is_some_and(|o| o.available);
     }
     // En attendant les détails, on garde ceux du cache pour chaque jeu.
-    if let Some(old) = state.library.lock().unwrap().as_ref() {
+    if let Some(old) = state.library.lock_or_recover().as_ref() {
         for g in games.iter_mut() {
             if let Some(prev) = old.games.iter().find(|o| o.id == g.id) {
                 g.keep_details_from(prev);
@@ -123,7 +124,7 @@ async fn start_refresh(app: &AppHandle, state: &AppState) -> AppResult<LibrarySn
         platforms,
         games,
     };
-    *state.library.lock().unwrap() = Some(snapshot.clone());
+    *state.library.lock_or_recover() = Some(snapshot.clone());
     tracing::info!("bibliothèque: {} jeux, chargement des détails…", snapshot.games.len());
 
     let ids: Vec<i64> = snapshot.games.iter().map(|g| g.id).collect();
@@ -152,7 +153,7 @@ async fn start_refresh(app: &AppHandle, state: &AppState) -> AppResult<LibrarySn
             match res {
                 Ok(mut game) => {
                     runtimes::annotate(&mut game, &catalog, &recomps, target);
-                    if let Some(snap) = state.library.lock().unwrap().as_mut() {
+                    if let Some(snap) = state.library.lock_or_recover().as_mut() {
                         if let Some(slot) = snap.games.iter_mut().find(|g| g.id == id) {
                             *slot = game.clone();
                         }
@@ -172,7 +173,7 @@ async fn start_refresh(app: &AppHandle, state: &AppState) -> AppResult<LibrarySn
                 }
             }
         }
-        let snap = state.library.lock().unwrap().clone();
+        let snap = state.library.lock_or_recover().clone();
         if let Some(snap) = snap {
             if let Err(e) = cache::save_library(&state.cache_dir, &snap) {
                 tracing::error!("cache non enregistré: {}", e.code());
@@ -422,6 +423,6 @@ pub fn set_manager_url(state: State<'_, AppState>, url: Option<String>) -> AppRe
 
 #[tauri::command]
 pub fn clear_cache(state: State<'_, AppState>) -> AppResult<()> {
-    *state.library.lock().unwrap() = None;
+    *state.library.lock_or_recover() = None;
     cache::clear(&state.cache_dir)
 }
