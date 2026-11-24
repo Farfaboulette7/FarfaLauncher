@@ -4,7 +4,7 @@
 //
 // Usage : node scripts/bump-version.mjs 0.2.0          (version stable)
 //         node scripts/bump-version.mjs 1.0.1-beta.1   (version de test, canal bêta seulement)
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
 const version = process.argv[2];
 if (!/^\d+\.\d+\.\d+(-beta\.\d+)?$/.test(version ?? "")) {
@@ -36,4 +36,17 @@ update("src-tauri/Cargo.lock", (text) =>
   text.replace(/(\[\[package\]\]\r?\nname = "farfalauncher"\r?\nversion = ")[^"]+(")/, `$1${version}$2`),
 );
 
-console.log(`\nEnsuite :\n  git commit -am "chore: version ${version}"\n  git tag v${version}\n  git push && git push origin v${version}`);
+// Notes de version : corps de la release, lues par les joueurs (voir docs/release.md).
+const notes = `docs/changelog/v${version}.md`;
+if (!existsSync(notes)) console.log(`\nAttention : ${notes} n'existe pas encore. Écrivez-le avant de pousser le tag.`);
+
+// Jamais `git commit -am` : src-tauri/Cargo.toml peut porter un changement local de
+// [profile.dev] qui ne doit pas partir dans le dépôt. On indexe fichier par fichier.
+console.log(`
+Ensuite (voir docs/release.md) :
+  git add package.json package-lock.json src-tauri/tauri.conf.json src-tauri/Cargo.lock ${notes}
+  git add -p src-tauri/Cargo.toml        (« y » pour la ligne version, « n » pour le reste)
+  git commit -m "Version ${version}"
+  git tag v${version}
+  git push origin main
+  git push origin v${version}`);

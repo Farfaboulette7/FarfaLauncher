@@ -2,9 +2,9 @@
 
 <img src="src-tauri/app-icon.png" width="76" alt="FaRFa project">
 
-Launcher desktop pour installer, mettre à jour et lancer en un clic les jeux recomp /
-portages PC natifs hébergés sur un serveur [RomM](https://romm.app) (plateformes
-`portage-*`), avec l'identité visuelle YoRHa de *NieR:Automata*.
+Launcher desktop pour installer, mettre à jour et lancer en un clic les jeux d'un serveur
+[RomM](https://romm.app) : recomps (portages PC natifs), jeux d'émulateurs et jeux PC, avec
+l'identité visuelle YoRHa de *NieR:Automata*. Windows, Linux (AppImage), Steam Deck et Mac.
 
 Trois onglets : **Récent** (derniers jeux ajoutés), **Bibliothèque** (par console) et
 **Favoris** (le cœur de RomM, partagé entre vos appareils). Les jeux s'affichent dans
@@ -26,7 +26,7 @@ Téléchargez le fichier de votre système dans la
 | Linux / Steam Deck | `FarfaLauncher_x.y.z_amd64.AppImage` |
 
 Ensuite, FaRFa project **se met à jour tout seul** : il vérifie au démarrage et propose
-la nouvelle version (aussi : *Paramètres → Vérifier les mises à jour*).
+la nouvelle version (aussi : *Paramètres → À propos → Vérifier les mises à jour*).
 
 ### Windows : avertissement SmartScreen / antivirus
 
@@ -51,7 +51,7 @@ Sur Steam Deck, faites-le en mode Bureau. Vous pouvez ensuite ajouter l'AppImage
 
 ### Bon à savoir
 
-- Les jeux s'installent par défaut dans `~/FarfaLauncher/Jeux` (modifiable dans
+- Les jeux s'installent par défaut dans le dossier `Jeux` à côté du launcher (sinon `~/FarfaLauncher/Jeux` ; modifiable dans
   *Paramètres*). Vos sauvegardes (`save`/`saves`) ne sont jamais écrasées lors d'une mise
   à jour : elles sont même copiées dans `.farfalauncher/backups/` avant.
 - **N'utilisez pas la mise à jour intégrée d'un jeu** (certains, comme gen1recomp, en
@@ -59,7 +59,8 @@ Sur Steam Deck, faites-le en mode Bureau. Vous pouvez ensuite ajouter l'AppImage
   « Mise à jour disponible ».
 - Les mods se téléchargent dans `mods_downloads/` du jeu : à vous de les placer selon les
   instructions du mod (boutons « Ouvrir le dossier » dans l'onglet *Mods*).
-- En cas de souci : *Paramètres → Ouvrir les logs*, et envoyez le fichier du jour.
+- En cas de souci : *Signaler un problème* (onglet *Communauté* du jeu), ou *Paramètres →
+  Cache et dépannage → Ouvrir les logs*, et envoyez le fichier du jour.
 
 ### Sauvegardes sur le serveur
 
@@ -83,7 +84,8 @@ Sur Steam Deck, faites-le en mode Bureau. Vous pouvez ensuite ajouter l'AppImage
    (vous pouvez le révoquer à tout moment).
 
 Le token est rangé dans le trousseau sécurisé du système (Gestionnaire d'identification
-Windows, Trousseau macOS, Secret Service sous Linux), jamais en clair sur le disque.
+Windows, Trousseau macOS, Secret Service sous Linux). Sous Linux sans trousseau, il va dans
+un fichier que vous seul pouvez lire (`token.json`, dans le dossier des réglages).
 
 **Méthodes de secours** (lien « Autres méthodes ») : dans RomM, *Paramètres → Client API
 Tokens*, créez un token avec les droits ci-dessous, puis soit cliquez « Pair device » et
@@ -93,98 +95,70 @@ Droits (scopes) demandés : `me.read`, `platforms.read`, `roms.read`, `roms.user
 `roms.user.write` (temps de jeu), `devices.read` (temps de jeu sur tous vos appareils),
 `collections.read` et `collections.write` (favoris), `assets.read` et `assets.write`
 (sauvegardes). Si vous vous êtes connecté avec une version plus ancienne, le launcher vous
-demande de vous reconnecter une fois (*Paramètres → Se déconnecter*).
+demande de vous reconnecter une fois (*Paramètres → Compte → Se déconnecter*).
 Détails : [docs/romm-api.md](docs/romm-api.md).
 
-## Pour l'admin : convention côté serveur
+## Pour l'admin : documentation
 
-Une plateforme RomM par console, dans un dossier qui commence par `portage` :
-`portage-n64`, `portage-ngc`, `portage-gbc`… (les plateformes vides sont masquées).
+| Document | Pour quoi |
+|---|---|
+| [docs/architecture.md](docs/architecture.md) | comment le launcher est construit, ce qui se passe de la connexion à la fin d'une partie |
+| [docs/release.md](docs/release.md) | publier une version, pas à pas (et la clé de signature) |
+| [docs/runbook.md](docs/runbook.md) | problèmes des joueurs et solutions, journaux, smoke test |
+| [docs/tests.md](docs/tests.md) | lancer les tests, lire un échec de la CI |
+| [docs/smoke-test.md](docs/smoke-test.md) | vérifier toute la chaîne contre les vrais serveurs |
+| [docs/romm-api.md](docs/romm-api.md) | l'API RomM utilisée |
+| [docs/agents.md](docs/agents.md) | travailler avec des agents IA sur ce dépôt |
+| [CLAUDE.md](CLAUDE.md), [AGENTS.md](AGENTS.md) | consignes pour un assistant IA |
 
-```
-roms/portage-<console>/<Nom du jeu>/
-├── VERSION.txt   → version du jeu ; le launcher la compare à la version installée
-├── ROM/          → ROM(s) copiées à côté de l'exécutable
-├── MODS/         → une archive par mod (optionnel)
-└── RECOMP/       → une archive par plateforme : <nom>_<Plateforme>.zip
-                    Plateforme ∈ Windows, Linux, Linux_Arch, SteamOS, macOS_ARM, macOS_Intel
-```
+Côté serveur, dans le dépôt [FarfaRomManager](https://github.com/Farfaboulette7/FarfaRomManager) :
+[architecture globale](https://github.com/Farfaboulette7/FarfaRomManager/blob/master/docs/architecture.md),
+[ajouter un jeu](https://github.com/Farfaboulette7/FarfaRomManager/blob/master/docs/ajouter-un-jeu.md),
+[sauvegarde et restauration du serveur](https://github.com/Farfaboulette7/FarfaRomManager/blob/master/docs/sauvegarde-restauration.md),
+[runbook du serveur](https://github.com/Farfaboulette7/FarfaRomManager/blob/master/docs/runbook.md),
+[règles des fiches](https://github.com/Farfaboulette7/FarfaRomManager/blob/master/docs/regles-des-fiches.md).
 
-`Linux_Arch` : build compilée sur Arch Linux (glibc et bibliothèques récentes, ex. la
-`ArchLinux-…zip` de MHGURecomp). Elle n'est proposée que sur Arch et ses dérivées
-(`ID`/`ID_LIKE=arch` dans `/etc/os-release`), jamais sur SteamOS ni sur les autres Linux
-(Bazzite, Fedora, Ubuntu…), qui affichent alors « Non disponible pour votre système ».
+## Pour l'admin : côté serveur
 
-Les noms des releases d'origine sont aussi reconnus : le launcher repère le système et
-l'architecture dans le nom (`windows`/`win32`/`win64`, `linux`, `mac`/`macos` +
-`x86_64`/`x64`/`arm64`/`aarch64`/`universal`) et accepte `.zip`, `.AppImage` et `.tar.gz`.
-Les archives Android, iOS, consoles, etc. sont ignorées. Si plusieurs archives conviennent,
-la convention `_<Plateforme>` gagne, puis (Linux) AppImage > tar.gz > zip.
+Le launcher montre **tous les jeux de RomM**, rangés par leur vraie console. Ce qu'il faut pour
+les installer et les lancer vient de **FarfaRomManager** (le « gestionnaire »), à l'adresse de
+RomM avec `manager` à la place du premier niveau (`romm.exemple.fr` → `manager.exemple.fr`,
+modifiable dans *Paramètres → Émulateurs*). Le gestionnaire tient à jour un catalogue écrit
+dans des **fiches** (une par recomp, une par émulateur) et suit seul les nouvelles versions
+sur GitHub :
 
-**Données de jeu volumineuses** (ex. `exefs`/`romfs` d'un jeu Switch, des dizaines de
-milliers de fichiers) : les mettre dans **une archive `ROM/<nom>.extract.zip`** (zip sans
-compression suffit). Au lieu d'être copiée, elle est extraite à côté de l'exécutable
-(`MHGU-data.extract.zip` contenant `data/exefs` et `data/romfs` → `data/` à côté de
-`mhgurecomp.exe`). Une ROM inchangée sur le serveur (chemin, taille, empreinte) et toujours
-en place n'est pas retéléchargée lors d'une mise à jour de la recomp.
+- **Recomp** (portage PC natif) : la fiche dit quelles entrées RomM elle fait tourner (par
+  le SHA-1 de la ROM, ou sinon par le `fs_name` exact, avec le `slug` RomM de la console),
+  l'exécutable, la langue, les manettes,
+  les liens… Le launcher installe sa build pour le système du joueur, plus la ROM si besoin.
+  Une recomp à plusieurs jeux (Gen1recomp : Rouge, Bleu, Or…) donne une page par jeu et un
+  seul programme installé.
+- **Émulateur** : installé une fois dans `Emulateurs/<id>/` ; la ROM du jeu va dans
+  `Roms/<console>/<jeu>/` et « Jouer » lance le jeu directement. Si un jeu a une recomp et un
+  émulateur, la recomp est proposée en premier.
+- **Jeux PC** (plateforme « Ordinateur ») : installés par le launcher lui-même (archives,
+  installateurs GOG, Call of Duty et leurs clients), et lancés avec **Proton sous Linux**.
+  Jamais par une recomp.
+- **Données volumineuses** (par exemple `exefs`/`romfs` d'un jeu Switch) : une archive
+  `<nom>.extract.zip` est extraite à côté de l'exécutable au lieu d'être copiée.
 
-À éviter : des archives **déjà extraites** dans `RECOMP/`. Seuls les fichiers posés
-directement dans `RECOMP/` sont pris en compte, et des milliers de fichiers dans un jeu
-ralentissent fortement RomM.
+Ajouter un jeu ou une recomp, format des fiches : voir les liens du gestionnaire ci-dessus.
 
-**Émulation** : le launcher montre tous les jeux de RomM. Quand FarfaRomManager a un émulateur pour la console, il
-l'installe une fois dans `Emulateurs/<id>/`, télécharge la ROM dans `Roms/<console>/<jeu>/`, et « Jouer » lance le jeu directement.
-Si un jeu a une recomp et un émulateur, la recomp est proposée en premier. Sa sauvegarde est envoyée sur RomM après chaque
-session, comme pour une recomp. L'adresse est celle de RomM avec `manager` à la place du premier niveau, modifiable dans
-*Paramètres → Émulateurs*. Les jeux de `portage-*` et « Ordinateur » sont chargés au démarrage, les autres consoles à leur ouverture.
-
-**Manettes** : lues par SDL 3, compilé dans le launcher (il faut `cmake` pour compiler). L'onglet *Contrôles* d'un jeu
-installé attribue une manette à chaque joueur (nombre de joueurs tiré de RomM). Au lancement, le launcher l'écrit dans la
-configuration de l'émulateur ou de la recomp, selon la ligne `manettes:` de son fichier sur FarfaRomManager
-(`dolphin`, `punes`, `mgba`, `ppsspp`, `eden` pour Eglantine, `aurora` pour Melee et NSMBW, `recharged`). Voir `src-tauri/src/controllers.rs`.
-Une ligne `reponse:` fait répondre le launcher (Windows) à une question posée par l'émulateur au lancement :
-la touche donnée est envoyée à la fenêtre de ce titre (`src-tauri/src/dialogs.rs`).
-
-**Recomps à plusieurs jeux** (Gen1recomp : Rouge, Bleu, Or…) : une page par jeu, un seul programme installé. La clé
-`recomps` d'`assets.json` (serveur des assets) relie les entrées RomM :
-
-```json
-"recomps": {
-  "runtimes": [{
-    "id": "gen1recomp", "name": "Gen1recomp", "repo": "https://github.com/bryanthaboi/gen1recomp",
-    "romId": 10550, "exe": "gen1recomp",
-    "dataDir": "pokemon-love2d", "saveDir": "saves/{game}", "cacheDir": "{game}",
-    "args": ["--game={game}"], "env": [["POKEPORT_IMPORT_ROM", "{rom}"]]
-  }],
-  "games": [{ "runtime": "gen1recomp", "game": "red", "romId": 12345 }]
-}
-```
-
-- **Runtime** : entrée `portage-*` habituelle (`RECOMP/`, `VERSION.txt`, `MODS/`), masquée dans le launcher. Le dépôt
-  GitHub et la version ne sont suivis qu'ici (recomp-updater). Ses `ROM/` ne sont pas téléchargées.
-- **Jeu** : entrée `roms/portage-<console>/<Jeu>/ROM/<rom>` (ex. `portage-gbc/Pokemon Yellow/`), sans `RECOMP/` ni fichier
-  dans `recomps/` : c'est le runtime qui est suivi. Le dossier `portage-<console>` doit être relié à sa console.
-- Un launcher antérieur à cette fonction affiche ces pages comme « Non disponible pour votre système ».
-- **Installer** un jeu installe le runtime s'il manque ou n'est plus à jour, puis télécharge sa ROM dans
-  `.farfalauncher/roms/`. **Désinstaller** retire sa ROM et ses données ; le runtime et le dossier `dataDir` ne
-  partent qu'avec le dernier jeu. Un seul jeu d'un runtime tourne à la fois.
-- `args` et `env` décrivent le lancement (`{game}`, `{rom}` remplacés). **Jouer** ouvre le jeu ; le bouton du dessous ouvre le
-  menu de la recomp.
-- Pages et bonnes images : section `jeux:` de `recomps/Pokemon.txt` (voir le README de recomp-updater).
-  Gen1recomp : `--game=` (forme avec `=` obligatoire) ouvre le bon jeu, et `POKEPORT_IMPORT_ROM` importe la ROM sans
-  menu quand c'est nécessaire, y compris après une mise à jour de la recomp.
-- Sauvegardes : `saveDir` est synchronisé par jeu, sur son entrée RomM.
+**Manettes** : lues par SDL 3, compilé dans le launcher (il faut `cmake` pour compiler).
+L'onglet *Contrôles* d'un jeu installé attribue une manette à chaque joueur. Au lancement, le
+launcher l'écrit dans la configuration de l'émulateur ou de la recomp, selon la clé
+`manettes:` de sa fiche (`src-tauri/src/controllers.rs`). Une clé `reponse:` fait répondre le
+launcher (Windows) à une question posée par l'émulateur au lancement (`src-tauri/src/dialogs.rs`).
 
 **Boîtes 3D** : le launcher construit la boîte à partir de la face avant, de la tranche et
 du dos scrapés par ScreenScraper. Il faut donc `box2d_side` (et idéalement `box2d_back`)
 dans `scan.media` du `config.yml` de RomM ; sans tranche, la jaquette s'affiche à plat.
 
 **Bruitages et musiques** : ils ne sont pas dans ce dépôt (droits non redistribuables).
-Ils sont servis par un petit conteneur nginx (`farfa-assets`) sur un sous-domaine dédié,
-qui n'envoie un fichier qu'aux requêtes portant un token RomM valide (vérifié auprès de
-`GET /api/users/me`, résultat gardé 5 min). Adresse par défaut : celle de RomM avec
-`assets` à la place du premier niveau (`romm.exemple.fr` → `assets.exemple.fr`, sans
-jamais sortir du domaine) ; modifiable dans *Paramètres → Sons*.
+Ils sont servis par FarfaRomManager sur un sous-domaine dédié, qui n'envoie un fichier qu'aux
+requêtes portant un token RomM valide. Adresse par défaut : celle de RomM avec `assets` à la
+place du premier niveau (`romm.exemple.fr` → `assets.exemple.fr`, sans jamais sortir du
+domaine) ; modifiable dans *Paramètres → Sons*.
 
 ```
 assets.json                musiques : fichiers et points de boucle
@@ -204,17 +178,13 @@ sfx/
 même deux fois de suite) ; seules ses deux versions sont téléchargées. Version normale dans
 la bibliothèque, 8-bit sur la fiche d'un jeu : la version cible repart au même endroit de sa
 boucle et les deux se croisent en fondu (0,8 s). Coupée en fondu pendant qu'un jeu tourne.
-Réglages dans *Paramètres → Sons*.
+Réglages dans le menu ♪ et *Paramètres → Sons*. Le launcher garde les sons en cache (*Vider le cache* pour reprendre
+une nouvelle version). Un son absent, ou un serveur injoignable, laisse simplement le
+launcher muet.
 
-Le launcher télécharge les sons une fois et les garde en cache (*Vider le cache* pour
-reprendre une nouvelle version). Un son absent, ou un serveur d'assets injoignable, laisse
-simplement le launcher muet.
-
-**Sauvegardes** : une archive `farfa-save.zip` par jeu et par utilisateur, rangée par RomM
-dans ses sauvegardes sous l'émulateur `farfa-project` (visible dans l'interface web).
-
-Après chaque modification des fichiers, un scan RomM doit être lancé pour que l'API
-expose les nouveaux fichiers (le script de mise à jour le fait).
+**Sauvegardes** : une archive `farfa-save.zip` par jeu et par joueur, sur RomM (rangée sous
+l'émulateur `farfa-project`) ou, pour une recomp, sur le gestionnaire, qui en garde
+l'historique.
 
 ## Choix techniques
 
@@ -235,30 +205,32 @@ expose les nouveaux fichiers (le script de mise à jour le fait).
 
 ```
 FarfaLauncher/
-├── docs/romm-api.md          Étude de l'API RomM 5.4.0
+├── docs/                     Documentation (architecture, publication, dépannage, tests…)
+│   └── changelog/            Notes de chaque version (texte des releases)
 ├── src/                      Interface React (TypeScript)
-│   ├── api/                  Appels typés vers les commandes Rust
+│   ├── api/backend.ts        Appels typés vers les commandes Rust
 │   ├── screens/              Écrans (connexion, bibliothèque, fiche jeu, paramètres)
+│   ├── components/           Éléments communs (listes, musique, messages, mises à jour…)
 │   └── theme/                Thème NieR (CSS, police)
 ├── src-tauri/                Cœur Rust
 │   └── src/
 │       ├── commands/         Commandes exposées à l'interface
-│       ├── romm/             Client API RomM (auth, jeux, fichiers, temps de jeu)
+│       ├── romm/             Client API RomM (connexion, jeux, fichiers, temps de jeu)
+│       ├── manager.rs        Catalogue de FarfaRomManager (fiches)
 │       ├── install/          Téléchargement, extraction sans casse, exécutable, état
+│       ├── pc/               Jeux PC (« Ordinateur »), Proton sous Linux
+│       ├── play.rs           Avant et après une partie (partagé avec le Steam Deck)
 │       ├── launch/           Lancement et suivi des processus du jeu
-│       ├── platform.rs       Détection du système et des archives RECOMP
-│       ├── cache.rs          Cache local (métadonnées, images, livrets)
-│       ├── secrets.rs        Trousseau OS
-│       ├── settings.rs       Paramètres (JSON, sans secret)
-│       └── logging.rs        Logs fichier
-├── scripts/bump-version.mjs  Changement de version
-├── .github/workflows/        CI et publication des releases
+│       ├── deck.rs           Moteur sans interface pour le Steam Deck (NieRDeck)
+│       └── …                 Voir docs/architecture.md
+├── scripts/                  bump-version.mjs (numéro de version), smoke-test.bat/.ps1
+├── .github/workflows/        CI, tests, publication des releases, smoke test quotidien
 └── third_party/              Licences des ressources tierces
 ```
 
 ## Développement
 
-Prérequis : Node.js 20+, Rust stable, et les
+Prérequis : Node.js 20+, Rust stable, `cmake`, et les
 [prérequis Tauri](https://tauri.app/start/prerequisites/) de votre OS.
 
 ```bash
@@ -266,41 +238,25 @@ npm install
 npm run tauri dev
 ```
 
-## Publier une nouvelle version (admin)
+Tests (détails dans [docs/tests.md](docs/tests.md)) :
 
 ```bash
-node scripts/bump-version.mjs 0.2.0
-git commit -am "chore: version 0.2.0"
-git tag v0.2.0
-git push && git push origin v0.2.0
+npx tsc --noEmit -p .
+cd src-tauri && CARGO_TARGET_DIR=target-test cargo test --lib
 ```
 
-Le workflow [`release.yml`](.github/workflows/release.yml) vérifie que le tag correspond
-aux versions des fichiers, compile Windows et Linux (AppImage),
-signe les paquets de mise à jour et publie la release avec `latest.json`, que les
-launchers installés consultent au démarrage.
+## Publier une nouvelle version (admin)
 
-### Clé de signature des mises à jour
+Tout est dans [docs/release.md](docs/release.md) : numéro, notes de version,
+`scripts/bump-version.mjs`, tag `vX.Y.Z`, ce que fait
+[`release.yml`](.github/workflows/release.yml) (tests d'abord, puis compilation Windows,
+Linux, Mac et Steam Deck, signature, `latest.json`), canal bêta, annonce.
 
-Les mises à jour sont signées : un launcher n'installe une nouvelle version que si elle
-est signée par **votre** clé privée (la clé publique est dans `src-tauri/tauri.conf.json`).
-
-1. **Générer la clé** (une seule fois, sur votre PC) :
-   ```bash
-   npx tauri signer generate -w ~/.tauri/farfalauncher.key
-   ```
-   Choisissez un mot de passe. Deux fichiers sont créés hors du dépôt :
-   `farfalauncher.key` (privée, **secrète**) et `farfalauncher.key.pub` (publique).
-2. **Clé publique** : son contenu va dans `plugins.updater.pubkey` de
-   `src-tauri/tauri.conf.json` (elle peut être publique sans risque).
-3. **Secrets GitHub** : *Settings → Secrets and variables → Actions → New repository
-   secret* :
-   - `TAURI_SIGNING_PRIVATE_KEY` : tout le contenu de `farfalauncher.key` ;
-   - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` : le mot de passe.
-4. **Ne jamais commiter la clé privée** : elle est hors du dépôt, et le `.gitignore`
-   exclut `*.key` par sécurité. Sauvegardez-la (gestionnaire de mots de passe, clé USB) :
-   **si vous la perdez, les launchers déjà installés ne pourront plus se mettre à jour**
-   (il faudrait que chacun réinstalle manuellement une version avec une nouvelle clé).
+Les mises à jour sont signées par une clé privée gardée hors du dépôt
+(`~/.tauri/farfalauncher.key`, secrets GitHub `TAURI_SIGNING_PRIVATE_KEY` et
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`). **Si elle est perdue, les launchers installés ne
+peuvent plus se mettre à jour** : la sauvegarder comme expliqué dans
+[docs/release.md §10](docs/release.md#10-la-clé-de-signature--ne-jamais-la-perdre).
 
 ## Crédits et licences
 
