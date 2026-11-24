@@ -40,7 +40,7 @@ jobs:
     steps:
       # fetch-depth: 0 = tout l'historique, pas seulement le dernier commit : un secret
       # effacé depuis reste lisible dans un ancien commit, donc il compte.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -69,11 +69,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
 
@@ -93,12 +93,12 @@ jobs:
       # plus récente.
       CARGO_AUDIT_VERSION: "0.23.0"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
       # cargo-audit compilé une fois (quelques minutes), puis gardé en cache pour cette version.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.cargo/bin/cargo-audit
           key: cargo-audit-${{ env.CARGO_AUDIT_VERSION }}-${{ runner.os }}
