@@ -727,7 +727,10 @@ mod tests {
             let mut h = tar::Header::new_gnu();
             h.set_entry_type(tar::EntryType::Symlink);
             h.set_size(0);
-            b.append_link(&mut h, "Game/x", &outside).unwrap();
+            // Cible absolue COURTE : un tar classique limite la cible à 100 octets, et le
+            // dossier temporaire du runner Windows de GitHub est plus long. Toute cible
+            // absolue est refusée, quelle que soit sa longueur.
+            b.append_link(&mut h, "Game/x", "/dehors-sl5").unwrap();
             let mut h = tar::Header::new_gnu();
             h.set_entry_type(tar::EntryType::Symlink);
             h.set_size(0);
@@ -741,6 +744,7 @@ mod tests {
         let staging = dir.join("staging");
         extract(&tpath, ArchiveKind::TarGz, &staging, &CancellationToken::new(), |_, _| {}).unwrap();
         assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
+        assert!(!Path::new("/dehors-sl5").exists());
         assert!(fs::symlink_metadata(staging.join("Game/haut")).is_err());
         assert!(staging.join("Game/x/piege.desktop").is_file());
     }
