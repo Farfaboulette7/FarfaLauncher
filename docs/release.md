@@ -8,8 +8,8 @@ Trois sortes de versions :
 | Sorte | Tag | Qui la reçoit | Qui la publie |
 |---|---|---|---|
 | **stable** | `vX.Y.Z` | tous les launchers | vous (ce document) |
-| **bêta** | `vX.Y.Z-beta.N` | ceux qui ont coché « Recevoir les versions de test » | vous, ou la surveillance des rapports (§9) |
-| **test d'un rapport** | `test-<rapport>-<n>` | le joueur qui a signalé le problème | la surveillance des rapports (§9) |
+| **bêta** | `vX.Y.Z-beta.N` | ceux qui ont coché « Recevoir les versions de test » | vous (ce document, ou `publier-beta.bat` pour le correctif d'un rapport, §9) |
+| **test d'un rapport** | `test-<rapport>-<n>` | le joueur qui a signalé le problème | la surveillance des rapports, après votre approbation sur GitHub (§9) |
 
 ## 0. Avant tout : tester
 
@@ -24,10 +24,11 @@ cd ..
 Puis lancer `src-tauri\target-test\debug\farfalauncher.exe` et essayer ce qui a changé.
 « Accès refusé » pendant la construction : l'exe de test est encore ouvert, fermez-le.
 
-## 1. Récupérer ce que la surveillance a publié
+## 1. Récupérer ce qui a été publié ailleurs
 
-La surveillance des rapports publie parfois des bêtas toute seule (§9). Votre `main` local
-peut donc être en retard sur GitHub.
+Une bêta lancée par `publier-beta.bat` (§9) est fusionnée et poussée depuis une autre copie
+de travail (`FarfaLauncher-correctifs\_publication`). Votre `main` local peut donc être en
+retard sur GitHub.
 
 ```bash
 git fetch
@@ -161,9 +162,10 @@ Ensuite :
 
 La clé de signature est rangée dans l'environnement GitHub **`signature`**. Seul le job
 `build` de `release.yml` et de `test.yml` y a accès, et seulement après **votre**
-approbation. Pourquoi : les bêtas et les versions de test sont aussi lancées par la
-surveillance des rapports, avec du code écrit par Claude d'après le message d'un joueur,
-que personne n'a relu. Un code piégé pourrait voler la clé pendant la compilation et
+approbation. Pourquoi : les versions de test et les bêtas des correctifs contiennent du
+code écrit par Claude d'après le message d'un joueur. Pour une version de test, personne ne
+l'a encore relu ; pour une bêta, vous l'avez relu avant `publier-beta.bat` (§9), et
+l'approbation est la seconde vérification. Un code piégé pourrait voler la clé pendant la compilation et
 signer de fausses mises à jour, que tous les launchers accepteraient. Votre approbation
 est le moment où un humain relit.
 
@@ -177,6 +179,8 @@ Pas à pas :
    rouges, il n'y a rien à approuver.
 2. Regarder **ce qui a changé** :
    - en haut du run, cliquer le numéro du commit (7 caractères) : GitHub montre son diff ;
+   - pour une bêta lancée par `publier-beta.bat` : vérifier que c'est bien le correctif que
+     vous avez relu avant de taper « oui » (mêmes fichiers, rien de plus) ;
    - mieux, tout ce qui a changé depuis la version précédente :
      `https://github.com/Farfaboulette7/FarfaLauncher/compare/<version d'avant>...<ce tag>`
      (par exemple `.../compare/v1.2.2...v1.2.3-beta.1`). Pour une version de test :
@@ -241,9 +245,10 @@ Rien ne s'affiche si c'est bon.
 - Vérifier que la release est bien publique :
   https://github.com/Farfaboulette7/FarfaLauncher/releases
 
-## 9. Versions de test et bêtas automatiques (surveillance des rapports)
+## 9. Versions de test et bêtas des correctifs (surveillance des rapports)
 
-La surveillance des rapports publie seule dans deux cas. Son code est dans le dépôt
+La surveillance des rapports prépare deux sortes de versions ; aucune ne part chez les
+joueurs sans vous (faille SG5). Son code est dans le dépôt
 FarfaRomManager (`outils/surveille-rapports/`) ; la copie en service sur ce PC est
 `C:\Users\Farfa\Documents\CLAUDE\outils\surveille-rapports\surveille-rapports.ps1`, lancée par
 la tâche Windows « FaRFa - surveille rapports » toutes les 3 min.
@@ -259,18 +264,27 @@ Le launcher n'installe une version de test que si elle vient de sa release `test
 dépôt officiel et n'est pas plus ancienne que la version en service. Le joueur voit « Installer la version de test » dans son
 signalement. Si la compilation échoue, le rapport passe « à décider ».
 
-**Bêta automatique.** Quand le joueur confirme que la version de test règle son problème,
-la branche est mise en file. Puis, **une seule à la fois**, et jamais pendant qu'un
-`release.yml` tourne :
+**Bêta d'un correctif (par vous).** Quand le joueur confirme que la version de test règle
+son problème, le script pousse la branche `correctif/<rapport>` et vous prévient (Discord,
+avec le lien du code). **Rien n'est fusionné ni publié tout seul.** À vous :
 
-1. copie de travail `FarfaLauncher-correctifs\_publication` partie de `origin/main` ;
-2. fusion de `correctif/<rapport>` (conflit : rien n'est poussé, les admins sont prévenus) ;
-3. numéro suivant : `X.Y.Z-beta.N` → `X.Y.Z-beta.(N+1)`, ou `X.Y.Z` → `X.Y.(Z+1)-beta.1` ;
-4. `bump-version.mjs`, notes `docs/changelog/vX.Y.Z-beta.N.md` tirées du rapport ;
-5. `tsc` et `cargo test` (échec : rien n'est poussé, les admins sont prévenus) ;
-6. commit « Version … », push de `main` puis du tag ; la branche du correctif est supprimée ;
-   `release.yml` attend alors **votre approbation** avant de compiler et signer (§6 bis) ;
-7. le rapport passe « corrigé » avec `corrigeDans`, le joueur et les admins sont prévenus.
+1. relire le code du correctif (le lien du message, ou
+   `https://github.com/Farfaboulette7/FarfaLauncher/compare/main...correctif/<rapport>`),
+   avec la même liste que §6 bis (point 3) ;
+2. lancer `publier-beta.bat <rapport>` (dans
+   `C:\Users\Farfa\Documents\CLAUDE\outils\surveille-rapports`). Il montre les commits et
+   les fichiers changés, puis demande **« oui »**. Ensuite seulement, dans la copie de travail
+   `FarfaLauncher-correctifs\_publication` partie de `origin/main` :
+   - fusion de `correctif/<rapport>` (conflit : rien n'est poussé, vous êtes prévenu) ;
+   - numéro suivant : `X.Y.Z-beta.N` → `X.Y.Z-beta.(N+1)`, ou `X.Y.Z` → `X.Y.(Z+1)-beta.1` ;
+   - `bump-version.mjs`, notes `docs/changelog/vX.Y.Z-beta.N.md` tirées du rapport ;
+   - `tsc` et `cargo test` (échec : rien n'est poussé, vous êtes prévenu) ;
+   - commit « Version … », push de `main` puis du tag ; la branche du correctif est supprimée ;
+3. `release.yml` attend alors **votre approbation** sur GitHub avant de compiler et signer
+   (§6 bis) : approuver ;
+4. le rapport passe « corrigé » avec `corrigeDans`, le joueur et les admins sont prévenus.
+
+Une seule bêta à la fois, et jamais pendant qu'un `release.yml` tourne.
 
 Conséquence : **faites toujours `git fetch` et `git pull` avant de publier** (§1).
 

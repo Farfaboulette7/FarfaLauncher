@@ -13,7 +13,7 @@ Documentation (à lire avant de toucher à une partie) :
 | Fichier | Contenu |
 |---|---|
 | `docs/architecture.md` | modules Rust, écrans React, flux complet, stockage local, canaux de mise à jour, moteur du Deck |
-| `docs/release.md` | publier une version, pas à pas (numéro, notes, tag, annonce, bêtas automatiques, clé de signature) |
+| `docs/release.md` | publier une version, pas à pas (numéro, notes, tag, annonce, bêtas des correctifs, approbation de la signature, clé) |
 | `docs/runbook.md` | problèmes des joueurs et solutions, journaux, smoke test |
 | `docs/tests.md` | lancer les tests, rôle de chaque workflow, lire un échec de CI |
 | `docs/smoke-test.md` | contrôle de bout en bout contre les vrais serveurs |
@@ -67,9 +67,12 @@ La dernière ligne construit **la** version de test :
 
 Pas à pas complet pour un humain : `docs/release.md`. En bref :
 
-1. `git fetch` puis `git log main..origin/main` : le support des rapports publie lui-même
-   des bêtas (fusion d'un `correctif/<rapport>` validé par le joueur). Si `origin/main` est
-   en avance, reprendre ses commits (et sa version) avant de choisir le numéro.
+1. `git fetch` puis `git log main..origin/main` : une bêta d'un correctif de rapport
+   (`publier-beta.bat <rapport>`, lancé par l'utilisateur après relecture : fusion d'un
+   `correctif/<rapport>` validé par le joueur) est poussée depuis une autre copie. Si
+   `origin/main` est en avance, reprendre ses commits (et sa version) avant de choisir le
+   numéro. Rien n'est plus publié tout seul (SG5), et chaque compilation signée attend
+   l'approbation de l'utilisateur sur GitHub (SG3).
 2. Numéro : dernière version **+0.0.1**. Demander à l'utilisateur si ça mérite +0.1.0 ou
    +1.0.0, et **« bêta ou stable ? »**.
 3. Écrire `docs/changelog/vX.Y.Z.md` (ou `vX.Y.Z-beta.N.md`) : corps de la release, lu par

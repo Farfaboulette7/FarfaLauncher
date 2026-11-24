@@ -89,8 +89,10 @@ jobs:
 
   # Compilation et signature : SEUL job de ce workflow qui reçoit la clé de signature.
   #
-  # Approbation obligatoire (faille SG3) : les bêtas sont aussi publiées automatiquement par
-  # la surveillance des rapports (fusion d'un correctif écrit par claude -p, jamais relu). Un
+  # Approbation obligatoire (faille SG3) : une bêta peut contenir le correctif d'un rapport,
+  # écrit par claude -p d'après le message d'un joueur. Le propriétaire le relit avant de
+  # lancer publier-beta.bat (fusion + tag, faille SG5) ; l'approbation ici est la seconde
+  # vérification, juste avant que la clé soit donnée. Un
   # build.rs ou un script npm piégé pourrait voler la clé et signer de fausses mises à jour
   # acceptées par tous les launchers. Ce job déclare donc l'environnement GitHub « signature » :
   #   - les deux secrets TAURI_SIGNING_* sont rangés dans cet environnement, pas dans le dépôt ;

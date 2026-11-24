@@ -31,8 +31,9 @@ Toujours depuis le dossier du launcher sur la branche `main` (le dossier princip
 1. **Branche `main`, sans modification en cours, à jour** (`git pull`). Le réglage local
    `[profile.dev]` de `src-tauri\Cargo.toml` est toléré (seulement s'il ne change rien en dehors
    des sections `[profile.dev…]`) : il n'est jamais commité. Un fichier nouveau, pas encore dans
-   git, dans `src\` ou `src-tauri\` est refusé (code oublié). Le support des rapports de bug
-   publie parfois lui-même des bêtas sur `main` : `git pull` les récupère.
+   git, dans `src\` ou `src-tauri\` est refusé (code oublié). Une bêta lancée par
+   `publier-beta.bat` (correctif d'un rapport) est poussée sur `main` depuis une autre copie :
+   `git pull` la récupère.
 2. **Type de version** : `1` correctif (+0.0.1, par défaut, Entrée), `2` mineure (+0.1.0),
    `3` majeure (+1.0.0). Depuis une bêta `X.Y.Z-beta.N`, « correctif » donne la stable `X.Y.Z`.
 3. **`node scripts/bump-version.mjs X.Y.Z`** : le numéro dans `package.json`,
@@ -46,15 +47,17 @@ Toujours depuis le dossier du launcher sur la branche `main` (le dossier princip
 6. **Commit « Version X.Y.Z »** des fichiers de version et des notes seulement (jamais
    `git commit -am`), puis **tag `vX.Y.Z`**.
 7. **Taper « oui »**, puis `git push origin main` et `git push origin vX.Y.Z`. GitHub compile la
-   version (`release.yml`, 20 à 40 min) ; les launchers des amis se mettent à jour seuls.
+   version (`release.yml`, 20 à 40 min), **après votre approbation** dans l'onglet Actions
+   (job `build`, environnement `signature`, voir `docs/release.md` §6 bis) ; les launchers des
+   amis se mettent ensuite à jour seuls.
 8. **Annonce Discord** dans le salon farfalauncher (webhook `DISCORD_LAUNCHER` lu dans
    `Z:\FarfaRomManager\.env`, jamais affiché) : titre, notes, et « **Disponible dans un petit
    moment** ». Elle part tout de suite, sans attendre la compilation.
 9. **Lien de suivi** : https://github.com/Farfaboulette7/FarfaLauncher/actions/workflows/release.yml
 
 Les **bêtas** (`X.Y.Z-beta.N`, seulement pour ceux qui ont coché « Recevoir les versions de
-test ») ne passent pas par cet outil : le support des rapports les publie lui-même, ou voir
-le `CLAUDE.md` du launcher.
+test ») ne passent pas par cet outil : `publier-beta.bat <rapport>` pour le correctif d'un
+rapport (après avoir relu son code), ou `docs/release.md` pour une bêta à la main.
 
 ### En cas d'échec
 

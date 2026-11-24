@@ -209,8 +209,8 @@ La clé qui signe les mises à jour (`TAURI_SIGNING_PRIVATE_KEY` et son mot de p
 chose la plus précieuse du projet : avec elle, n'importe qui peut envoyer une fausse mise à
 jour que **tous** les launchers installeront. Or les workflows compilent du code que personne
 n'a forcément relu : branches `correctif/<rapport>` et versions de test écrites par le
-support automatique (`claude -p`, d'après le message d'un joueur), bêtas publiées par la
-surveillance des rapports. Pendant la compilation, un `build.rs`, un script npm ou un plugin
+support automatique (`claude -p`, d'après le message d'un joueur), puis bêtas de ces
+correctifs (lancées par le propriétaire avec `publier-beta.bat`, après relecture). Pendant la compilation, un `build.rs`, un script npm ou un plugin
 Vite piégé peut lire tout ce qui est dans l'environnement du job (faille SG3 / SL6 de l'audit
 de sécurité).
 
