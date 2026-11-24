@@ -1,4 +1,5 @@
-//! Dossiers hors du jeu reliés à un dossier du jeu (`lien:` des fiches de recomp).
+//! Dossiers hors du jeu reliés à un dossier du jeu (`lien:` des fiches de recomp et, depuis
+//! l'écart E20, d'émulateur).
 //!
 //! Certains programmes écrivent toujours au même endroit (boiii : `%LOCALAPPDATA%\boiii`,
 //! ses données et ses plantages). Le launcher remplace ce dossier par un lien (une jonction
@@ -270,6 +271,21 @@ mod tests {
         assert!(is_link(&outside));
         assert!(remove_if_inside(&outside, &fs::canonicalize(root.join("autre-jeu")).unwrap()));
         assert!(!outside.exists() && other.join("d.txt").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    // Écart E20 : écrire au chemin d'origine (manettes, langue, sauvegardes en `{config}/…`,
+    // comme controllers.rs) passe par le lien et arrive dans le dossier de l'émulateur.
+    #[test]
+    fn writing_at_the_original_path_lands_in_the_emulator() {
+        let root = std::env::temp_dir().join(format!("farfa-links-write-{}", uuid::Uuid::new_v4()));
+        let config = root.join("config").join("dolphin-emu");
+        let target = root.join("Emulateurs").join("dolphin").join("config").join("dolphin-emu");
+        assert!(place(&config, &target).unwrap());
+        let file = config.join("Config").join("GCPadNew.ini");
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(&file, "[GCPad1]").unwrap();
+        assert_eq!(fs::read_to_string(target.join("Config").join("GCPadNew.ini")).unwrap(), "[GCPad1]");
         fs::remove_dir_all(root).unwrap();
     }
 

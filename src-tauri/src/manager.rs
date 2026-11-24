@@ -266,6 +266,11 @@ pub struct Emulator {
     /// Absent d'un gestionnaire d'avant la clé : voir `Catalog::shader_rule`.
     #[serde(default)]
     pub shaders: Option<String>,
+    /// Dossiers hors de l'émulateur reliés à un de ses dossiers (`lien:`, écart E20), posés au
+    /// lancement comme pour une recomp. Les réglages écrits au chemin d'origine (manettes,
+    /// langue, sauvegardes `{config}/…`) passent par le lien et restent dans l'émulateur.
+    #[serde(default)]
+    pub links: Vec<crate::links::Link>,
 }
 
 /// Liste de dossiers où l'émulateur lit les mises à jour et DLC des jeux (`contenu-externe:`).
@@ -659,7 +664,10 @@ impl Catalog {
 
     /// Dossiers hors du jeu reliés au dossier du programme qui lance ce jeu (`lien:`).
     pub fn links_for_install(&self, st: &crate::install::state::InstalledGame) -> Vec<crate::links::Link> {
-        self.recomp_for_install(st).map(|r| r.links.clone()).unwrap_or_default()
+        match self.emulator_for_install(st) {
+            Some(e) => e.links.clone(),
+            None => self.recomp_for_install(st).map(|r| r.links.clone()).unwrap_or_default(),
+        }
     }
 
     /// Réglages optimisés du programme qui lance ce jeu (émulateur ou recomp).
@@ -1074,6 +1082,7 @@ mod tests {
             rom_prep: None,
             external_content: None,
             shaders: None,
+            links: vec![],
         }
     }
 
@@ -1378,6 +1387,19 @@ mod catalog_tests {
         assert_eq!(reason("mkw", Target::Windows), None);
         assert_eq!(reason("mkw", Target::MacArm), None);
         assert_eq!(reason("x", Target::Linux), None);
+    }
+
+    // Écart E20 : `lien:` d'une fiche d'émulateur est lu au catalogue (absent : aucun lien).
+    #[test]
+    fn emulator_links_are_read() {
+        let c: Catalog = serde_json::from_str(
+            r#"{"emulators":[{"id":"dolphin","name":"D","consoles":["ngc"],"version":{"cle":"k","nom":"1"},
+                "links":[{"system":"linux","path":"{config}/dolphin-emu","target":"config/dolphin-emu"}]},
+               {"id":"mgba","name":"M","consoles":["gba"],"version":{"cle":"k","nom":"1"}}]}"#,
+        )
+        .unwrap();
+        assert_eq!(c.emulators[0].links, vec![crate::links::Link { system: Some("linux".into()), path: "{config}/dolphin-emu".into(), target: "config/dolphin-emu".into() }]);
+        assert!(c.emulators[1].links.is_empty());
     }
 
     // Écart E5 : le faux Steam du préfixe suit `proton-steam:` de la fiche du client ; sans la

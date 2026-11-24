@@ -122,6 +122,10 @@ fn write(path: &Path, before: &str, after: &str) -> Result<(), String> {
     std::fs::write(path, after).map_err(|e| format!("{}: {e}", path.display()))
 }
 
+/// Fichier des manettes. Un chemin hors de l'émulateur (`{config}/dolphin-emu/…` sous Linux)
+/// reste écrit à cet endroit : si la fiche a un `lien:` de ce dossier vers l'émulateur
+/// (écart E20), posé avant les manettes (play.rs), l'écriture passe par le lien et arrive dans
+/// le dossier de l'émulateur. Sans lien, rien ne change.
 fn path_for(windows: &str, linux: &str, exe_dir: &Path) -> Result<PathBuf, String> {
     let rel = if cfg!(windows) { windows } else { linux };
     expand(rel, exe_dir).ok_or_else(|| format!("dossier introuvable : {rel}"))
