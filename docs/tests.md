@@ -220,7 +220,7 @@ D'où trois règles :
 |---|---|---|
 | `ci.yml` (tous les jobs, dont `mac-app`) | **jamais** | non |
 | `tests.yml` (appelé par les autres) | non | non : les tests passent **avant** l'approbation |
-| `release.yml` → `create-release`, `deck`, `publish-release` | non | non |
+| `release.yml` → `create-release`, `deck` (lecture seule), `deck-release`, `publish-release` | non | non |
 | `release.yml` → `build` | oui | **oui** (environnement `signature`) |
 | `test.yml` → `create-release`, `publish-release` | non | non |
 | `test.yml` → `build` | oui | **oui** (environnement `signature`) |

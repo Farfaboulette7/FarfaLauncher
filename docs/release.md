@@ -336,7 +336,7 @@ Lecture d'une erreur : [tests.md §3](tests.md).
 | **build** en jaune, *Waiting* | brouillon, invisible des joueurs | Ce n'est pas un échec : il attend votre approbation (§6 bis). |
 | **build** refusé (*Rejected*) | brouillon, invisible des joueurs | Supprimer le brouillon, corriger, reposer le tag. |
 | **build** rouge dès le début, « TAURI_SIGNING_PRIVATE_KEY » vide ou clé introuvable | brouillon | Les secrets ne sont pas dans l'environnement `signature` (§12). |
-| **build** ou **deck** (compilation) | une release **brouillon** existe, invisible des joueurs | Erreur passagère (réseau, `apt-get`, `npm ci`) : bouton **Re-run failed jobs**. Vraie erreur : supprimer le brouillon (page Releases → le brouillon → *Delete*), corriger, reposer le tag. |
+| **build**, **deck** ou **deck-release** | une release **brouillon** existe, invisible des joueurs | Erreur passagère (réseau, `apt-get`, `npm ci`) : bouton **Re-run failed jobs**. Vraie erreur : supprimer le brouillon (page Releases → le brouillon → *Delete*), corriger, reposer le tag. |
 | **publish-release** | brouillon complet | **Re-run failed jobs**. |
 
 Reposer le tag sur le commit corrigé :
