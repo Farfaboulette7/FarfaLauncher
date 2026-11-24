@@ -140,11 +140,14 @@ Le push du tag lance le workflow « Release » (onglet **Actions** du dépôt). 
 2. **Vérification** : le tag doit correspondre au numéro des fichiers (sinon : vous avez
    oublié `bump-version.mjs` ou le commit).
 3. **Release en brouillon**, avec `docs/changelog/<tag>.md` comme texte. Un tag avec `-`
-   (bêta) donne une pré-release.
-4. **Compilation** : installateur Windows (`_x64-setup.exe`), AppImage Linux, `.dmg` Mac, et
-   le moteur du Steam Deck `FarfaLauncherDeck-linux-x86_64`. Chaque paquet est signé avec la
-   clé (§10).
-5. **Publication** : le brouillon devient public, avec `latest.json`. Ce fichier est aussi
+   (bêta) donne une pré-release. Le moteur du Steam Deck `FarfaLauncherDeck-linux-x86_64`
+   est compilé en même temps (il n'a pas besoin de la clé).
+4. **Attente de votre approbation** : le run passe en jaune, « Waiting », et GitHub vous
+   envoie un e-mail. **Vous devez approuver** la signature, sinon rien ne se publie
+   (§6 bis).
+5. **Compilation signée** (job `build`) : installateur Windows (`_x64-setup.exe`), AppImage
+   Linux, `.dmg` Mac. Chaque paquet est signé avec la clé (§10).
+6. **Publication** : le brouillon devient public, avec `latest.json`. Ce fichier est aussi
    copié dans la release technique `canal-beta`.
 
 Ensuite :
@@ -153,6 +156,48 @@ Ensuite :
   la mise à jour ;
 - **bêta** : seuls les launchers du canal bêta la voient ; les autres restent sur la
   dernière stable.
+
+## 6 bis. Approuver la signature
+
+La clé de signature est rangée dans l'environnement GitHub **`signature`**. Seul le job
+`build` de `release.yml` et de `test.yml` y a accès, et seulement après **votre**
+approbation. Pourquoi : les bêtas et les versions de test sont aussi lancées par la
+surveillance des rapports, avec du code écrit par Claude d'après le message d'un joueur,
+que personne n'a relu. Un code piégé pourrait voler la clé pendant la compilation et
+signer de fausses mises à jour, que tous les launchers accepteraient. Votre approbation
+est le moment où un humain relit.
+
+**Approuver veut dire : « j'ai relu ce qui a changé et il n'y a que ce que j'attends ».**
+Si vous n'avez pas le temps de relire, n'approuvez pas : le run peut attendre.
+
+Pas à pas :
+
+1. Onglet **Actions** du dépôt → le run en jaune (« Release » ou « Version de test »,
+   statut *Waiting*). Les tests sont déjà passés (coche verte sur `tests`). S'ils sont
+   rouges, il n'y a rien à approuver.
+2. Regarder **ce qui a changé** :
+   - en haut du run, cliquer le numéro du commit (7 caractères) : GitHub montre son diff ;
+   - mieux, tout ce qui a changé depuis la version précédente :
+     `https://github.com/Farfaboulette7/FarfaLauncher/compare/<version d'avant>...<ce tag>`
+     (par exemple `.../compare/v1.2.2...v1.2.3-beta.1`). Pour une version de test :
+     `.../compare/main...<tag test-…>`.
+3. Ce qu'il faut regarder en priorité (un piège se cache surtout là) :
+   - **tout fichier hors de `src/` et `src-tauri/src/`** : `build.rs`, `Cargo.toml`,
+     `Cargo.lock`, `package.json`, `package-lock.json`, `vite.config.*`, `.github/`,
+     `scripts/`, `.cargo/`, `tauri.conf.json`. Un correctif d'un rapport n'a presque jamais
+     besoin d'y toucher : au moindre doute, **refuser** ;
+   - une nouvelle dépendance (Cargo ou npm), surtout inconnue ;
+   - une adresse internet, un `curl`, `Command::new`, `std::env::var`, du texte encodé
+     (base64, longues suites de chiffres) qui n'ont rien à voir avec la correction ;
+   - le reste : la correction doit correspondre au rapport (petite, à l'endroit attendu).
+4. Si tout va bien : bouton **Review deployments** → cocher `signature` → **Approve and
+   deploy**. Une seule approbation libère tous les systèmes du run.
+5. Sinon : **Review deployments** → cocher `signature` → **Reject**. Le run échoue, le
+   brouillon reste invisible des joueurs (le supprimer depuis la page Releases), et la
+   surveillance des rapports passe le rapport « à décider ».
+
+Le statut *Waiting* d'un run qui attend votre approbation est normal : la surveillance des
+rapports le reconnaît et attend aussi.
 
 ## 7. Annonce Discord (stable)
 
@@ -208,8 +253,10 @@ Fonctionnement complet côté serveur :
 **Version de test d'un rapport.** Quand le support a préparé une correction (copie de
 travail `FarfaLauncher-correctifs\<rapport>`, branche `correctif/<rapport>` partie de
 `origin/main`), le script pousse le tag `test-<rapport>-<n>`. `test.yml` lance les tests,
-compile Windows et AppImage et publie une pré-release, **sans toucher** à la dernière
-release ni au canal bêta. Le joueur voit « Installer la version de test » dans son
+**attend votre approbation** (§6 bis : relire le diff du correctif), compile Windows et
+AppImage et publie une pré-release, **sans toucher** à la dernière release ni au canal bêta.
+Le launcher n'installe une version de test que si elle vient de sa release `test-…` du
+dépôt officiel et n'est pas plus ancienne que la version en service. Le joueur voit « Installer la version de test » dans son
 signalement. Si la compilation échoue, le rapport passe « à décider ».
 
 **Bêta automatique.** Quand le joueur confirme que la version de test règle son problème,
@@ -222,6 +269,7 @@ la branche est mise en file. Puis, **une seule à la fois**, et jamais pendant q
 4. `bump-version.mjs`, notes `docs/changelog/vX.Y.Z-beta.N.md` tirées du rapport ;
 5. `tsc` et `cargo test` (échec : rien n'est poussé, les admins sont prévenus) ;
 6. commit « Version … », push de `main` puis du tag ; la branche du correctif est supprimée ;
+   `release.yml` attend alors **votre approbation** avant de compiler et signer (§6 bis) ;
 7. le rapport passe « corrigé » avec `corrigeDans`, le joueur et les admins sont prévenus.
 
 Conséquence : **faites toujours `git fetch` et `git pull` avant de publier** (§1).
@@ -243,7 +291,7 @@ privée. La clé publique correspondante est dans `src-tauri/tauri.conf.json`
 |---|---|
 | `C:\Users\Farfa\.tauri\farfalauncher.key` | la clé privée (secrète) |
 | votre mémoire / gestionnaire de mots de passe | son mot de passe |
-| GitHub, *Settings → Secrets and variables → Actions* | `TAURI_SIGNING_PRIVATE_KEY` (contenu du fichier) et `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` |
+| GitHub, *Settings → Environments → `signature` → Environment secrets* (**pas** dans *Secrets and variables → Actions*) | `TAURI_SIGNING_PRIVATE_KEY` (contenu du fichier) et `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` |
 
 GitHub ne rend **jamais** un secret : si le fichier disparaît de ce PC, il est perdu. Gardez
 donc deux copies hors du PC, dès aujourd'hui :
@@ -258,7 +306,7 @@ message, ni sur un partage du NAS accessible à d'autres.
 
 **Si elle est perdue** : générer une nouvelle clé
 (`npx tauri signer generate -w ~/.tauri/farfalauncher.key`), mettre la nouvelle clé publique
-dans `tauri.conf.json`, remplacer les deux secrets GitHub, publier. Mais **aucun launcher déjà
+dans `tauri.conf.json`, remplacer les deux secrets de l'environnement `signature`, publier. Mais **aucun launcher déjà
 installé ne pourra plus se mettre à jour** : chaque ami devra télécharger et installer la
 nouvelle version à la main depuis la page des releases.
 
@@ -271,6 +319,9 @@ Lecture d'une erreur : [tests.md §3](tests.md).
 |---|---|---|
 | **tests** | rien n'a été créé | Corriger sur `main`, puis reposer le tag (ci-dessous). |
 | **Vérifier que le tag correspond** | rien n'a été créé | Le numéro des fichiers n'est pas celui du tag : refaire §5, puis reposer le tag. |
+| **build** en jaune, *Waiting* | brouillon, invisible des joueurs | Ce n'est pas un échec : il attend votre approbation (§6 bis). |
+| **build** refusé (*Rejected*) | brouillon, invisible des joueurs | Supprimer le brouillon, corriger, reposer le tag. |
+| **build** rouge dès le début, « TAURI_SIGNING_PRIVATE_KEY » vide ou clé introuvable | brouillon | Les secrets ne sont pas dans l'environnement `signature` (§12). |
 | **build** ou **deck** (compilation) | une release **brouillon** existe, invisible des joueurs | Erreur passagère (réseau, `apt-get`, `npm ci`) : bouton **Re-run failed jobs**. Vraie erreur : supprimer le brouillon (page Releases → le brouillon → *Delete*), corriger, reposer le tag. |
 | **publish-release** | brouillon complet | **Re-run failed jobs**. |
 
@@ -290,3 +341,63 @@ le salon suffit (« un peu de retard »).
 **Une mise à jour publiée pose problème** chez les joueurs : publiez vite une version
 corrective (+0.0.1). On ne « dépublie » pas une release : les launchers déjà mis à jour ne
 reviennent pas en arrière seuls.
+
+## 12. À faire par le propriétaire : l'environnement `signature` (une seule fois)
+
+À faire au moment de fusionner la branche qui ajoute `environment: signature` aux workflows
+(phase 2, faille SG3). Tout se fait sur github.com, connecté avec votre compte. **Les valeurs
+des secrets ne s'affichent nulle part et ne doivent être collées que dans les cases de
+GitHub.** Disponible pour un dépôt public avec un compte gratuit (vérifié dans la doc
+GitHub : les « required reviewers » et les secrets d'environnement des comptes gratuits
+sont réservés aux dépôts **publics**, ce qui est le cas ici).
+
+**A. Créer l'environnement : AVANT la fusion (obligatoire, ne casse rien)**
+
+Attention : si un workflow cite un environnement qui n'existe pas encore, GitHub le crée
+tout seul, **sans aucune protection**. Il faut donc le créer avant que la branche arrive
+dans `main`.
+
+1. Dépôt FarfaLauncher → **Settings** → menu de gauche **Environments** → **New
+   environment**. Nom : `signature` (exactement, en minuscules) → **Configure environment**.
+2. **Deployment protection rules** :
+   - cocher **Required reviewers**, et ajouter votre compte `Farfaboulette7` ;
+   - **ne pas** cocher *Prevent self-review* : les tags sont poussés avec votre compte (par
+     vous ou par la surveillance des rapports), cette option vous empêcherait d'approuver ;
+   - décocher **Allow administrators to bypass configured protection rules** (si la case
+     existe) : ainsi rien ne passe sans une vraie approbation ;
+   - pas de *Wait timer* ;
+   - **Save protection rules**.
+3. **Deployment branches and tags** → choisir **Selected branches and tags** → **Add
+   deployment branch or tag rule** :
+   - *Ref type* : **Tag**, motif `v*.*.*` → **Add rule** ;
+   - recommencer : *Ref type* : **Tag**, motif `test-*` → **Add rule**.
+   Ainsi, même un workflow modifié sur une branche ne peut pas demander la clé.
+
+**B. Ranger les deux secrets dans l'environnement (étape 4 avant ou après la fusion, étape 5
+juste après la fusion)**
+
+4. Toujours dans l'environnement `signature`, partie **Environment secrets** → **Add
+   environment secret** :
+   - nom `TAURI_SIGNING_PRIVATE_KEY`, valeur : le contenu du fichier
+     `C:\Users\Farfa\.tauri\farfalauncher.key` (l'ouvrir avec le Bloc-notes, Ctrl+A, Ctrl+C,
+     coller dans la case, fermer le Bloc-notes **sans enregistrer**) ;
+   - nom `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, valeur : le mot de passe de la clé (depuis votre
+     gestionnaire de mots de passe).
+5. **Settings** → **Secrets and variables** → **Actions** → onglet *Secrets*, partie
+   **Repository secrets** : **supprimer** `TAURI_SIGNING_PRIVATE_KEY` et
+   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. C'est l'étape qui protège vraiment : tant qu'ils
+   restent ici, n'importe quel job peut les lire sans approbation.
+
+**C. Vérifier**
+
+6. Au prochain tag (`test-…` de la surveillance ou `v…`), le run doit s'arrêter en jaune
+   (*Waiting*) sur `build`, avec le bouton **Review deployments**. Approuver (§6 bis) : la
+   compilation doit réussir et la release se publier. Si `build` échoue tout de suite en
+   parlant de la clé, refaire l'étape 4 (nom exact, collé en entier).
+7. La CI d'une branche (`ci.yml`, job `mac-app`) doit rester verte : elle n'utilise plus la
+   clé du tout.
+
+Ordre conseillé : A, puis 4, puis la fusion dans `main`, puis 5 tout de suite, puis C.
+Avant la fusion, les secrets de l'environnement ne servent à rien (les anciens workflows ne
+le citent pas) et ne gênent pas. Si vous faites l'étape 5 **avant** la fusion, les
+publications échouent (sans danger) jusqu'à la fusion.

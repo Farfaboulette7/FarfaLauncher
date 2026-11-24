@@ -72,9 +72,9 @@ Il n'y a pas de tests de l'interface (React) : `tsc` vérifie seulement les type
 | Fichier | Quand | Ce qu'il fait |
 |---|---|---|
 | `tests.yml` | appelé par les trois suivants, jamais seul | `npm ci`, `tsc`, `npm run build` (l'interface est embarquée dans le Rust), `cargo test` |
-| `ci.yml` | chaque push sur n'importe quelle branche, chaque pull request, ou à la main | **tests** sur Windows, Linux et Mac ; **deck** : compile et essaie `farfalauncherdeck`, binaire dans les artefacts ; **mac-app** : `.dmg` dans les artefacts |
-| `release.yml` | tag `vX.Y.Z` ou `vX.Y.Z-beta.N` | **tests** (Windows, Linux) d'abord ; seulement s'ils passent : création de la release, compilation Windows, AppImage, Mac et Deck, publication et canal bêta |
-| `test.yml` | tag `test-<rapport>-<n>` (poussé par `outils/surveille-rapports`) | **tests** (Windows, Linux) d'abord ; seulement s'ils passent : pré-release de test pour le joueur |
+| `ci.yml` | chaque push sur n'importe quelle branche, chaque pull request, ou à la main | **tests** sur Windows, Linux et Mac ; **deck** : compile et essaie `farfalauncherdeck`, binaire dans les artefacts ; **mac-app** : `.dmg` dans les artefacts, **sans** la clé de signature |
+| `release.yml` | tag `vX.Y.Z` ou `vX.Y.Z-beta.N` | **tests** (Windows, Linux) d'abord ; seulement s'ils passent : création de la release et Deck, puis **attente de votre approbation** (environnement `signature`), compilation signée Windows, AppImage, Mac, publication et canal bêta |
+| `test.yml` | tag `test-<rapport>-<n>` (poussé par `outils/surveille-rapports`) | **tests** (Windows, Linux) d'abord ; seulement s'ils passent : **attente de votre approbation** (environnement `signature`), puis pré-release de test signée pour le joueur |
 | `mac-e2e.yml` | tag `tour-mac-*` ou à la main | tour réel des émulateurs sur Mac (vrai serveur) |
 | `securite.yml` | chaque push sur une branche, chaque pull request, chaque lundi, ou à la main | **contrôles de sécurité** : secrets (gitleaks), failles connues des dépendances npm et Rust (voir section 4) |
 
@@ -202,3 +202,46 @@ mise à jour signé : la CI ne reçoit jamais la clé de signature (section 5).
   écriture, et relit tout l'historique à chaque fois (l'action ne relit que les commits
   poussés). La licence de l'action n'est de toute façon exigée que pour les comptes
   d'organisation, pas pour un compte personnel comme celui-ci.
+
+## 5. La clé de signature et l'environnement `signature`
+
+La clé qui signe les mises à jour (`TAURI_SIGNING_PRIVATE_KEY` et son mot de passe) est la
+chose la plus précieuse du projet : avec elle, n'importe qui peut envoyer une fausse mise à
+jour que **tous** les launchers installeront. Or les workflows compilent du code que personne
+n'a forcément relu : branches `correctif/<rapport>` et versions de test écrites par le
+support automatique (`claude -p`, d'après le message d'un joueur), bêtas publiées par la
+surveillance des rapports. Pendant la compilation, un `build.rs`, un script npm ou un plugin
+Vite piégé peut lire tout ce qui est dans l'environnement du job (faille SG3 / SL6 de l'audit
+de sécurité).
+
+D'où trois règles :
+
+| Workflow / job | Clé ? | Approbation ? |
+|---|---|---|
+| `ci.yml` (tous les jobs, dont `mac-app`) | **jamais** | non |
+| `tests.yml` (appelé par les autres) | non | non : les tests passent **avant** l'approbation |
+| `release.yml` → `create-release`, `deck`, `publish-release` | non | non |
+| `release.yml` → `build` | oui | **oui** (environnement `signature`) |
+| `test.yml` → `create-release`, `publish-release` | non | non |
+| `test.yml` → `build` | oui | **oui** (environnement `signature`) |
+
+- Les deux secrets sont rangés dans l'**environnement GitHub `signature`** (*Settings →
+  Environments*), pas dans les secrets du dépôt. Un job ne les voit que s'il déclare
+  `environment: signature` **et** que le propriétaire a approuvé ce run.
+- L'environnement n'accepte que les tags `v*.*.*` et `test-*`, et exige l'approbation du
+  propriétaire (*Required reviewers*). Mise en place : `release.md` §12.
+- Pendant l'attente, le run est en jaune, statut *Waiting* : ce n'est pas une panne. La
+  surveillance des rapports le sait et attend aussi.
+- Approuver = avoir relu le diff du commit (ce qu'il faut regarder : `release.md` §6 bis).
+- Les jobs `build` signés n'utilisent pas le cache Rust partagé (`Swatinem/rust-cache`) : il
+  est rempli par des runs non relus et n'est pas vérifié. Ils compilent donc un peu plus
+  lentement.
+- Un test Rust (`commands::update::tests::signing_key_only_behind_owner_approval`) échoue si
+  la clé réapparaît dans `ci.yml` ou si un workflow la donne sans `environment: signature`.
+
+Suite possible, pas encore faite : séparer la compilation (sans clé) de la signature (un job
+qui ne fait que signer les paquets avec `tauri signer sign`, sans exécuter le code du dépôt).
+La clé ne pourrait plus être volée du tout, mais il faudrait remplacer `tauri-action` pour
+écrire `latest.json` à la main, ce qui ne peut s'essayer qu'en publiant ; et le job de
+signature signerait quand même ce que la compilation non relue a produit : l'approbation
+reste nécessaire.

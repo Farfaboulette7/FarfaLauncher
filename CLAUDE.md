@@ -53,6 +53,10 @@ La dernière ligne construit **la** version de test :
 - `release.yml` : tag `vX.Y.Z` ou `vX.Y.Z-beta.N`. **Tests d'abord** ; s'ils échouent, rien
   n'est publié.
 - `test.yml` : tag `test-<rapport>-<n>` (version de test d'un rapport de bug). Tests d'abord.
+- Clé de signature : seulement dans le job `build` de `release.yml` et `test.yml`, qui déclare
+  `environment: signature` (secrets de cet environnement, approbation du propriétaire après
+  les tests, run en *Waiting* en attendant). **Jamais** dans `ci.yml` ni ailleurs (faille SG3).
+  Voir `docs/tests.md` §5 et `docs/release.md` §6 bis et §12.
 - `smoke.yml` : chaque matin, partie réseau du smoke test (secrets `ROMM_SMOKE_*`).
 - `mac-e2e.yml` : à la main, tour réel des émulateurs sur Mac.
 - `securite.yml` : chaque push, chaque pull request et chaque lundi : secrets (gitleaks),
