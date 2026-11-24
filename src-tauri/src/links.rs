@@ -112,25 +112,61 @@ pub(crate) fn place(path: &Path, target: &Path) -> std::io::Result<bool> {
         }
         // Lien vers une autre installation (ou cassé) : remplacé.
         remove_link(path)?;
-    } else if path.is_dir() {
+    }
+    let mut moved = false;
+    if !is_link(path) && path.is_dir() {
         // Vrai dossier (le programme a déjà tourné hors du launcher) : ses fichiers vont dans le
-        // jeu, sans jamais rien perdre (voir `move_into`). En cas d'échec, rien n'est effacé et
-        // le lien n'est pas posé : le programme garde son dossier tel quel.
+        // jeu, sans jamais rien perdre (voir `move_into`). Un lien d'essai est fait d'abord :
+        // si cet endroit n'accepte pas de lien, le vrai dossier n'est pas touché. Si le déplacement
+        // échoue, rien n'est effacé et le lien n'est pas posé : le programme garde son dossier.
         if is_empty_dir(path) {
             fs::remove_dir(path)?;
         } else {
+            try_link(path, target)?;
             move_into(path, target)?;
+            moved = true;
             tracing::info!("{} déplacé dans {}", path.display(), target.display());
         }
-    } else if path.exists() {
+    } else if !is_link(path) && path.exists() {
         return Err(std::io::Error::other("un fichier porte déjà ce nom"));
     }
     fs::create_dir_all(target)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    make_link(target, path)?;
+    if let Err(e) = make_link(target, path) {
+        // Lien impossible malgré l'essai : le dossier est remis à sa place (avec ce que le jeu
+        // avait déjà), pour que le programme ne reparte pas d'un dossier vide.
+        if moved {
+            match move_into(target, path) {
+                Ok(()) => tracing::warn!("lien impossible : {} remis à sa place", path.display()),
+                Err(back) => tracing::error!("lien impossible, et {} non remis à sa place ({back}) : fichiers dans {}", path.display(), target.display()),
+            }
+        }
+        return Err(e);
+    }
     Ok(true)
+}
+
+/// Lien d'essai à côté des vrais (`<nom>.farfa-essai`), aussitôt retiré : dit si cet endroit
+/// accepte un lien vers ce disque, avant de déplacer quoi que ce soit.
+fn try_link(path: &Path, target: &Path) -> std::io::Result<()> {
+    let essai = |p: &Path| {
+        let mut s = p.as_os_str().to_owned();
+        s.push(".farfa-essai");
+        PathBuf::from(s)
+    };
+    let (link, dir) = (essai(path), essai(target));
+    if is_link(&link) {
+        remove_link(&link)?;
+    }
+    fs::create_dir_all(&dir)?;
+    let result = make_link(&dir, &link);
+    if result.is_ok() {
+        let _ = remove_link(&link);
+    }
+    let _ = fs::remove_dir(&dir);
+    result
 }
 
 /// Fait passer le contenu du vrai dossier `src` dans `dst` (dossier du jeu), puis efface `src`.
@@ -252,8 +288,19 @@ fn remove_link(path: &Path) -> std::io::Result<()> {
     fs::remove_dir(path).or_else(|_| fs::remove_file(path))
 }
 
-#[cfg(windows)]
+/// Crée le lien `link` vers `target`. En test, `tests::FAIL_LINKS` peut faire échouer les
+/// prochains appels (un `true` par appel à faire échouer), pour vérifier qu'aucun cas ne perd
+/// de données.
 fn make_link(target: &Path, link: &Path) -> std::io::Result<()> {
+    #[cfg(test)]
+    if tests::FAIL_LINKS.with(|plan| plan.borrow_mut().pop_front()).unwrap_or(false) {
+        return Err(std::io::Error::other("lien refusé (test)"));
+    }
+    make_link_os(target, link)
+}
+
+#[cfg(windows)]
+fn make_link_os(target: &Path, link: &Path) -> std::io::Result<()> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     // Une jonction (mklink /J) ne demande ni droits d'administrateur ni mode développeur.
@@ -273,13 +320,43 @@ fn make_link(target: &Path, link: &Path) -> std::io::Result<()> {
 }
 
 #[cfg(unix)]
-fn make_link(target: &Path, link: &Path) -> std::io::Result<()> {
+fn make_link_os(target: &Path, link: &Path) -> std::io::Result<()> {
     std::os::unix::fs::symlink(target, link)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    thread_local! {
+        /// Appels à `make_link` à faire échouer, dans l'ordre (`true` : échec).
+        pub(super) static FAIL_LINKS: std::cell::RefCell<std::collections::VecDeque<bool>> = Default::default();
+    }
+
+    // Relecture 2 (C) : lien d'essai refusé → le vrai dossier n'est pas touché ; lien final
+    // refusé après le déplacement → le dossier est remis à sa place ; aucun essai ne traîne.
+    #[test]
+    fn failed_link_never_leaves_an_empty_folder() {
+        let root = std::env::temp_dir().join(format!("farfa-links-fail-{}", uuid::Uuid::new_v4()));
+        let (outside, target) = (root.join("config").join("emu"), root.join("jeu").join("config"));
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("reglages.ini"), "x").unwrap();
+        FAIL_LINKS.with(|p| *p.borrow_mut() = [true].into());
+        assert!(place(&outside, &target).is_err());
+        assert_eq!(fs::read_to_string(outside.join("reglages.ini")).unwrap(), "x");
+        assert!(!is_link(&outside));
+        FAIL_LINKS.with(|p| *p.borrow_mut() = [false, true].into());
+        assert!(place(&outside, &target).is_err());
+        assert_eq!(fs::read_to_string(outside.join("reglages.ini")).unwrap(), "x");
+        assert!(!is_link(&outside) && !target.exists());
+        FAIL_LINKS.with(|p| p.borrow_mut().clear());
+        assert!(place(&outside, &target).unwrap());
+        assert_eq!(fs::read_to_string(target.join("reglages.ini")).unwrap(), "x");
+        let restes: Vec<_> = fs::read_dir(root.join("config")).unwrap().chain(fs::read_dir(root.join("jeu")).unwrap())
+            .filter_map(Result::ok).filter(|e| e.file_name().to_string_lossy().contains("farfa-essai")).collect();
+        assert!(restes.is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn link_moves_then_keeps_then_replaces() {
