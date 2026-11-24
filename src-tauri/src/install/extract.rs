@@ -275,6 +275,18 @@ fn extract_tar_gz(archive: &Path, staging: &Path, cancel: &CancellationToken, pr
                 continue;
             }
         }
+        // Lien physique vers un lien symbolique : sous Linux et Mac, il copie le lien
+        // symbolique tel quel, ailleurs dans l'archive, où sa cible relative (`../../x`)
+        // mènerait dehors. Tout lien physique qui passe par un lien symbolique est ignoré,
+        // comme celui dont la source a un `..` ou est absolue (calcul sûr impossible).
+        if entry.header().entry_type().is_hard_link() {
+            let source: PathBuf = entry.link_name().ok().flatten().map(|p| p.into_owned()).unwrap_or_default();
+            let plain = source.components().all(|c| matches!(c, Component::Normal(_) | Component::CurDir));
+            if !plain || (links_made && goes_through_link(staging, &source)) {
+                tracing::warn!("lien physique ignoré (passe par un lien symbolique) : {} -> {}", rel.display(), source.display());
+                continue;
+            }
+        }
         // Même règle que pour un zip : jamais d'écriture à travers un lien, même interne.
         let checked = if is_symlink { rel.parent().unwrap_or(Path::new("")) } else { rel.as_path() };
         if links_made && goes_through_link(staging, checked) {
@@ -363,14 +375,6 @@ fn goes_through_link(root: &Path, rel: &Path) -> bool {
     false
 }
 
-/// Faille SL5 : vrai si le lien `link` mène hors de `root` (ou ne mène nulle part).
-fn link_leads_outside(link: &Path, root: &Path) -> bool {
-    match (fs::canonicalize(link), fs::canonicalize(root)) {
-        (Ok(real), Ok(root)) => !real.starts_with(root),
-        _ => true,
-    }
-}
-
 #[cfg(unix)]
 fn make_symlink(target: &str, link: &Path) -> AppResult<()> {
     if let Some(parent) = link.parent() {
@@ -436,11 +440,19 @@ fn merge_dir(src_root: &Path, dest_root: &Path, rel: &Path, count: &mut u64, pro
         let ft = entry.file_type().map_err(|e| log_err(AppError::Disk, "type de fichier", e))?;
         let target = dest_root.join(&child_rel);
         if ft.is_dir() {
-            // Faille SL5 : un lien déjà dans le jeu (ancienne version) qui mène dehors n'est
-            // jamais suivi. Un lien interne (ex. `lien:` posé dans le jeu) l'est, comme avant.
-            if target.is_symlink() && link_leads_outside(&target, dest_root) {
-                tracing::warn!("lien hors du jeu non suivi, dossier ignoré : {}", child_rel.display());
-                continue;
+            // Faille SL5 : un lien déjà dans le jeu (ancienne version) n'est jamais suivi, même
+            // interne (`d -> .` ferait remonter les liens suivants, `d -> saves` écrirait dans
+            // les sauvegardes). Comme un fichier au même endroit, il est remplacé par un vrai
+            // dossier : seul le lien est retiré, jamais ce vers quoi il mène.
+            // Les `lien:` (links.rs) sont posés HORS du jeu et mènent vers un vrai dossier
+            // du jeu : ils ne passent pas ici.
+            if target.is_symlink() {
+                tracing::warn!("ancien lien remplacé par un dossier : {}", child_rel.display());
+                // `remove_file` retire un lien sous Unix ; sous Windows, un lien vers un
+                // dossier (ou une jonction) se retire avec `remove_dir`, sans son contenu.
+                fs::remove_file(&target)
+                    .or_else(|_| fs::remove_dir(&target))
+                    .map_err(|e| disk_error("remplacement d'un lien", e))?;
             }
             if target.is_file() {
                 fs::remove_file(&target).map_err(|e| disk_error("remplacement d'un fichier", e))?;
@@ -753,6 +765,73 @@ mod tests {
         merge_into(&src, &game).unwrap();
         assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
         assert!(fs::symlink_metadata(game.join("voisin")).is_err());
+        // Le vieux lien est devenu un vrai dossier, avec le fichier de l'archive dedans.
+        assert!(!game.join("config").is_symlink());
+        assert!(game.join("config/piege.desktop").is_file());
+    }
+
+    // Relecture SL5 : un lien interne déjà dans le jeu (`d -> .`) n'est pas suivi non plus,
+    // sinon `d/e/x -> ../..` (accepté pour l'archive) mènerait au-dessus du jeu.
+    #[cfg(unix)]
+    #[test]
+    fn merge_never_follows_an_internal_link_of_the_game() {
+        use std::os::unix::fs::symlink;
+        let dir = tmp("sl5-interne-jeu");
+        let game = dir.join("jeu");
+        fs::create_dir_all(game.join("saves")).unwrap();
+        fs::write(game.join("saves/slot1"), "progression").unwrap();
+        symlink(".", game.join("d")).unwrap();
+        symlink("saves", game.join("s")).unwrap();
+        let src = dir.join("src");
+        fs::create_dir_all(src.join("d/e")).unwrap();
+        symlink("../..", src.join("d/e/x")).unwrap();
+        fs::create_dir_all(src.join("s")).unwrap();
+        fs::write(src.join("s/slot1"), "VIDE").unwrap();
+        merge_into(&src, &game).unwrap();
+        // `d` et `s` sont de vrais dossiers : rien n'est passé par les anciens liens.
+        assert!(!game.join("d").is_symlink() && game.join("d").is_dir());
+        assert!(fs::symlink_metadata(game.join("e")).is_err());
+        assert_eq!(fs::read_link(game.join("d/e/x")).unwrap(), Path::new("../.."));
+        assert!(!game.join("s").is_symlink());
+        assert_eq!(fs::read_to_string(game.join("saves/slot1")).unwrap(), "progression");
+        // `d/e/x -> ../..` mène bien à la racine du jeu, pas au-dessus.
+        assert_eq!(fs::canonicalize(game.join("d/e/x")).unwrap(), fs::canonicalize(&game).unwrap());
+    }
+
+    // Relecture SL5 : lien physique vers un lien symbolique interne `a/b/s -> ../../x`.
+    // Copié à la racine (`h`), il mènerait au-dessus du dossier : il doit être ignoré.
+    #[cfg(unix)]
+    #[test]
+    fn tar_ignores_hard_link_to_a_symlink() {
+        let dir = tmp("sl5-tar-physique");
+        let tpath = dir.join("t.tar.gz");
+        {
+            let gz = flate2::write::GzEncoder::new(fs::File::create(&tpath).unwrap(), flate2::Compression::fast());
+            let mut b = tar::Builder::new(gz);
+            let mut h = tar::Header::new_gnu();
+            h.set_size(4);
+            h.set_mode(0o644);
+            b.append_data(&mut h, "x", &b"data"[..]).unwrap();
+            let mut h = tar::Header::new_gnu();
+            h.set_entry_type(tar::EntryType::Symlink);
+            h.set_size(0);
+            b.append_link(&mut h, "a/b/s", "../../x").unwrap();
+            let mut h = tar::Header::new_gnu();
+            h.set_entry_type(tar::EntryType::Link);
+            h.set_size(0);
+            b.append_link(&mut h, "h", "a/b/s").unwrap();
+            let mut h = tar::Header::new_gnu();
+            h.set_entry_type(tar::EntryType::Link);
+            h.set_size(0);
+            b.append_link(&mut h, "h2", "a/../a/b/s").unwrap();
+            b.into_inner().unwrap().finish().unwrap();
+        }
+        let staging = dir.join("staging");
+        extract(&tpath, ArchiveKind::TarGz, &staging, &CancellationToken::new(), |_, _| {}).unwrap();
+        // Le lien interne est gardé, les deux liens physiques sont ignorés.
+        assert_eq!(fs::read_link(staging.join("a/b/s")).unwrap(), Path::new("../../x"));
+        assert!(fs::symlink_metadata(staging.join("h")).is_err());
+        assert!(fs::symlink_metadata(staging.join("h2")).is_err());
     }
 
     #[test]
