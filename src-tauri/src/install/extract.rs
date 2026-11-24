@@ -172,6 +172,8 @@ fn extract_zip(archive: &Path, staging: &Path, cancel: &CancellationToken, progr
     let total: u64 = (0..zip.len()).filter_map(|i| zip.by_index_raw(i).ok().map(|e| e.size())).sum::<u64>().max(1);
     let mut done = 0u64;
     let mut buf = vec![0u8; 1 << 20];
+    // Vrai dès qu'un lien a été posé dans `staging` (vidé avant) : sans lien, rien à vérifier.
+    let mut links_made = false;
     for i in 0..zip.len() {
         if cancel.is_cancelled() {
             return Err(AppError::Cancelled);
@@ -188,13 +190,26 @@ fn extract_zip(archive: &Path, staging: &Path, cancel: &CancellationToken, progr
         let out = staging.join(&rel);
         let mode = entry.unix_mode();
         let is_symlink = mode.map(|m| m & 0o170000 == 0o120000).unwrap_or(false);
+        // Faille SL5 : jamais d'écriture à travers un lien déjà posé (le lien lui-même
+        // peut être remplacé, d'où `parent` seulement pour un lien).
+        let checked = if is_symlink { rel.parent().unwrap_or(Path::new("")) } else { rel.as_path() };
+        if links_made && goes_through_link(staging, checked) {
+            tracing::error!("archive refusée : « {} » passe par un lien symbolique", rel.display());
+            return Err(AppError::Extract);
+        }
         if entry.is_dir() {
             fs::create_dir_all(&out).map_err(|e| disk_error("création d'un dossier", e))?;
         } else if is_symlink {
-            // Liens symboliques des bundles macOS (frameworks).
+            // Liens symboliques des bundles macOS (frameworks) et des `.so` versionnées.
             let mut target = String::new();
             io::Read::read_to_string(&mut entry, &mut target).map_err(|e| log_err(AppError::Extract, "lien du zip", e))?;
+            // Faille SL5 : une cible qui sort de l'archive est ignorée (voir `link_target_inside`).
+            if !link_target_inside(&rel, &target) {
+                tracing::warn!("lien ignoré (cible hors de l'archive) : {} -> {target}", rel.display());
+                continue;
+            }
             make_symlink(&target, &out)?;
+            links_made = true;
         } else {
             if let Some(parent) = out.parent() {
                 fs::create_dir_all(parent).map_err(|e| disk_error("création d'un dossier", e))?;
@@ -237,6 +252,7 @@ fn extract_tar_gz(archive: &Path, staging: &Path, cancel: &CancellationToken, pr
     let counting = CountingReader { inner: f, read: read.clone() };
     let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(io::BufReader::new(counting)));
     tar.set_preserve_permissions(true);
+    let mut links_made = false;
     for entry in tar.entries().map_err(|e| log_err(AppError::Extract, "lecture du tar.gz", e))? {
         if cancel.is_cancelled() {
             return Err(AppError::Cancelled);
@@ -246,6 +262,26 @@ fn extract_tar_gz(archive: &Path, staging: &Path, cancel: &CancellationToken, pr
         if skip_entry(&rel) {
             continue;
         }
+        // Chemin tel que `unpack_in` le pose : sans `/` de tête ni `.`.
+        let rel: PathBuf = rel.components().filter(|c| matches!(c, Component::Normal(_))).collect();
+        // Faille SL5 : `unpack_in` refuse déjà d'écrire hors du dossier à travers un lien
+        // (chemins canoniques) et contrôle les liens physiques, mais pas la cible d'un lien
+        // symbolique, qui partirait ensuite dans le dossier du jeu.
+        let is_symlink = entry.header().entry_type().is_symlink();
+        if is_symlink {
+            let target = entry.link_name().ok().flatten().map(|t| t.to_string_lossy().into_owned()).unwrap_or_default();
+            if !link_target_inside(&rel, &target) {
+                tracing::warn!("lien ignoré (cible hors de l'archive) : {} -> {target}", rel.display());
+                continue;
+            }
+        }
+        // Même règle que pour un zip : jamais d'écriture à travers un lien, même interne.
+        let checked = if is_symlink { rel.parent().unwrap_or(Path::new("")) } else { rel.as_path() };
+        if links_made && goes_through_link(staging, checked) {
+            tracing::error!("archive refusée : « {} » passe par un lien symbolique", rel.display());
+            return Err(AppError::Extract);
+        }
+        links_made |= is_symlink;
         // `unpack_in` refuse les chemins qui sortent du dossier cible.
         entry.unpack_in(staging).map_err(|e| disk_error("extraction du tar.gz", e))?;
         progress(read.get().min(total), total);
@@ -268,6 +304,73 @@ impl io::Read for CountingReader {
     }
 }
 
+/// Faille SL5 : vrai si la cible `target` d'un lien placé en `link_rel` (chemin relatif à la
+/// racine d'extraction) reste sous cette racine. Contrôle sur le texte seul, sans toucher au
+/// disque, identique sous Windows, Linux et Mac.
+///
+/// Refusés :
+/// - une cible vide ou absolue (`/…`, `\…`, `C:…`, tout `:`) ;
+/// - un `..` qui remonte au-dessus de la racine ;
+/// - un `..` après un nom (`a/..`) : si `a` est lui-même un lien, `a/..` ne désigne pas le
+///   dossier du lien, et le calcul sur le texte serait faux.
+///
+/// Acceptés : `Versions/Current/Foo`, `libfoo.so.1`, `../lib/libfoo.so` (s'il reste dedans).
+pub(crate) fn link_target_inside(link_rel: &Path, target: &str) -> bool {
+    if target.is_empty() || target.starts_with('/') || target.starts_with('\\') || target.contains(':') {
+        return false;
+    }
+    // Profondeur du dossier qui contient le lien, comptée depuis la racine.
+    let mut depth: usize = 0;
+    for c in link_rel.parent().unwrap_or(Path::new("")).components() {
+        match c {
+            Component::Normal(_) => depth += 1,
+            Component::CurDir => {}
+            _ => return false,
+        }
+    }
+    // On suit la cible morceau par morceau (`/` et `\`, pour la même règle partout).
+    let mut seen_name = false;
+    for part in target.split(['/', '\\']) {
+        match part {
+            "" | "." => {}
+            ".." => {
+                if seen_name || depth == 0 {
+                    return false;
+                }
+                depth -= 1;
+            }
+            _ => {
+                seen_name = true;
+                depth += 1;
+            }
+        }
+    }
+    true
+}
+
+/// Faille SL5 : vrai si l'un des morceaux de `rel` (lui compris), déjà présent sous `root`, est
+/// un lien symbolique. Écrire là passerait par le lien.
+fn goes_through_link(root: &Path, rel: &Path) -> bool {
+    let mut path = root.to_path_buf();
+    for c in rel.components() {
+        if let Component::Normal(name) = c {
+            path.push(name);
+            if fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Faille SL5 : vrai si le lien `link` mène hors de `root` (ou ne mène nulle part).
+fn link_leads_outside(link: &Path, root: &Path) -> bool {
+    match (fs::canonicalize(link), fs::canonicalize(root)) {
+        (Ok(real), Ok(root)) => !real.starts_with(root),
+        _ => true,
+    }
+}
+
 #[cfg(unix)]
 fn make_symlink(target: &str, link: &Path) -> AppResult<()> {
     if let Some(parent) = link.parent() {
@@ -279,7 +382,8 @@ fn make_symlink(target: &str, link: &Path) -> AppResult<()> {
 
 #[cfg(not(unix))]
 fn make_symlink(target: &str, link: &Path) -> AppResult<()> {
-    // Sans intérêt sous Windows (liens des bundles macOS) : ignoré.
+    // Sans intérêt sous Windows (liens des bundles macOS) : ignoré. La cible a quand même été
+    // contrôlée avant (même avertissement dans le journal sous Windows que sous Linux).
     tracing::debug!("lien symbolique ignoré: {} -> {target}", link.display());
     Ok(())
 }
@@ -332,6 +436,12 @@ fn merge_dir(src_root: &Path, dest_root: &Path, rel: &Path, count: &mut u64, pro
         let ft = entry.file_type().map_err(|e| log_err(AppError::Disk, "type de fichier", e))?;
         let target = dest_root.join(&child_rel);
         if ft.is_dir() {
+            // Faille SL5 : un lien déjà dans le jeu (ancienne version) qui mène dehors n'est
+            // jamais suivi. Un lien interne (ex. `lien:` posé dans le jeu) l'est, comme avant.
+            if target.is_symlink() && link_leads_outside(&target, dest_root) {
+                tracing::warn!("lien hors du jeu non suivi, dossier ignoré : {}", child_rel.display());
+                continue;
+            }
             if target.is_file() {
                 fs::remove_file(&target).map_err(|e| disk_error("remplacement d'un fichier", e))?;
             }
@@ -343,6 +453,16 @@ fn merge_dir(src_root: &Path, dest_root: &Path, rel: &Path, count: &mut u64, pro
                 // supprime pas un dossier existant (il peut contenir des données).
                 tracing::warn!("conflit dossier/fichier, conservé: {}", child_rel.display());
                 continue;
+            }
+            // Faille SL5 : seconde vérification de la cible, par rapport à `src_root` cette
+            // fois. Après l'aplatissement (`content_root`), un lien `../x` resté dans l'archive
+            // sortirait du dossier du jeu.
+            if ft.is_symlink() {
+                let link_target = fs::read_link(entry.path()).map(|t| t.to_string_lossy().into_owned()).unwrap_or_default();
+                if !link_target_inside(&child_rel, &link_target) {
+                    tracing::warn!("lien ignoré (cible hors du jeu) : {} -> {link_target}", child_rel.display());
+                    continue;
+                }
             }
             if ft.is_symlink() || target.is_symlink() {
                 let _ = fs::remove_file(&target);
@@ -484,6 +604,155 @@ mod tests {
         assert!(!dir.join("evil.txt").exists());
         assert_eq!(content_root(&staging).unwrap(), staging.join("Game"));
         assert_eq!(uncompressed_size(&zpath, ArchiveKind::Zip).unwrap(), 5);
+    }
+
+    // Faille SL5 : contrôle de la cible d'un lien (fonction pure, toutes plateformes).
+    #[test]
+    fn link_targets_must_stay_inside() {
+        let ok = |link: &str, target: &str| link_target_inside(Path::new(link), target);
+        // Liens normaux : bundles macOS, `.so` versionnées, dossier voisin.
+        assert!(ok("Foo.framework/Versions/Current", "A"));
+        assert!(ok("Foo.framework/Foo", "Versions/Current/Foo"));
+        assert!(ok("lib/libx.so", "libx.so.1"));
+        assert!(ok("bin/libx.so", "../lib/libx.so.1"));
+        assert!(ok("a/b/c", "./../../d"));
+        // Absolus.
+        assert!(!ok("x", "/home/deck/.config/autostart"));
+        assert!(!ok("x", "\\Windows\\System32"));
+        assert!(!ok("x", "C:\\Users"));
+        assert!(!ok("x", "C:Users"));
+        assert!(!ok("x", ""));
+        // Remontée hors de la racine.
+        assert!(!ok("x", ".."));
+        assert!(!ok("bin/x", "../.."));
+        assert!(!ok("a/b/x", "../../../.config"));
+        assert!(!ok("bin/x", "..\\..\\y"));
+        // `..` après un nom : refusé même s'il resterait dedans sur le papier.
+        assert!(!ok("a/b/x", "c/../d"));
+        assert!(!ok("x", "lnk/.."));
+    }
+
+    /// Zip en mémoire : `(nom, Some(cible))` pour un lien, `(nom, None)` pour un fichier.
+    fn zip_with(dir: &Path, entries: &[(&str, Option<&str>)]) -> PathBuf {
+        let zpath = dir.join("t.zip");
+        let mut w = zip::ZipWriter::new(fs::File::create(&zpath).unwrap());
+        let o: zip::write::SimpleFileOptions = Default::default();
+        for (name, link) in entries {
+            match link {
+                Some(target) => w.add_symlink(*name, *target, o).unwrap(),
+                None => {
+                    w.start_file(*name, o).unwrap();
+                    w.write_all(b"data").unwrap();
+                }
+            }
+        }
+        w.finish().unwrap();
+        zpath
+    }
+
+    #[test]
+    fn zip_refuses_links_leading_outside() {
+        let dir = tmp("sl5");
+        let outside = dir.join("dehors");
+        fs::create_dir_all(&outside).unwrap();
+        let outside_s = outside.to_string_lossy().into_owned();
+        let zpath = zip_with(
+            &dir,
+            &[
+                ("Game/abs", Some(outside_s.as_str())),
+                ("Game/haut", Some("../../..")),
+                ("Game/lib/libx.so.1", None),
+                ("Game/lib/libx.so", Some("libx.so.1")),
+                // Lien vers le dehors, puis un fichier « à travers » lui.
+                ("Game/x", Some(outside_s.as_str())),
+                ("Game/x/piege.desktop", None),
+            ],
+        );
+        let staging = dir.join("staging");
+        extract(&zpath, ArchiveKind::Zip, &staging, &CancellationToken::new(), |_, _| {}).unwrap();
+        // Rien n'est sorti : le lien refusé n'existe pas, le fichier est resté dedans.
+        assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
+        assert!(fs::symlink_metadata(staging.join("Game/abs")).is_err());
+        assert!(fs::symlink_metadata(staging.join("Game/haut")).is_err());
+        assert!(staging.join("Game/x").is_dir() && !staging.join("Game/x").is_symlink());
+        assert!(staging.join("Game/x/piege.desktop").is_file());
+        // Le lien interne est gardé (sous Unix ; ignoré sous Windows, comme avant).
+        #[cfg(unix)]
+        assert_eq!(fs::read_link(staging.join("Game/lib/libx.so")).unwrap(), Path::new("libx.so.1"));
+        // Et la fusion dans le jeu ne pose rien dehors non plus.
+        let game = dir.join("jeu");
+        merge_into(&content_root(&staging).unwrap(), &game).unwrap();
+        assert!(game.join("x/piege.desktop").is_file());
+        assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn zip_refuses_writing_through_an_internal_link() {
+        let dir = tmp("sl5-interne");
+        let zpath = zip_with(&dir, &[("vrai/a.txt", None), ("lien", Some("vrai")), ("lien/b.txt", None)]);
+        let staging = dir.join("staging");
+        let result = extract(&zpath, ArchiveKind::Zip, &staging, &CancellationToken::new(), |_, _| {});
+        if cfg!(unix) {
+            // Le lien existe : écrire « à travers » lui arrête l'extraction.
+            assert!(matches!(result, Err(AppError::Extract)));
+            assert!(!staging.join("vrai/b.txt").exists());
+        } else {
+            // Windows : pas de lien posé, `lien` est un vrai dossier.
+            result.unwrap();
+            assert!(staging.join("lien/b.txt").is_file());
+        }
+    }
+
+    #[test]
+    fn tar_refuses_links_leading_outside() {
+        let dir = tmp("sl5-tar");
+        let outside = dir.join("dehors");
+        fs::create_dir_all(&outside).unwrap();
+        let tpath = dir.join("t.tar.gz");
+        {
+            let gz = flate2::write::GzEncoder::new(fs::File::create(&tpath).unwrap(), flate2::Compression::fast());
+            let mut b = tar::Builder::new(gz);
+            let mut h = tar::Header::new_gnu();
+            h.set_entry_type(tar::EntryType::Symlink);
+            h.set_size(0);
+            b.append_link(&mut h, "Game/x", &outside).unwrap();
+            let mut h = tar::Header::new_gnu();
+            h.set_entry_type(tar::EntryType::Symlink);
+            h.set_size(0);
+            b.append_link(&mut h, "Game/haut", "../../..").unwrap();
+            let mut h = tar::Header::new_gnu();
+            h.set_size(4);
+            h.set_mode(0o644);
+            b.append_data(&mut h, "Game/x/piege.desktop", &b"data"[..]).unwrap();
+            b.into_inner().unwrap().finish().unwrap();
+        }
+        let staging = dir.join("staging");
+        extract(&tpath, ArchiveKind::TarGz, &staging, &CancellationToken::new(), |_, _| {}).unwrap();
+        assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
+        assert!(fs::symlink_metadata(staging.join("Game/haut")).is_err());
+        assert!(staging.join("Game/x/piege.desktop").is_file());
+    }
+
+    // Liens posés à la main (pas par une archive) : Unix seulement.
+    #[cfg(unix)]
+    #[test]
+    fn merge_never_follows_or_copies_links_leading_outside() {
+        use std::os::unix::fs::symlink;
+        let dir = tmp("sl5-fusion");
+        let outside = dir.join("dehors");
+        fs::create_dir_all(&outside).unwrap();
+        // Source aplatie : un lien `../x` resté dans l'archive sortirait du jeu.
+        let src = dir.join("src");
+        fs::create_dir_all(src.join("config")).unwrap();
+        fs::write(src.join("config/piege.desktop"), "x").unwrap();
+        symlink("../voisin", src.join("voisin")).unwrap();
+        // Jeu : un vieux lien `config -> dehors` laissé par une ancienne version.
+        let game = dir.join("jeu");
+        fs::create_dir_all(&game).unwrap();
+        symlink(&outside, game.join("config")).unwrap();
+        merge_into(&src, &game).unwrap();
+        assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
+        assert!(fs::symlink_metadata(game.join("voisin")).is_err());
     }
 
     #[test]
