@@ -103,20 +103,15 @@ jobs:
 
       - run: npm ci
 
-      - name: Construire FaRFa project.app et le .dmg
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        # Sans clé de signature (pull request de Dependabot ou d'un fork : GitHub ne leur donne
-        # pas les secrets), l'application est construite sans paquet de mise à jour signé,
-        # au lieu d'échouer.
-        run: |
-          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
-            npx tauri build --bundles app,dmg
-          else
-            echo "::notice::Pas de clé de signature : .dmg construit sans paquet de mise à jour."
-            npx tauri build --bundles app,dmg --config '{"bundle":{"createUpdaterArtifacts":false}}'
-          fi
+      # JAMAIS la clé de signature des mises à jour ici (faille SG3 / SL6) : ce job compile le
+      # code de n'importe quelle branche poussée, y compris les correctif/<rapport> écrites par
+      # le support automatique, que personne n'a relues. Un build.rs ou un script npm piégé
+      # pourrait lire la clé et l'envoyer ailleurs. Le .dmg sert seulement à essayer
+      # l'application : il n'a pas besoin du paquet de mise à jour signé, qu'on ne construit
+      # donc pas (createUpdaterArtifacts: false). La clé ne sert que dans release.yml et
+      # test.yml, derrière l'approbation du propriétaire (environnement « signature »).
+      - name: Construire FaRFa project.app et le .dmg (sans signature de mise à jour)
+        run: npx tauri build --bundles app,dmg --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
       - uses: actions/upload-artifact@v4
         with:

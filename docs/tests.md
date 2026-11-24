@@ -182,8 +182,8 @@ Chaque lundi matin, Dependabot ouvre au plus deux pull requests par écosystème
 workflows, paquets npm, crates Rust. Les mises à jour mineures sont groupées en une seule pull
 request ; les versions majeures arrivent une par une. Chaque pull request passe par la CI et
 par **Sécurité** : fusionner seulement si tout est vert (et, pour une majeure, après un essai
-de la version de test). Sur une pull request de Dependabot, GitHub ne donne pas les secrets :
-le job `mac-app` construit alors le `.dmg` sans paquet de mise à jour signé (c'est normal).
+de la version de test). Le job `mac-app` de la CI construit toujours le `.dmg` sans paquet de
+mise à jour signé : la CI ne reçoit jamais la clé de signature (section 5).
 
 ### Durcissement des workflows
 
