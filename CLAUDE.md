@@ -18,6 +18,7 @@ Documentation (à lire avant de toucher à une partie) :
 | `docs/tests.md` | lancer les tests, rôle de chaque workflow, lire un échec de CI |
 | `docs/smoke-test.md` | contrôle de bout en bout contre les vrais serveurs |
 | `docs/romm-api.md` | l'API RomM utilisée |
+| `docs/agents.md` | travailler avec des agents IA sur ce dépôt |
 | `docs/audit-2026-11.md` | audit de la phase 1 (bugs L1-L19, ce qui reste) |
 | `AGENTS.md` | règles courtes pour un agent IA |
 
@@ -28,7 +29,7 @@ Architecture d'ensemble (NAS, RomM, gestionnaire, fiches) : dépôt FarfaRomMana
 
 ```bash
 npx tsc --noEmit -p .                                              # types
-cd src-tauri && CARGO_TARGET_DIR=target-test cargo test --lib       # tests Rust (~280, ~24 ignorés)
+cd src-tauri && CARGO_TARGET_DIR=target-test cargo test --lib       # tests Rust (~300, ~24 ignorés)
 npm run build && cd src-tauri && CARGO_TARGET_DIR=target-test cargo build --features tauri/custom-protocol
 ```
 
@@ -78,9 +79,11 @@ Pas à pas complet pour un humain : `docs/release.md`. En bref :
 7. Juste après le push du tag, stable seulement (pas pour une bêta, sauf demande) : annonce
    Discord dans le salon farfalauncher, par `DISCORD_LAUNCHER` (`/z/FarfaRomManager/.env`, sans
    l'afficher), en embed, avec « disponible dans un petit moment ». Sans attendre la compilation.
-8. Rapports de bug corrigés par cette version : dans
-   `/z/FarfaRomManager/data/reports/<id>/infos.json`, mettre `status: "corrigé"`,
-   `corrigeDans: "X.Y.Z"`, `updatedAt` et une `reponse` pour le joueur.
+8. Rapports de bug corrigés par cette version : **ne jamais modifier `infos.json` à la main**
+   (le gestionnaire l'écrit aussi). Passer par `outils/surveille-rapports/infos.py`
+   (`poser <infos.json> corrigeDans "@fichier"`, `statut <infos.json> corrigé`,
+   `message <infos.json> "@fichier"`), comme dans la section « Gestes à la main sur une
+   publication » de `outils/surveille-rapports/INSTALLER.md` du dépôt FarfaRomManager.
 
 `release.yml` compile Windows, Linux (AppImage), Mac et `FarfaLauncherDeck-linux-x86_64`, signe,
 publie `latest.json` et le copie dans la release technique `canal-beta` (lue par le canal
@@ -156,9 +159,9 @@ bêta, `commands/update.rs`).
   FarfaRomManager (`Z:/FarfaRomManager/assets`), plus par le conteneur `farfa-assets`.
 - Une recomp Windows ne tourne pas sous Linux : il n'y a pas de Proton pour les recomps,
   seulement pour les jeux PC.
-- Les noms de jeu dans les fiches du gestionnaire doivent être exactement le `fs_name` de RomM
-  (ou son nom sans extension). Le slug de console est le `slug` RomM (`win` pour
-  « Ordinateur »), pas le `fs_slug`.
+- Bloc `jeux:` des fiches du gestionnaire : le nom est libre quand le SHA-1 est donné ; avec
+  `-` à la place du SHA-1, il doit être exactement le `fs_name` de RomM (ou son nom sans
+  extension). Le slug de console est le `slug` RomM, pas le `fs_slug`.
 - Les plateformes `portage-*` n'existent plus (retirées de RomM le 08/11/2026, code retiré,
   écart E14). Il reste seulement la reprise des anciens ID (`previous_rom_id`).
 - Ne jamais lire la clé de signature `~/.tauri/farfalauncher.key`.

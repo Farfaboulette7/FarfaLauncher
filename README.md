@@ -26,7 +26,7 @@ Téléchargez le fichier de votre système dans la
 | Linux / Steam Deck | `FarfaLauncher_x.y.z_amd64.AppImage` |
 
 Ensuite, FaRFa project **se met à jour tout seul** : il vérifie au démarrage et propose
-la nouvelle version (aussi : *Paramètres → Vérifier les mises à jour*).
+la nouvelle version (aussi : *Paramètres → À propos → Vérifier les mises à jour*).
 
 ### Windows : avertissement SmartScreen / antivirus
 
@@ -95,7 +95,7 @@ Droits (scopes) demandés : `me.read`, `platforms.read`, `roms.read`, `roms.user
 `roms.user.write` (temps de jeu), `devices.read` (temps de jeu sur tous vos appareils),
 `collections.read` et `collections.write` (favoris), `assets.read` et `assets.write`
 (sauvegardes). Si vous vous êtes connecté avec une version plus ancienne, le launcher vous
-demande de vous reconnecter une fois (*Paramètres → Se déconnecter*).
+demande de vous reconnecter une fois (*Paramètres → Compte → Se déconnecter*).
 Détails : [docs/romm-api.md](docs/romm-api.md).
 
 ## Pour l'admin : documentation
@@ -108,12 +108,13 @@ Détails : [docs/romm-api.md](docs/romm-api.md).
 | [docs/tests.md](docs/tests.md) | lancer les tests, lire un échec de la CI |
 | [docs/smoke-test.md](docs/smoke-test.md) | vérifier toute la chaîne contre les vrais serveurs |
 | [docs/romm-api.md](docs/romm-api.md) | l'API RomM utilisée |
+| [docs/agents.md](docs/agents.md) | travailler avec des agents IA sur ce dépôt |
 | [CLAUDE.md](CLAUDE.md), [AGENTS.md](AGENTS.md) | consignes pour un assistant IA |
 
 Côté serveur, dans le dépôt [FarfaRomManager](https://github.com/Farfaboulette7/FarfaRomManager) :
 [architecture globale](https://github.com/Farfaboulette7/FarfaRomManager/blob/master/docs/architecture.md),
 [ajouter un jeu](https://github.com/Farfaboulette7/FarfaRomManager/blob/master/docs/ajouter-un-jeu.md),
-[sauvegardes](https://github.com/Farfaboulette7/FarfaRomManager/blob/master/docs/sauvegarde-restauration.md),
+[sauvegarde et restauration du serveur](https://github.com/Farfaboulette7/FarfaRomManager/blob/master/docs/sauvegarde-restauration.md),
 [runbook du serveur](https://github.com/Farfaboulette7/FarfaRomManager/blob/master/docs/runbook.md),
 [règles des fiches](https://github.com/Farfaboulette7/FarfaRomManager/blob/master/docs/regles-des-fiches.md).
 
@@ -126,8 +127,9 @@ modifiable dans *Paramètres → Émulateurs*). Le gestionnaire tient à jour un
 dans des **fiches** (une par recomp, une par émulateur) et suit seul les nouvelles versions
 sur GitHub :
 
-- **Recomp** (portage PC natif) : la fiche dit quelles entrées RomM elle fait tourner (le
-  `fs_name` exact, et le `slug` RomM de la console), l'exécutable, la langue, les manettes,
+- **Recomp** (portage PC natif) : la fiche dit quelles entrées RomM elle fait tourner (par
+  le SHA-1 de la ROM, ou sinon par le `fs_name` exact, avec le `slug` RomM de la console),
+  l'exécutable, la langue, les manettes,
   les liens… Le launcher installe sa build pour le système du joueur, plus la ROM si besoin.
   Une recomp à plusieurs jeux (Gen1recomp : Rouge, Bleu, Or…) donne une page par jeu et un
   seul programme installé.

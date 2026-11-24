@@ -118,8 +118,8 @@ Si un jeu a une recomp et un émulateur, la recomp est proposée en premier.
   gestionnaire (sa fiche RomM peut disparaître).
 - **Hors ligne** : `pending_upload` dans `installed.json`, envoi au retour (`flush_pending`).
 
-Côté serveur (historique, restauration) :
-[sauvegardes](https://github.com/Farfaboulette7/FarfaRomManager/blob/master/docs/sauvegarde-restauration.md).
+Historique des sauvegardes des recomps côté serveur (`/api/saves/…/history`, restauration) :
+[README du gestionnaire, « Pour le launcher »](https://github.com/Farfaboulette7/FarfaRomManager/blob/master/README.md#pour-le-launcher).
 
 ## 6. Stockage local
 

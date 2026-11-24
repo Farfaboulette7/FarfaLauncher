@@ -86,7 +86,7 @@ hors ligne, et se reconnecte seul au retour.
 | « Ce jeu n'est pas disponible pour votre système » | Pas de build pour ce système (souvent une recomp Windows sous Linux : pas de Proton pour les recomps). La fiche du jeu donne la raison si la fiche du gestionnaire en a une (`systemes-manquants:`). |
 | « Une installation de ce jeu est déjà en cours » | Attendre, ou l'annuler dans les téléchargements. |
 | « Ce jeu 3DS doit être déchiffré, mais les clés… manquent » / « est abîmé sur le serveur » | Problème côté serveur : voir le gestionnaire (clés 3DS, ROM à remplacer). |
-| Installation d'un jeu GOG « échouée ou annulée dans la fenêtre de l'installateur » | Relancer et laisser l'installateur aller au bout. |
+| « L'installation du jeu a échoué ou a été annulée dans la fenêtre de l'installateur. » (jeu GOG) | Relancer et laisser l'installateur aller au bout. |
 
 Le détail exact (adresse, code HTTP) est toujours dans le journal.
 
@@ -131,7 +131,7 @@ Pour revenir en arrière :
 Le dossier des sauvegardes se change sur la fiche du jeu (*Dossier des sauvegardes…*). Sur
 le Steam Deck (NieRDeck), il n'y a pas de question : la plus récente gagne.
 
-Côté serveur : [sauvegardes](https://github.com/Farfaboulette7/FarfaRomManager/blob/master/docs/sauvegarde-restauration.md).
+Historique côté serveur : [README du gestionnaire, « Pour le launcher »](https://github.com/Farfaboulette7/FarfaRomManager/blob/master/README.md#pour-le-launcher).
 
 ### Un fichier `installed.json.illisible-…` ou `settings.json.illisible-…` est apparu
 

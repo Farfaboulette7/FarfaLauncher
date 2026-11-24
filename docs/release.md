@@ -93,6 +93,10 @@ Attendu : `tsc` n'écrit rien, `cargo test` finit par `test result: ok`. Sinon, 
 
 ## 5. Changer le numéro, commiter, taguer
 
+Si vous avez des changements de code pas encore commités, **commitez-les d'abord**, dans un
+commit à part (`git add <fichier>`, jamais `-am`) : le commit de version ne doit contenir que
+le numéro et les notes.
+
 ```bash
 node scripts/bump-version.mjs 1.2.2
 ```
@@ -125,9 +129,6 @@ git tag v1.2.2
 git push origin main
 git push origin v1.2.2
 ```
-
-Si vous aviez aussi des changements de code non commités, commitez-les d'abord, dans un commit
-à part (même règle : `git add <fichier>`, jamais `-am`).
 
 ## 6. Ce que fait GitHub (`release.yml`)
 
@@ -183,10 +184,13 @@ Rien ne s'affiche si c'est bon.
 
 ## 8. Après la publication
 
-- **Rapports de bug corrigés** par cette version : dans
-  `Z:\FarfaRomManager\data\reports\<rapport>\infos.json`, mettre `"status": "corrigé"`,
-  `"corrigeDans": "1.2.2"`, `"updatedAt"` (date du jour) et une `"reponse"` pour le joueur.
-  Le joueur le voit dans *Messages → Mes signalements*.
+- **Rapports de bug corrigés** par cette version : le joueur doit le voir dans *Messages →
+  Mes signalements* (`corrigeDans`, statut « corrigé », un message). **Ne jamais modifier
+  `infos.json` à la main** : le gestionnaire l'écrit aussi, et une modification à la main peut
+  l'abîmer ou effacer un message du joueur. Utiliser `infos.py` (`poser`, `statut`,
+  `message`) comme expliqué dans la section « Gestes à la main sur une publication » de
+  [`outils/surveille-rapports/INSTALLER.md`](https://github.com/Farfaboulette7/FarfaRomManager/blob/master/outils/surveille-rapports/INSTALLER.md)
+  du dépôt FarfaRomManager.
 - **Steam Deck** : NieRDeck télécharge seul le nouveau moteur. Si vous publiez aussi
   NieRDeck, mettez son `package.json` au même numéro que le launcher.
 - Vérifier que la release est bien publique :
@@ -194,8 +198,10 @@ Rien ne s'affiche si c'est bon.
 
 ## 9. Versions de test et bêtas automatiques (surveillance des rapports)
 
-La surveillance des rapports (`outils/surveille-rapports/surveille-rapports.ps1`, tâche
-Windows « FaRFa - surveille rapports », toutes les 3 min) publie seule dans deux cas.
+La surveillance des rapports publie seule dans deux cas. Son code est dans le dépôt
+FarfaRomManager (`outils/surveille-rapports/`) ; la copie en service sur ce PC est
+`C:\Users\Farfa\Documents\CLAUDE\outils\surveille-rapports\surveille-rapports.ps1`, lancée par
+la tâche Windows « FaRFa - surveille rapports » toutes les 3 min.
 Fonctionnement complet côté serveur :
 [runbook du gestionnaire](https://github.com/Farfaboulette7/FarfaRomManager/blob/master/docs/runbook.md).
 
