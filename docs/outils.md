@@ -29,8 +29,10 @@ Toujours depuis le dossier du launcher sur la branche `main` (le dossier princip
 `FarfaLauncher`). Étapes de `publier.bat` :
 
 1. **Branche `main`, sans modification en cours, à jour** (`git pull`). Le réglage local
-   `[profile.dev]` de `src-tauri\Cargo.toml` est toléré : il n'est jamais commité. Le support des
-   rapports de bug publie parfois lui-même des bêtas sur `main` : `git pull` les récupère.
+   `[profile.dev]` de `src-tauri\Cargo.toml` est toléré (seulement s'il ne change rien en dehors
+   des sections `[profile.dev…]`) : il n'est jamais commité. Un fichier nouveau, pas encore dans
+   git, dans `src\` ou `src-tauri\` est refusé (code oublié). Le support des rapports de bug
+   publie parfois lui-même des bêtas sur `main` : `git pull` les récupère.
 2. **Type de version** : `1` correctif (+0.0.1, par défaut, Entrée), `2` mineure (+0.1.0),
    `3` majeure (+1.0.0). Depuis une bêta `X.Y.Z-beta.N`, « correctif » donne la stable `X.Y.Z`.
 3. **`node scripts/bump-version.mjs X.Y.Z`** : le numéro dans `package.json`,
@@ -56,21 +58,28 @@ le `CLAUDE.md` du launcher.
 
 ### En cas d'échec
 
-Au premier ÉCHEC, tout s'arrête et **rien n'est parti** sur GitHub ni Discord. Si le numéro de
-version avait déjà été changé, il est remis tout seul ; les notes déjà écrites sont gardées et
-resservent au prochain essai.
+Au premier ÉCHEC, tout s'arrête, et le script dit exactement où on en est :
+
+- **avant le commit** : rien n'est parti. Si le numéro de version avait déjà été changé, il est
+  remis tout seul ; les notes déjà écrites sont gardées et resservent au prochain essai. Si
+  c'est le commit lui-même qui échoue, les fichiers sont aussi retirés de l'index ;
+- **après le commit, avant l'envoi** : rien n'est parti ; le commit (et le tag) restent sur ce
+  PC, avec les commandes pour publier plus tard ou tout annuler ;
+- **main envoyé mais pas le tag** : la version n'est pas compilée ; lancer
+  `git push origin vX.Y.Z`, puis faire l'annonce Discord à la main.
 
 | Ligne | Que faire |
 |---|---|
 | Branche main | Ouvrir le bon dossier (`FarfaLauncher`, branche `main`). Ne pas changer de branche dans un dossier où une autre session travaille. |
-| Aucune modification en cours | Commiter (ou annuler) les fichiers listés, puis relancer. |
+| Aucune modification en cours | Commiter (ou annuler) les fichiers listés, puis relancer. « changé ailleurs que dans [profile.dev] » : `src-tauri\Cargo.toml` a d'autres changements que le réglage local, à commiter ou annuler. |
+| Aucun fichier de code oublié | Fichier nouveau dans `src\` ou `src-tauri\` : le commiter, le supprimer, ou l'ajouter à `.gitignore`. |
 | À jour avec GitHub (`git pull`) | Conflit avec les commits de GitHub : à régler à la main (ou avec Claude). |
 | Nouvelle version | Le tag existe déjà : choisir un autre type, ou vérifier sur GitHub que cette version n'est pas déjà publiée. |
 | Dépendances de l'interface | Lancer `npm install` dans le dossier du launcher. |
 | Types TypeScript (tsc) | Erreur dans `src\` : le message donne `fichier.tsx(ligne,colonne)`. Corriger, commiter, relancer. |
 | Tests Rust (cargo test) | Un test échoue ou le code ne compile pas : voir `docs/tests.md`, « Lire un échec ». |
-| Envoi de main | GitHub a reçu d'autres commits entre-temps : `git pull`, puis `git push origin main` et `git push origin vX.Y.Z`, puis l'annonce Discord à la main. |
-| Envoi du tag | Relancer `git push origin vX.Y.Z`. |
+| Envoi de main | Rien n'est parti. Souvent, GitHub a reçu d'autres commits entre-temps : `git pull`, puis `git push origin main` et `git push origin vX.Y.Z`, puis l'annonce Discord à la main. |
+| Envoi du tag | main est parti **sans** le tag : relancer `git push origin vX.Y.Z`, puis l'annonce Discord à la main. |
 | Annonce Discord (ATTENTION) | La version est publiée ; faire l'annonce à la main dans le salon farfalauncher. |
 
 Si on répond autre chose que « oui » à l'envoi : le commit et le tag restent sur ce PC. Le

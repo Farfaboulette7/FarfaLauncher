@@ -1,0 +1,3 @@
+# Scripts Windows : toujours en CRLF à l'extraction (cmd.exe lit mal un .bat en LF)
+*.bat text eol=crlf
+*.ps1 text eol=crlf

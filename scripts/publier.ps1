@@ -54,6 +54,9 @@ if ($SansTests -and -not $Essai) { Write-Host '-SansTests ne marche qu''avec -Es
 $script:Echecs = 0
 # Après bump-version et avant le commit, un échec remet l'ancien numéro (voir Echec).
 $script:VersionARemettre = ''
+# Où en est la publication : 'rien' → 'commit' (commit fait) → 'main' (main poussé) → 'tag' (tag poussé).
+$script:Etat = 'rien'
+$script:Tag = ''; $script:Nouvelle = ''
 
 # Ligne de résultat d'une étape. En vrai, un ÉCHEC arrête tout (rien d'autre n'est fait).
 # En essai, on continue pour montrer la suite.
@@ -71,7 +74,23 @@ function Echec([string]$Nom, [string]$Detail) {
             if ($LASTEXITCODE -eq 0) { Write-Host "Numéro de version remis à $($script:VersionARemettre). Les notes déjà écrites sont gardées (docs\changelog) et resserviront." -ForegroundColor Yellow }
             else { Write-Host "Impossible de remettre le numéro $($script:VersionARemettre) : lancer « node scripts/bump-version.mjs $($script:VersionARemettre) »." -ForegroundColor Red }
         }
-        Write-Host 'Publication ARRÊTÉE. Rien n''a été envoyé sur GitHub ni sur Discord. Corriger, puis relancer publier.bat.' -ForegroundColor Red
+        # Le message dépend de ce qui était déjà fait au moment de l'échec.
+        switch ($script:Etat) {
+            'main' {
+                Write-Host "Publication ARRÊTÉE : main est parti sur GitHub, mais PAS le tag $script:Tag." -ForegroundColor Red
+                Write-Host '  La version n''est donc pas compilée et personne ne la reçoit encore.' -ForegroundColor Red
+                Write-Host "  À faire : « git push origin $script:Tag » (dans ce dossier), puis l'annonce Discord à la main." -ForegroundColor Red
+            }
+            'commit' {
+                Write-Host 'Publication ARRÊTÉE. Rien n''a été envoyé sur GitHub ni sur Discord.' -ForegroundColor Red
+                Write-Host "  Le commit « Version $script:Nouvelle » (et le tag, s'il a été posé) restent sur ce PC." -ForegroundColor Red
+                Write-Host "  Pour publier quand même : git push origin main  puis  git push origin $script:Tag  (puis l'annonce Discord à la main)"
+                Write-Host "  Pour tout annuler      : git tag -d $script:Tag  puis  git reset --keep HEAD~1"
+            }
+            default {
+                Write-Host 'Publication ARRÊTÉE. Rien n''a été envoyé sur GitHub ni sur Discord. Corriger, puis relancer publier.bat.' -ForegroundColor Red
+            }
+        }
         exit 1
     }
 }
@@ -114,9 +133,23 @@ $branche = ((Git-Depot @('rev-parse', '--abbrev-ref', 'HEAD')) -join '').Trim()
 if ($branche -eq 'main') { Ok 'Branche main' }
 else { Echec 'Branche main' "on est sur « $branche ». Publier se fait depuis main (ne pas changer de branche ici si une autre session y travaille)." }
 
-# Modifications en cours. Seule exception : src-tauri/Cargo.toml, si sa ligne version est
-# celle du dernier commit (le réglage local [profile.dev] du propriétaire, jamais commité).
+# Modifications en cours. Seule exception : src-tauri/Cargo.toml, si ses changements ne touchent
+# que les sections [profile.dev…] (le réglage local du propriétaire, jamais commité).
 $cargoLocal = $false
+
+# Cargo.toml sans commentaires, sans lignes vides et sans les sections [profile.dev] et
+# [profile.dev.…] : si ce texte est le même dans le dernier commit et sur le disque, les seuls
+# changements locaux sont dans [profile.dev].
+function Cargo-Hors-ProfileDev([string[]]$Lignes) {
+    $garder = $true
+    $res = foreach ($l in $Lignes) {
+        $t = $l.Trim()
+        if (-not $t -or $t.StartsWith('#')) { continue }
+        if ($t.StartsWith('[')) { $garder = -not ($t -match '^\[profile\.dev(\]|\.)') }
+        if ($garder) { $t }
+    }
+    return ($res -join "`n")
+}
 # « git diff --name-only HEAD » : fichiers suivis dont le CONTENU a changé (une simple différence
 # de fins de ligne, après un retour en arrière de bump-version, ne compte pas).
 $modifs = @(Git-Depot @('diff', '--name-only', 'HEAD') | Where-Object { $_ })
@@ -124,9 +157,10 @@ $autres = @()
 foreach ($m in $modifs) {
     $f = $m.Trim('"')
     if ($f -eq 'src-tauri/Cargo.toml') {
-        $versionHead = ((Git-Depot @('show', 'HEAD:src-tauri/Cargo.toml')) | Where-Object { $_ -match '^version\s*=' } | Select-Object -First 1)
-        $versionIci = (Get-Content -LiteralPath (Join-Path $Depot 'src-tauri\Cargo.toml') -Encoding UTF8 | Where-Object { $_ -match '^version\s*=' } | Select-Object -First 1)
-        if ($versionHead -eq $versionIci) { $cargoLocal = $true; continue }
+        $head = Cargo-Hors-ProfileDev @(Git-Depot @('show', 'HEAD:src-tauri/Cargo.toml'))
+        $ici = Cargo-Hors-ProfileDev @(Get-Content -LiteralPath (Join-Path $Depot 'src-tauri\Cargo.toml') -Encoding UTF8)
+        if ($head -eq $ici) { $cargoLocal = $true; continue }
+        $m = "$m (changé ailleurs que dans [profile.dev])"
     }
     $autres += $m
 }
@@ -135,8 +169,15 @@ if ($autres.Count -gt 0) {
 } else {
     Ok 'Aucune modification en cours' $(if ($cargoLocal) { 'réglage local de src-tauri/Cargo.toml toléré (il ne sera pas commité)' } else { '' })
 }
-$nonSuivis = @(Git-Depot @('status', '--porcelain') | Where-Object { $_ -and $_.StartsWith('??') } | ForEach-Object { $_.Substring(3) })
-if ($nonSuivis.Count -gt 0) { Info "fichiers non suivis par git, ignorés : $(($nonSuivis | Select-Object -First 6) -join ', ')" }
+# Fichiers nouveaux, pas encore dans git. Dans src/ ou src-tauri/, c'est sans doute du code oublié :
+# la version compilée par GitHub ne l'aurait pas. On refuse. Ailleurs (notes, CLAUDE.md…), on ignore.
+$nonSuivis = @(Git-Depot @('status', '--porcelain', '--untracked-files=all') | Where-Object { $_ -and $_.StartsWith('??') } | ForEach-Object { $_.Substring(3).Trim('"') })
+$codeNonSuivi = @($nonSuivis | Where-Object { $_ -match '^(src|src-tauri)/' })
+$autresNonSuivis = @($nonSuivis | Where-Object { $_ -notmatch '^(src|src-tauri)/' })
+if ($codeNonSuivi.Count -gt 0) {
+    Echec 'Aucun fichier de code oublié' "fichier(s) nouveaux pas dans git, dans src/ ou src-tauri/ : $(($codeNonSuivi | Select-Object -First 6) -join ', ') (les commiter, les supprimer, ou les ajouter à .gitignore)"
+}
+if ($autresNonSuivis.Count -gt 0) { Info "fichiers non suivis par git, ignorés : $(($autresNonSuivis | Select-Object -First 6) -join ', ')" }
 
 # À jour avec GitHub. Le support des rapports de bug publie parfois lui-même des bêtas sur main :
 # il faut les récupérer avant de choisir le numéro.
@@ -283,10 +324,17 @@ if ($Essai) {
     else { $r = Git-Depot @('add', '--', 'src-tauri/Cargo.toml') }
     if ($LASTEXITCODE -ne 0) { Echec 'Préparation du commit (Cargo.toml)' ($r -join ' ') }
     $r = Git-Depot @('commit', '-q', '-m', "Version $nouvelle")
-    if ($LASTEXITCODE -ne 0) { Echec 'Commit' ($r -join ' ') }
+    if ($LASTEXITCODE -ne 0) {
+        # Commit raté : on retire les fichiers de l'index (le disque n'est pas touché), puis Echec
+        # remet l'ancien numéro.
+        [void](Git-Depot (@('reset', '-q', '--') + $fichiers + 'src-tauri/Cargo.toml'))
+        Echec 'Commit' ($r -join ' ')
+    }
+    # Le commit est fait : plus de retour automatique du numéro (il est dans l'historique).
+    $script:VersionARemettre = ''
+    $script:Etat = 'commit'
     $r = Git-Depot @('tag', $Tag)
     if ($LASTEXITCODE -ne 0) { Echec "Tag $Tag" ($r -join ' ') }
-    $script:VersionARemettre = ''   # le commit est fait : plus de retour automatique en arrière
     Ok "Commit « Version $nouvelle » et tag $Tag" ((Git-Depot @('log', '-1', '--format=%h')) -join '')
 }
 
@@ -307,11 +355,13 @@ if ($Essai) {
         exit 0
     }
     $r = Git-Depot @('push', 'origin', 'main')
-    if ($LASTEXITCODE -ne 0) { Echec 'Envoi de main' "$(($r | Select-Object -Last 3) -join ' ') — souvent : GitHub a reçu d'autres commits entre-temps ; « git pull » puis « git push origin main » et « git push origin $Tag »." }
-    else { Ok 'Envoi de main sur GitHub' }
+    if ($LASTEXITCODE -ne 0) { Echec 'Envoi de main' "$(($r | Select-Object -Last 3) -join ' ') — souvent : GitHub a reçu d'autres commits entre-temps." }
+    $script:Etat = 'main'
+    Ok 'Envoi de main sur GitHub'
     $r = Git-Depot @('push', 'origin', $Tag)
-    if ($LASTEXITCODE -ne 0) { Echec "Envoi du tag $Tag" "$(($r | Select-Object -Last 3) -join ' ') — relancer « git push origin $Tag »." }
-    else { Ok "Envoi du tag $Tag : GitHub compile la version" }
+    if ($LASTEXITCODE -ne 0) { Echec "Envoi du tag $Tag" "$(($r | Select-Object -Last 3) -join ' ')" }
+    $script:Etat = 'tag'
+    Ok "Envoi du tag $Tag : GitHub compile la version"
 }
 
 # ---------------------------------------------------------------------------
