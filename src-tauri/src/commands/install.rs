@@ -49,6 +49,19 @@ struct InstallFinished {
     error: Option<AppError>,
 }
 
+/// L'état rendu par l'installation n'a pas la liste des façons de jouer déjà installées
+/// (`ways`, recomp ou émulateur) : elle n'est calculée qu'en relisant le registre. Sans elle,
+/// l'écran croit qu'une autre recomp est choisie et repropose « Installer » au lieu de
+/// « Jouer » jusqu'au prochain démarrage du launcher. On relit donc l'état complet du jeu,
+/// s'il s'agit bien du dossier qui vient d'être installé (sinon on garde l'état reçu).
+fn with_ways(config_dir: &std::path::Path, outcome: InstallOutcome) -> InstallOutcome {
+    let full = |game: state::InstalledGame| state::find(config_dir, game.rom_id).filter(|f| f.game_dir == game.game_dir).unwrap_or(game);
+    match outcome {
+        InstallOutcome::Installed { game } => InstallOutcome::Installed { game: full(game) },
+        InstallOutcome::NeedsChoice { game } => InstallOutcome::NeedsChoice { game: full(game) },
+    }
+}
+
 #[tauri::command]
 pub fn install_info(state: State<'_, AppState>) -> InstallInfo {
     InstallInfo {
@@ -194,7 +207,7 @@ fn pump(app: &AppHandle) {
             emit_queue(&app);
         } else {
             let payload = match result {
-                Ok(outcome) => InstallFinished { rom_id, outcome: Some(outcome), error: None },
+                Ok(outcome) => InstallFinished { rom_id, outcome: Some(with_ways(&state.config_dir, outcome)), error: None },
                 Err(e) => {
                     if !matches!(e, AppError::Cancelled) {
                         tracing::error!("installation du jeu {rom_id} échouée: {}", e.code());
