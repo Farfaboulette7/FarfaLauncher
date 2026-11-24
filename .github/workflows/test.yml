@@ -8,6 +8,14 @@
 # test », commands/update.rs : install_test_version). Elle garde le numéro de version du
 # launcher dont elle part, et ne touche ni à la dernière release ni au canal bêta : la
 # prochaine version publiée la remplace normalement.
+#
+# Ordre : tests (sans clé) → pré-release en brouillon → ATTENTE de l'approbation du
+# propriétaire (environnement « signature ») → compilation signée → publication.
+# Tant qu'il n'a pas approuvé, le run reste en statut « waiting » et rien n'est publié.
+# S'il refuse (« Reject »), le run échoue et le brouillon reste invisible des joueurs.
+#
+# Secrets requis, dans l'environnement « signature » (Settings → Environments), PAS dans les
+# secrets du dépôt : TAURI_SIGNING_PRIVATE_KEY et TAURI_SIGNING_PRIVATE_KEY_PASSWORD.
 name: Version de test
 
 on:
@@ -54,8 +62,22 @@ jobs:
             });
             return data.id;
 
+  # Compilation et signature : SEUL job de ce workflow qui reçoit la clé de signature.
+  #
+  # Approbation obligatoire (faille SG3) : le code compilé ici a été écrit par le support
+  # automatique (claude -p) d'après le rapport d'un joueur, et personne ne l'a relu. Un
+  # build.rs ou un script npm piégé pourrait voler la clé et signer de fausses mises à jour
+  # acceptées par tous les launchers. Ce job déclare donc l'environnement GitHub « signature » :
+  #   - les deux secrets TAURI_SIGNING_* sont rangés dans cet environnement, pas dans le dépôt ;
+  #   - le job attend (statut « waiting ») que le propriétaire l'approuve dans l'onglet Actions
+  #     (bouton « Review deployments ») ; avant, il ne voit pas les secrets ;
+  #   - les tests (job « tests ») passent avant, sans clé ni approbation : on n'approuve
+  #     qu'une version dont les tests sont verts.
+  # Approuver veut dire : « j'ai relu le diff de ce commit et il ne fait que la correction
+  # annoncée ». Ce qu'il faut regarder : docs/release.md, « Approuver la signature ».
   build:
     needs: create-release
+    environment: signature
     strategy:
       fail-fast: false
       matrix:
@@ -65,6 +87,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v4
         with:
@@ -73,9 +97,11 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # branche stable (2026-11-24)
 
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          workspaces: src-tauri -> target
+      # Pas de cache Rust (Swatinem/rust-cache) dans ce job : le cache est rempli par d'autres
+      # runs (CI de main, qui reçoit des fusions non relues) et il n'est pas vérifié. Un cache
+      # piégé ferait tourner du code que l'approbation n'a pas vu, avec la clé à portée.
+      # Prix : quelques minutes de compilation en plus. (Le cache npm, lui, est vérifié par les
+      # empreintes de package-lock.json.)
 
       - name: Dépendances système (Linux)
         if: matrix.platform == 'ubuntu-22.04'

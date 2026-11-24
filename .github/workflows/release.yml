@@ -11,7 +11,13 @@
 # À chaque publication, bêta ou stable, son latest.json remplace celui de la release technique
 # « canal-beta », lu par les launchers qui ont coché « Recevoir les versions de test ».
 #
-# Secrets requis (Settings → Secrets and variables → Actions) :
+# Ordre : tests (sans clé) → release en brouillon + moteur du Deck (sans clé) → ATTENTE de
+# l'approbation du propriétaire (environnement « signature ») → compilation signée →
+# publication. Tant qu'il n'a pas approuvé, le run reste en statut « waiting » et rien n'est
+# publié. S'il refuse (« Reject »), le run échoue et le brouillon reste invisible des joueurs.
+#
+# Secrets requis, dans l'environnement « signature » (Settings → Environments → signature →
+# Environment secrets), PAS dans les secrets du dépôt :
 #   TAURI_SIGNING_PRIVATE_KEY           contenu du fichier farfalauncher.key
 #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  mot de passe choisi à la génération
 name: Release
@@ -81,8 +87,23 @@ jobs:
             });
             return data.id;
 
+  # Compilation et signature : SEUL job de ce workflow qui reçoit la clé de signature.
+  #
+  # Approbation obligatoire (faille SG3) : les bêtas sont aussi publiées automatiquement par
+  # la surveillance des rapports (fusion d'un correctif écrit par claude -p, jamais relu). Un
+  # build.rs ou un script npm piégé pourrait voler la clé et signer de fausses mises à jour
+  # acceptées par tous les launchers. Ce job déclare donc l'environnement GitHub « signature » :
+  #   - les deux secrets TAURI_SIGNING_* sont rangés dans cet environnement, pas dans le dépôt ;
+  #   - le job attend (statut « waiting ») que le propriétaire l'approuve dans l'onglet Actions
+  #     (bouton « Review deployments ») ; avant, il ne voit pas les secrets ;
+  #   - les tests (job « tests ») passent avant, sans clé ni approbation : on n'approuve
+  #     qu'une version dont les tests sont verts. Une seule approbation libère les trois
+  #     systèmes (Windows, Linux, Mac).
+  # Approuver veut dire : « j'ai relu le diff depuis la version précédente et il ne contient
+  # que ce que j'attends ». Ce qu'il faut regarder : docs/release.md, « Approuver la signature ».
   build:
     needs: create-release
+    environment: signature
     strategy:
       fail-fast: false
       matrix:
@@ -98,6 +119,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v4
         with:
@@ -108,9 +131,11 @@ jobs:
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || '' }}
 
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          workspaces: src-tauri -> target
+      # Pas de cache Rust (Swatinem/rust-cache) dans ce job : le cache est rempli par d'autres
+      # runs (CI des branches et de main, qui reçoit des fusions non relues) et il n'est pas
+      # vérifié. Un cache piégé ferait tourner du code que l'approbation n'a pas vu, avec la
+      # clé à portée. Prix : quelques minutes de compilation en plus. (Le cache npm, lui, est
+      # vérifié par les empreintes de package-lock.json.)
 
       - name: Dépendances système (Linux)
         if: matrix.platform == 'ubuntu-22.04'
