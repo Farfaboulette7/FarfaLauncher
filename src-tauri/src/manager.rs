@@ -140,9 +140,9 @@ pub struct CatalogRecomp {
     #[serde(default, rename = "for")]
     pub for_zips: Vec<String>,
     /// Client de jeu PC qui exige Steam : faux Steam posé dans le préfixe Proton
-    /// (`proton-steam: oui`, écart E5).
+    /// (`proton-steam: oui`, écart E5). `None` : sans la clé (ancienne règle, BO3).
     #[serde(default)]
-    pub proton_steam: bool,
+    pub proton_steam: Option<bool>,
     /// Systèmes sans build, et pourquoi (`systemes-manquants:`, point P3). Absent d'un ancien
     /// gestionnaire : le launcher dit alors seulement « Disponible pour : … », comme avant.
     #[serde(default)]
@@ -268,18 +268,37 @@ pub struct Emulator {
     #[serde(default)]
     pub rom_prep: Option<RomPrep>,
     /// Dossiers de mises à jour et DLC de l'émulateur (`contenu-externe:`, écart E6).
-    /// Absent d'un gestionnaire d'avant la clé : voir `Catalog::external_content`.
+    /// `false` : « non » ; absent : sans la clé (ancienne règle), voir `Catalog::external_content`.
     #[serde(default)]
-    pub external_content: Option<ExternalContent>,
+    pub external_content: Option<OrOff<ExternalContent>>,
     /// Cache de shaders partagé (`shaders:`, écart E7) : `dossier/{titleid}/fichier`.
-    /// Absent d'un gestionnaire d'avant la clé : voir `Catalog::shader_rule`.
+    /// `false` : « non » ; absent : sans la clé (ancienne règle), voir `Catalog::shader_rule`.
     #[serde(default)]
-    pub shaders: Option<String>,
+    pub shaders: Option<OrOff<String>>,
     /// Dossiers hors de l'émulateur reliés à un de ses dossiers (`lien:`, écart E20), posés au
     /// lancement comme pour une recomp. Les réglages écrits au chemin d'origine (manettes,
     /// langue, sauvegardes `{config}/…`) passent par le lien et restent dans l'émulateur.
     #[serde(default)]
     pub links: Vec<crate::links::Link>,
+}
+
+/// Clé de fiche qu'on peut couper : sa valeur, ou `false` (« non »). Absente (`None` autour) :
+/// la fiche n'a pas la clé et garde l'ancienne règle (repli fiche par fiche).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum OrOff<T> {
+    Value(T),
+    Off(bool),
+}
+
+impl<T: Clone> OrOff<T> {
+    /// La valeur, ou `None` si la clé est coupée.
+    pub fn value(&self) -> Option<T> {
+        match self {
+            OrOff::Value(v) => Some(v.clone()),
+            OrOff::Off(_) => None,
+        }
+    }
 }
 
 /// Liste de dossiers où l'émulateur lit les mises à jour et DLC des jeux (`contenu-externe:`).
@@ -293,8 +312,8 @@ pub struct ExternalContent {
     pub key: String,
 }
 
-/// Règle de Citron et Eden, utilisée tant que le catalogue ne déclare `contenu-externe:` pour
-/// aucun émulateur (ancien gestionnaire, ou fiches pas encore complétées).
+/// Règle de Citron et Eden, pour un émulateur de la console `switch` dont la fiche n'a pas
+/// `contenu-externe:` (ancien gestionnaire, ou fiche pas encore complétée).
 fn legacy_external_content() -> ExternalContent {
     ExternalContent { format: "ini".into(), file: "{exedir}/user/config/qt-config.ini".into(), key: "UI.Paths\\external_content_dirs".into() }
 }
@@ -646,12 +665,12 @@ impl Catalog {
 
     /// Fiche du client de jeu PC qui fait tourner les zips de ce motif (`bo3_game_files`).
     ///
-    /// Transition (écart E2) : la fiche le déclare par `pour:`. Tant qu'aucune fiche du
-    /// catalogue n'a `pour:` (ancien gestionnaire, fiches pas encore complétées), on garde
-    /// l'ancienne règle : la fiche nommée `boiii` pour Black Ops III.
+    /// Écart E2 : la fiche qui déclare ce motif par `pour:`. Si aucune ne le déclare (ancien
+    /// gestionnaire, fiche pas encore complétée), l'ancienne règle : la fiche nommée `boiii` pour
+    /// Black Ops III (seul jeu PC dont le client vient du gestionnaire aujourd'hui).
     pub fn pc_client(&self, motif: &str) -> Option<&CatalogRecomp> {
-        if self.recomps.iter().any(|r| !r.for_zips.is_empty()) {
-            return self.recomps.iter().find(|r| r.for_zips.iter().any(|m| m == motif));
+        if let Some(r) = self.recomps.iter().find(|r| r.for_zips.iter().any(|m| m == motif)) {
+            return Some(r);
         }
         if motif == crate::pc::cod::CodGame::Bo3.zip_motif() {
             return self.recomp(crate::pc::cod::BOIII_CLIENT);
@@ -661,14 +680,11 @@ impl Catalog {
 
     /// Le client des zips de ce motif exige-t-il Steam dans le préfixe Proton ?
     ///
-    /// Transition (écart E5) : la fiche le dit par `proton-steam: oui`. Tant qu'aucune fiche du
-    /// catalogue n'a la clé (ancien gestionnaire), on garde l'ancienne règle : Black Ops III
-    /// (boiii) seulement.
+    /// Écart E5 : la fiche du client le dit par `proton-steam: oui|non`. Sans la clé (ou sans
+    /// fiche), l'ancienne règle : Black Ops III (boiii) seulement.
     pub fn pc_client_needs_steam(&self, motif: &str) -> bool {
-        if self.recomps.iter().any(|r| r.proton_steam) {
-            return self.pc_client(motif).is_some_and(|r| r.proton_steam);
-        }
-        motif == crate::pc::cod::CodGame::Bo3.zip_motif()
+        let legacy = motif == crate::pc::cod::CodGame::Bo3.zip_motif();
+        self.pc_client(motif).and_then(|r| r.proton_steam).unwrap_or(legacy)
     }
 
     /// Réglages de langue du programme qui lance ce jeu : sa recomp ou son émulateur.
@@ -717,26 +733,25 @@ impl Catalog {
 
     /// Dossiers de mises à jour et DLC de cet émulateur (`contenu-externe:`).
     ///
-    /// Transition (écart E6) : le gestionnaire publie la clé depuis fin 2026, et les fiches la
-    /// reçoivent ensuite. Tant qu'aucun émulateur du catalogue ne l'a, on garde l'ancien
-    /// comportement : la règle de Citron et Eden pour un émulateur de la console `switch`.
-    /// Dès qu'une fiche l'a, seule la clé compte (quelle que soit la console).
+    /// Écart E6, fiche par fiche : avec la clé, on la suit (`non` : rien) ; sans la clé (ancien
+    /// gestionnaire, fiche pas encore complétée), l'ancienne règle : celle de Citron et Eden
+    /// pour un émulateur de la console `switch`.
     pub fn external_content(&self, e: &Emulator) -> Option<ExternalContent> {
-        if self.emulators.iter().any(|x| x.external_content.is_some()) {
-            return e.external_content.clone();
+        match &e.external_content {
+            Some(key) => key.value(),
+            None => e.consoles.iter().any(|c| c == "switch").then(legacy_external_content),
         }
-        e.consoles.iter().any(|c| c == "switch").then(legacy_external_content)
     }
 
-    /// Partage des shaders de cet émulateur (`shaders:`). Même transition que
-    /// `external_content` (écart E7) : tant qu'aucun émulateur du catalogue n'a la clé, l'ancien
-    /// relevé sur le disque vaut pour les consoles `switch` et `switch-2`, comme le fait aussi
-    /// le gestionnaire (`api.py`, `emulateur_shaders`).
+    /// Partage des shaders de cet émulateur (`shaders:`, écart E7), fiche par fiche comme
+    /// `external_content` : avec la clé, on la suit (`non` : pas de partage) ; sans la clé,
+    /// l'ancien relevé sur le disque pour les consoles `switch` et `switch-2`, comme le
+    /// gestionnaire (`api.py`, `emulateur_shaders`).
     pub fn shader_rule(&self, e: &Emulator) -> Option<crate::shaders::Rule> {
-        if self.emulators.iter().any(|x| x.shaders.is_some()) {
-            return e.shaders.clone().map(crate::shaders::Rule::Key);
+        match &e.shaders {
+            Some(key) => key.value().map(crate::shaders::Rule::Key),
+            None => e.consoles.iter().any(|c| c == "switch" || c == "switch-2").then_some(crate::shaders::Rule::Legacy),
         }
-        e.consoles.iter().any(|c| c == "switch" || c == "switch-2").then_some(crate::shaders::Rule::Legacy)
     }
 
     /// Émulateur qui lance ce jeu installé.
@@ -1373,8 +1388,11 @@ mod catalog_tests {
         let new: Catalog = serde_json::from_str(r#"{"emulators":[{"id":"citron","name":"C","consoles":["switch"],"version":{"cle":"k","nom":"1"},"externalContent":null},
             {"id":"lichii","name":"L","consoles":["switch-2"],"version":{"cle":"k","nom":"1"},
              "externalContent":{"format":"ini","file":"{exedir}/user/config/qt-config.ini","key":"UI.Paths\\external_content_dirs"}}]}"#).unwrap();
-        assert!(new.external_content(&new.emulators[0]).is_none());
+        // Fiche par fiche : citron sans la clé garde l'ancienne règle, lichii suit la sienne.
+        assert_eq!(new.external_content(&new.emulators[0]), Some(rule.clone()));
         assert_eq!(new.external_content(&new.emulators[1]), Some(rule));
+        let off: Catalog = serde_json::from_str(r#"{"emulators":[{"id":"citron","name":"C","consoles":["switch"],"version":{"cle":"k","nom":"1"},"externalContent":false}]}"#).unwrap();
+        assert!(off.external_content(&off.emulators[0]).is_none());
     }
 
     // Écart E2 : le client d'un jeu PC est la fiche qui déclare le motif de ses zips (`pour:`) ;
@@ -1388,6 +1406,9 @@ mod catalog_tests {
             serde_json::from_str(r#"{"recomps":[{"id":"boiii","repo":"r","for":[]},{"id":"boiii-neuf","repo":"r","for":["bo3_game_files"]}]}"#).unwrap();
         assert_eq!(new.pc_client("bo3_game_files").map(|r| r.id.as_str()), Some("boiii-neuf"));
         assert!(new.pc_client("bo2_game_files").is_none());
+        // Fiche par fiche : une autre fiche avec `pour:` n'empêche pas le repli sur « boiii ».
+        let mixed: Catalog = serde_json::from_str(r#"{"recomps":[{"id":"boiii","repo":"r"},{"id":"t6","repo":"r","for":["bo2_game_files"]}]}"#).unwrap();
+        assert_eq!(mixed.pc_client("bo3_game_files").map(|r| r.id.as_str()), Some("boiii"));
         assert_eq!(crate::pc::cod::CodGame::from_zip_name("bo3_game_files-02.zip").map(|g| g.zip_motif()), Some("bo3_game_files"));
     }
 
@@ -1448,10 +1469,16 @@ mod catalog_tests {
         )
         .unwrap();
         assert!(!new.pc_client_needs_steam("bo3_game_files") && new.pc_client_needs_steam("bo2_game_files"));
+        // Sans la clé dans sa fiche (null), même si une autre l'a : ancienne règle (BO3).
+        let mixed: Catalog = serde_json::from_str(
+            r#"{"recomps":[{"id":"boiii","repo":"r","protonSteam":null},{"id":"t6","repo":"r","for":["bo2_game_files"],"protonSteam":true}]}"#,
+        )
+        .unwrap();
+        assert!(mixed.pc_client_needs_steam("bo3_game_files"));
     }
 
-    // Écart E7 : le partage des shaders suit la clé `shaders:` ; sans elle dans tout le
-    // catalogue (ancien gestionnaire), l'ancien relevé vaut pour switch et switch-2.
+    // Écart E7 : le partage des shaders suit la clé `shaders:` de chaque fiche ; sans elle,
+    // l'ancien relevé vaut pour switch et switch-2 ; `non` coupe.
     #[test]
     fn shader_rule_follows_the_key_with_a_fallback() {
         use crate::shaders::Rule;
@@ -1460,9 +1487,12 @@ mod catalog_tests {
         assert_eq!(c.shader_rule(&c.emulators[0]), Some(Rule::Legacy));
         assert_eq!(c.shader_rule(&c.emulators[1]), Some(Rule::Legacy));
         assert_eq!(c.shader_rule(&c.emulators[2]), None);
-        c.emulators[0].shaders = Some("user/shader/{titleid}/vulkan.bin".into());
-        c.emulators[2].shaders = Some("cache/{titleid}/v.bin".into());
+        c.emulators[0].shaders = Some(OrOff::Value("user/shader/{titleid}/vulkan.bin".into()));
+        c.emulators[2].shaders = Some(OrOff::Value("cache/{titleid}/v.bin".into()));
         assert_eq!(c.shader_rule(&c.emulators[0]), Some(Rule::Key("user/shader/{titleid}/vulkan.bin".into())));
+        // Fiche par fiche : lichii sans la clé garde l'ancienne règle ; « shaders: non » coupe.
+        assert_eq!(c.shader_rule(&c.emulators[1]), Some(Rule::Legacy));
+        c.emulators[1].shaders = Some(OrOff::Off(false));
         assert_eq!(c.shader_rule(&c.emulators[1]), None);
         assert_eq!(c.shader_rule(&c.emulators[2]), Some(Rule::Key("cache/{titleid}/v.bin".into())));
     }

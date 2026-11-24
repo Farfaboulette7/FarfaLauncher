@@ -947,9 +947,11 @@ mod tests {
         let catalog: crate::manager::Catalog = serde_json::from_str(r#"{"emulators":[
             {"id":"a","name":"A","consoles":["gba"],"version":{"cle":"k","nom":"1"},"shaders":"cache/{titleid}/v.bin"},
             {"id":"b","name":"B","consoles":["wii"],"version":{"cle":"k","nom":"1"},"saves":{"dir":"nand/{profil}"}},
-            {"id":"c","name":"C","consoles":["switch"],"version":{"cle":"k","nom":"1"},"saves":{"dir":"saves"}},
+            {"id":"c","name":"C","consoles":["switch"],"version":{"cle":"k","nom":"1"},"saves":{"dir":"saves"},"shaders":false},
+            {"id":"s","name":"S","consoles":["switch"],"version":{"cle":"k","nom":"1"},"saves":{"dir":"saves"}},
             {"id":"d","name":"D","consoles":["psx"],"version":{"cle":"k","nom":"1"},"saves":{"dir":"{romdir}"}}]}"#).unwrap();
         let ok: Vec<bool> = catalog.emulators.iter().map(|e| smoke_emulator(&catalog, e)).collect();
-        assert_eq!(ok, [false, false, true, true]);
+        // s : Switch sans `shaders:` → ancienne règle, partage, donc refusé.
+        assert_eq!(ok, [false, false, true, false, true]);
     }
 }
