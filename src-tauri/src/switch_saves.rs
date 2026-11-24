@@ -5,12 +5,15 @@
 //! - `{profil}` : le profil Switch de l'émulateur, propre à chaque PC ;
 //! - `{titleid}` : l'ID du jeu, lu dans le nom de ses fichiers ou son ticket, sinon le dossier
 //!   que l'émulateur vient de créer pendant la partie.
+//!
+//! Écart E8 : c'est la règle qui active ce module (`{profil}` dans `sauvegardes:`), quelle que
+//! soit la console de l'émulateur. Aucune clé nouvelle : les fiches Switch l'ont déjà.
 
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use crate::install::state::{self, InstalledGame};
-use crate::manager::Catalog;
+use crate::manager::{Catalog, Emulator};
 
 const PROFILE: &str = "{profil}";
 const TITLE: &str = "{titleid}";
@@ -26,6 +29,15 @@ fn is_hex(name: &str, len: usize) -> bool {
 
 fn modified(p: &Path) -> Option<SystemTime> {
     p.metadata().and_then(|m| m.modified()).ok()
+}
+
+/// Règle de sauvegarde à compléter au lancement : celle de la première console de l'émulateur
+/// dont le dossier contient `{profil}`. `None` : rien à compléter.
+fn profile_rule(emulator: &Emulator) -> Option<(&str, &[String])> {
+    emulator.consoles.iter().find_map(|c| match emulator.saves.for_console(c) {
+        (Some(dir), patterns) if dir.contains(PROFILE) => Some((dir, patterns)),
+        _ => None,
+    })
 }
 
 /// Profils de l'émulateur (dossiers de 32 chiffres hexadécimaux).
@@ -66,25 +78,19 @@ pub fn resolve(rule_dir: &str, patterns: &[String], exe_dir: &Path, title: &str)
     Some((dir, patterns.iter().map(|p| p.replace(TITLE, title)).collect()))
 }
 
-/// Jeu Switch dont l'émulateur a une règle à compléter, encore sans dossier : il se joue sans
-/// rien demander, et l'ID s'apprend à la première partie où le jeu sauvegarde.
+/// Jeu dont l'émulateur a une règle à compléter (`{profil}`), encore sans dossier : il se joue
+/// sans rien demander, et l'ID s'apprend à la première partie où le jeu sauvegarde.
 pub fn waiting(catalog: &Catalog, st: &InstalledGame) -> bool {
     let Some(emulator) = catalog.emulator_for_install(st) else { return false };
-    let Some(console) = emulator.consoles.iter().find(|c| *c == "switch" || *c == "switch-2") else { return false };
-    let deferred = emulator.saves.for_console(console).0.is_some_and(is_deferred);
-    deferred && !st.shared.as_ref().and_then(|s| s.saves_dir.as_ref()).is_some_and(|d| d.is_dir())
+    profile_rule(emulator).is_some() && !st.shared.as_ref().and_then(|s| s.saves_dir.as_ref()).is_some_and(|d| d.is_dir())
 }
 
 /// Complète l'installation d'un jeu Switch avec son dossier de sauvegardes, s'il manque.
 /// `since` : début de la partie qui vient de finir (l'ID peut alors s'apprendre). `true` si changé.
 pub fn fill(catalog: &Catalog, config_dir: &Path, st: &mut InstalledGame, since: Option<SystemTime>) -> bool {
     let Some(emulator) = catalog.emulator_for_install(st) else { return false };
-    let Some(console) = emulator.consoles.iter().find(|c| *c == "switch" || *c == "switch-2") else { return false };
-    let (Some(rule), patterns) = emulator.saves.for_console(console) else { return false };
+    let Some((rule, patterns)) = profile_rule(emulator) else { return false };
     let patterns = patterns.to_vec();
-    if !is_deferred(rule) {
-        return false;
-    }
     let Some(exe) = st.executable.clone() else { return false };
     let exe_dir = emulator.data_dir(&st.game_dir, &exe);
     let Some(shared) = st.shared.as_ref() else { return false };
@@ -176,5 +182,23 @@ mod tests {
         std::fs::create_dir_all(root.join("E950DDCEAF68288B78E244D05F295F3A/0400245021D2C000")).unwrap();
         assert_eq!(learned_title(&root, since).as_deref(), Some("0400245021D2C000"));
         std::fs::remove_dir_all(&exe).unwrap();
+    }
+
+    // Écart E8 : `{profil}` dans la règle active la complétion, quelle que soit la console.
+    #[test]
+    fn the_rule_decides_not_the_console() {
+        let emulator = |consoles: &str, dir: &str| -> Emulator {
+            serde_json::from_str(&format!(
+                r#"{{"id":"e","name":"E","consoles":[{consoles}],"version":{{"cle":"k","nom":"1"}},"saves":{{"dir":"{dir}","patterns":["{{titleid}}"]}}}}"#
+            ))
+            .unwrap()
+        };
+        let other = emulator(r#""nouvelle-console""#, "user/save/{profil}");
+        assert_eq!(profile_rule(&other).map(|r| r.0), Some("user/save/{profil}"));
+        assert!(profile_rule(&emulator(r#""switch""#, "saves")).is_none());
+        // Une règle propre à une console, avec `{profil}`, est trouvée elle aussi.
+        let mut multi = emulator(r#""gba","switch-2""#, "saves");
+        multi.saves.variants = vec![crate::manager::SaveVariant { system: None, console: Some("switch-2".into()), dir: Some("nand/{profil}".into()), patterns: vec![] }];
+        assert_eq!(profile_rule(&multi).map(|r| (r.0, r.1.to_vec())), Some(("nand/{profil}", vec!["{titleid}".to_string()])));
     }
 }
