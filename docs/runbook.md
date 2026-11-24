@@ -131,7 +131,7 @@ Pour revenir en arrière :
 Le dossier des sauvegardes se change sur la fiche du jeu (*Dossier des sauvegardes…*). Sur
 le Steam Deck (NieRDeck), il n'y a pas de question : la plus récente gagne.
 
-Côté serveur : [sauvegardes](https://github.com/Farfaboulette7/FarfaRomManager/blob/master/docs/sauvegardes.md).
+Côté serveur : [sauvegardes](https://github.com/Farfaboulette7/FarfaRomManager/blob/master/docs/sauvegarde-restauration.md).
 
 ### Un fichier `installed.json.illisible-…` ou `settings.json.illisible-…` est apparu
 

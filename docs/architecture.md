@@ -119,7 +119,7 @@ Si un jeu a une recomp et un émulateur, la recomp est proposée en premier.
 - **Hors ligne** : `pending_upload` dans `installed.json`, envoi au retour (`flush_pending`).
 
 Côté serveur (historique, restauration) :
-[sauvegardes](https://github.com/Farfaboulette7/FarfaRomManager/blob/master/docs/sauvegardes.md).
+[sauvegardes](https://github.com/Farfaboulette7/FarfaRomManager/blob/master/docs/sauvegarde-restauration.md).
 
 ## 6. Stockage local
 

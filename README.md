@@ -113,7 +113,7 @@ Détails : [docs/romm-api.md](docs/romm-api.md).
 Côté serveur, dans le dépôt [FarfaRomManager](https://github.com/Farfaboulette7/FarfaRomManager) :
 [architecture globale](https://github.com/Farfaboulette7/FarfaRomManager/blob/master/docs/architecture.md),
 [ajouter un jeu](https://github.com/Farfaboulette7/FarfaRomManager/blob/master/docs/ajouter-un-jeu.md),
-[sauvegardes](https://github.com/Farfaboulette7/FarfaRomManager/blob/master/docs/sauvegardes.md),
+[sauvegardes](https://github.com/Farfaboulette7/FarfaRomManager/blob/master/docs/sauvegarde-restauration.md),
 [runbook du serveur](https://github.com/Farfaboulette7/FarfaRomManager/blob/master/docs/runbook.md),
 [règles des fiches](https://github.com/Farfaboulette7/FarfaRomManager/blob/master/docs/regles-des-fiches.md).
 
