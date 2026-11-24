@@ -641,7 +641,6 @@ impl Catalog {
     /// `external_content` (écart E7) : tant qu'aucun émulateur du catalogue n'a la clé, l'ancien
     /// relevé sur le disque vaut pour les consoles `switch` et `switch-2`, comme le fait aussi
     /// le gestionnaire (`api.py`, `emulateur_shaders`).
-    #[cfg(feature = "gui")]
     pub fn shader_rule(&self, e: &Emulator) -> Option<crate::shaders::Rule> {
         if self.emulators.iter().any(|x| x.shaders.is_some()) {
             return e.shaders.clone().map(crate::shaders::Rule::Key);
@@ -1287,7 +1286,6 @@ mod catalog_tests {
 
     // Écart E7 : le partage des shaders suit la clé `shaders:` ; sans elle dans tout le
     // catalogue (ancien gestionnaire), l'ancien relevé vaut pour switch et switch-2.
-    #[cfg(feature = "gui")]
     #[test]
     fn shader_rule_follows_the_key_with_a_fallback() {
         use crate::shaders::Rule;

@@ -40,6 +40,11 @@ fn profile_rule(emulator: &Emulator) -> Option<(&str, &[String])> {
     })
 }
 
+/// L'émulateur a-t-il une sauvegarde à compléter au lancement (essai du Deck refusé) ?
+pub fn has_profile_rule(emulator: &Emulator) -> bool {
+    profile_rule(emulator).is_some()
+}
+
 /// Profils de l'émulateur (dossiers de 32 chiffres hexadécimaux).
 fn profiles(root: &Path) -> Vec<PathBuf> {
     std::fs::read_dir(root)
