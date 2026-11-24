@@ -191,10 +191,37 @@ fn merge_copy(src: &Path, dst: &Path, copied: &mut Vec<(PathBuf, PathBuf)>) -> s
     Ok(())
 }
 
+/// Même contenu ? Comparé par blocs de 64 Kio, sans charger les deux fichiers en mémoire
+/// (une sauvegarde ou une carte mémoire peut peser des centaines de Mo).
 fn same_content(a: &Path, b: &Path) -> bool {
+    use std::io::Read;
     match (fs::metadata(a), fs::metadata(b)) {
-        (Ok(x), Ok(y)) if x.len() == y.len() => fs::read(a).ok() == fs::read(b).ok(),
-        _ => false,
+        (Ok(x), Ok(y)) if x.len() == y.len() => {}
+        _ => return false,
+    }
+    let (Ok(mut fa), Ok(mut fb)) = (fs::File::open(a), fs::File::open(b)) else { return false };
+    let (mut ba, mut bb) = (vec![0u8; 64 * 1024], vec![0u8; 64 * 1024]);
+    loop {
+        let Ok(n) = read_full(&mut fa, &mut ba) else { return false };
+        let Ok(m) = read_full(&mut fb, &mut bb) else { return false };
+        if n != m || ba[..n] != bb[..m] {
+            return false;
+        }
+        if n == 0 {
+            return true;
+        }
+    }
+
+    /// Remplit le tampon autant que possible (un `read` peut rendre moins que demandé).
+    fn read_full(f: &mut fs::File, buf: &mut [u8]) -> std::io::Result<usize> {
+        let mut total = 0;
+        while total < buf.len() {
+            match f.read(&mut buf[total..])? {
+                0 => break,
+                n => total += n,
+            }
+        }
+        Ok(total)
     }
 }
 
@@ -286,6 +313,25 @@ mod tests {
         fs::create_dir_all(file.parent().unwrap()).unwrap();
         fs::write(&file, "[GCPad1]").unwrap();
         assert_eq!(fs::read_to_string(target.join("Config").join("GCPadNew.ini")).unwrap(), "[GCPad1]");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    // Comparaison par blocs : identique, différence dans le dernier bloc, tailles différentes.
+    #[test]
+    fn same_content_by_blocks() {
+        let root = std::env::temp_dir().join(format!("farfa-links-same-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let big: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+        let mut other = big.clone();
+        *other.last_mut().unwrap() ^= 1;
+        fs::write(root.join("a"), &big).unwrap();
+        fs::write(root.join("b"), &big).unwrap();
+        fs::write(root.join("c"), &other).unwrap();
+        fs::write(root.join("d"), &big[..1000]).unwrap();
+        assert!(same_content(&root.join("a"), &root.join("b")));
+        assert!(!same_content(&root.join("a"), &root.join("c")));
+        assert!(!same_content(&root.join("a"), &root.join("d")));
+        assert!(!same_content(&root.join("a"), &root.join("absent")));
         fs::remove_dir_all(root).unwrap();
     }
 
