@@ -798,6 +798,46 @@ mod tests {
         assert_eq!(fs::canonicalize(game.join("d/e/x")).unwrap(), fs::canonicalize(&game).unwrap());
     }
 
+    /// Jonction Windows (comme `links.rs`) : possible sans droits d'administrateur.
+    #[cfg(windows)]
+    fn junction(target: &Path, link: &Path) {
+        let ok = std::process::Command::new("cmd").arg("/C").arg("mklink").arg("/J").arg(link).arg(target).output().unwrap().status.success();
+        assert!(ok, "jonction impossible : {}", link.display());
+    }
+
+    // Même règle sous Windows : une jonction (toujours possible) ou un lien symbolique vers un
+    // dossier (seulement avec les droits : administrateur, comme sur GitHub, ou mode
+    // développeur) déjà dans le jeu n'est jamais suivi.
+    #[cfg(windows)]
+    #[test]
+    fn merge_never_follows_windows_links_of_the_game() {
+        let dir = tmp("sl5-windows");
+        let outside = dir.join("dehors");
+        fs::create_dir_all(&outside).unwrap();
+        let game = dir.join("jeu");
+        fs::create_dir_all(game.join("saves")).unwrap();
+        fs::write(game.join("saves/slot1"), "progression").unwrap();
+        junction(&outside, &game.join("j"));
+        junction(&game.join("saves"), &game.join("s"));
+        // Détecté à l'exécution : sans droits, ce cas n'est pas vérifiable ici.
+        let symlinks = std::os::windows::fs::symlink_dir(&outside, game.join("l")).is_ok();
+        let src = dir.join("src");
+        for d in ["j", "s", "l"] {
+            fs::create_dir_all(src.join(d)).unwrap();
+            fs::write(src.join(d).join("slot1"), "VIDE").unwrap();
+        }
+        merge_into(&src, &game).unwrap();
+        assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
+        assert_eq!(fs::read_to_string(game.join("saves/slot1")).unwrap(), "progression");
+        for d in ["j", "s", "l"] {
+            if d == "l" && !symlinks {
+                continue;
+            }
+            assert!(!game.join(d).is_symlink(), "{d} est encore un lien");
+            assert_eq!(fs::read_to_string(game.join(d).join("slot1")).unwrap(), "VIDE");
+        }
+    }
+
     // Relecture SL5 : lien physique vers un lien symbolique interne `a/b/s -> ../../x`.
     // Copié à la racine (`h`), il mènerait au-dessus du dossier : il doit être ignoré.
     #[cfg(unix)]
