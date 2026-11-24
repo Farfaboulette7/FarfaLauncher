@@ -71,6 +71,18 @@ pub struct RecompOffer {
     pub size: u64,
     /// « Conseillé » : le petit message de la fiche.
     pub advice: Option<String>,
+    /// Pas de build pour ce système : la raison donnée par la fiche (`systemes-manquants:`,
+    /// point P3), affichée à la place de « Disponible pour : … ».
+    #[serde(default)]
+    pub missing_reason: Option<String>,
+}
+
+/// Système sans build d'une recomp, et pourquoi (`systemes-manquants: linux | raison`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MissingSystem {
+    /// `windows`, `linux` ou `macos`.
+    pub system: String,
+    pub reason: String,
 }
 
 /// Émulateur conseillé pour une console, avec son message.
@@ -125,6 +137,10 @@ pub struct CatalogRecomp {
     /// (`proton-steam: oui`, écart E5).
     #[serde(default)]
     pub proton_steam: bool,
+    /// Systèmes sans build, et pourquoi (`systemes-manquants:`, point P3). Absent d'un ancien
+    /// gestionnaire : le launcher dit alors seulement « Disponible pour : … », comme avant.
+    #[serde(default)]
+    pub missing_systems: Vec<MissingSystem>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -547,11 +563,20 @@ impl Catalog {
     /// Une recomp telle que proposée au joueur, avec les systèmes qui ont une build.
     pub fn recomp_offer(r: &CatalogRecomp, target: Target) -> RecompOffer {
         let (archives, mine) = r.archives(target);
+        let available = r.is_shared() || mine.is_some();
+        // Système de la fiche (`windows`, `linux`, `macos`) de ce PC : SteamOS et Arch sont des Linux.
+        let family = match target {
+            Target::Windows => "windows",
+            Target::Linux | Target::LinuxArch | Target::SteamOS => "linux",
+            Target::MacArm | Target::MacIntel => "macos",
+        };
+        let missing_reason = (!available).then(|| r.missing_systems.iter().find(|m| m.system == family).map(|m| m.reason.clone())).flatten();
         RecompOffer {
+            missing_reason,
             id: r.id.clone(),
             name: r.name.clone(),
             version: r.version.nom.clone(),
-            available: r.is_shared() || mine.is_some(),
+            available,
             systems: archives.iter().map(|a| a.target).collect(),
             repo: Some(r.repo.clone()).filter(|u| !u.is_empty()),
             size: mine.map(|a| a.file.size).unwrap_or(0),
@@ -1330,6 +1355,24 @@ mod catalog_tests {
         assert_eq!(new.pc_client("bo3_game_files").map(|r| r.id.as_str()), Some("boiii-neuf"));
         assert!(new.pc_client("bo2_game_files").is_none());
         assert_eq!(crate::pc::cod::CodGame::from_zip_name("bo3_game_files-02.zip").map(|g| g.zip_motif()), Some("bo3_game_files"));
+    }
+
+    // Point P3 : sans build pour ce système, la raison de la fiche (`systemes-manquants:`) est
+    // donnée ; SteamOS compte comme Linux ; rien quand la build existe ou sans la clé.
+    #[test]
+    fn missing_system_reason_is_offered() {
+        let c: Catalog = serde_json::from_str(
+            r#"{"recomps":[{"id":"mkw","repo":"r","files":[{"name":"mkw_Windows.zip","sha1":"a","system":"Windows"}],
+                "missingSystems":[{"system":"linux","reason":"Outils de préparation dans l'AppImage"}]},
+               {"id":"x","repo":"r","files":[{"name":"x_Windows.zip","sha1":"a","system":"Windows"}]}]}"#,
+        )
+        .unwrap();
+        let reason = |id: &str, t: Target| Catalog::recomp_offer(c.recomp(id).unwrap(), t).missing_reason;
+        assert_eq!(reason("mkw", Target::Linux).as_deref(), Some("Outils de préparation dans l'AppImage"));
+        assert_eq!(reason("mkw", Target::SteamOS).as_deref(), Some("Outils de préparation dans l'AppImage"));
+        assert_eq!(reason("mkw", Target::Windows), None);
+        assert_eq!(reason("mkw", Target::MacArm), None);
+        assert_eq!(reason("x", Target::Linux), None);
     }
 
     // Écart E5 : le faux Steam du préfixe suit `proton-steam:` de la fiche du client ; sans la

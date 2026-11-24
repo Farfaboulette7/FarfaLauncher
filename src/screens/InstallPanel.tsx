@@ -424,7 +424,7 @@ export function InstallPanel({ game: base, target, installs, onError, autoPlay, 
             </>
           ) : sel.mode === "recomp" && sel.recomp && !sel.recomp.available ? (
             <p className="n-alert" data-sound="none">
-              {sel.name} n'est pas disponible pour votre système{system}. {availableOn(sel.recomp.systems)}
+              {sel.name} n'est pas disponible pour votre système{system}. {sel.recomp.missingReason ?? availableOn(sel.recomp.systems)}
             </p>
           ) : sel.mode === "emulator" && sel.emulator && !sel.emulator.available ? (
             <p className="n-alert" data-sound="none">
@@ -573,7 +573,7 @@ export function InstallPanel({ game: base, target, installs, onError, autoPlay, 
         ) : mode === "recomp" && recompOffer && !recompOffer.available ? (
           <>
             <p className="n-alert" data-sound="none">
-              {recompOffer.name} n'est pas disponible pour votre système{target ? ` (${TARGET_LABELS[target]})` : ""}. {availableOn(recompOffer.systems)}
+              {recompOffer.name} n'est pas disponible pour votre système{target ? ` (${TARGET_LABELS[target]})` : ""}. {recompOffer.missingReason ?? availableOn(recompOffer.systems)}
             </p>
             {hasAlternative && <p className="n-hint">{CHOICE_HINT}</p>}
           </>
@@ -833,6 +833,7 @@ function Advice({ text }: { text: string }) {
 const CHOICE_HINT = "Recomp ou émulation : à choisir dans Informations › Installation.";
 
 /** « Disponible pour : Windows. » */
+/** Sans build pour ce système : « Disponible pour : … », sauf si la fiche donne la raison (`missingReason`, à sa place). */
 function availableOn(systems: Target[]): string {
   return systems.length ? `Disponible pour : ${systems.map((s) => TARGET_LABELS[s]).join(", ")}.` : "Pas encore de version publiée.";
 }
@@ -1000,7 +1001,7 @@ function InstallChoiceFacts({ game: base, target, installs }: { game: Game; targ
                     role="radio"
                     aria-checked={on}
                     className={`n-btn gd-emulator${on ? " is-on" : ""}`}
-                    title={r.available ? `${r.name} ${r.version}` : `Pas de version pour ${system}`}
+                    title={r.available ? `${r.name} ${r.version}` : (r.missingReason ?? `Pas de version pour ${system}`)}
                     onClick={() => !on && setChoice({ mode: "recomp", recomp: r.id })}
                   >
                     {r.name}
@@ -1032,7 +1033,7 @@ function InstallChoiceFacts({ game: base, target, installs }: { game: Game; targ
         </div>
         {mode === "recomp" && recomp && !recomp.available && (
           <p className="n-alert" data-sound="none">
-            {recomp.name} n'est pas disponible pour {system}. {availableOn(recomp.systems)}
+            {recomp.name} n'est pas disponible pour {system}. {recomp.missingReason ?? availableOn(recomp.systems)}
           </p>
         )}
         {mode === "emulator" && current && !current.available && (

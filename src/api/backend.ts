@@ -273,6 +273,8 @@ export interface RecompOffer {
   size?: number;
   /** « Conseillé » : le petit message de sa fiche. */
   advice: string | null;
+  /** Pas de build pour ce système : la raison donnée par la fiche (`systemes-manquants:`). */
+  missingReason?: string | null;
 }
 
 export interface GamesPage {
