@@ -226,6 +226,8 @@ export interface EmulatorOffer {
   packsSize?: number;
   /** Émulateur conseillé pour cette console : le petit message de sa fiche. */
   advice?: string | null;
+  /** Remarque de sa fiche (`remarque:`) : une information, sans étiquette « Conseillé ». */
+  note?: string | null;
 }
 
 /** Une recomp proposée pour un jeu qui en a plusieurs. */
@@ -273,6 +275,8 @@ export interface RecompOffer {
   size?: number;
   /** « Conseillé » : le petit message de sa fiche. */
   advice: string | null;
+  /** Remarque de sa fiche (`remarque:`) : une information, sans étiquette « Conseillé ». */
+  note?: string | null;
   /** Pas de build pour ce système : la raison donnée par la fiche (`systemes-manquants:`). */
   missingReason?: string | null;
 }

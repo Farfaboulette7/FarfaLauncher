@@ -829,6 +829,11 @@ function Advice({ text }: { text: string }) {
   );
 }
 
+/** Remarque de la fiche (`remarque:`) : même place et même style que le conseil, sans l'étiquette. */
+function Note({ text }: { text: string }) {
+  return <p className="n-hint gd-advice-line">{text}</p>;
+}
+
 /** Rappel sous le bouton d'installation : le choix se fait dans l'onglet « Informations ». */
 const CHOICE_HINT = "Recomp ou émulation : à choisir dans Informations › Installation.";
 
@@ -1047,7 +1052,9 @@ function InstallChoiceFacts({ game: base, target, installs }: { game: Game; targ
           </p>
         )}
         {mode === "recomp" && recomp?.advice && <Advice text={recomp.advice} />}
+        {mode === "recomp" && recomp?.note && <Note text={recomp.note} />}
         {mode === "emulator" && current?.advice && <Advice text={current.advice} />}
+        {mode === "emulator" && current?.note && <Note text={current.note} />}
       </dd>
       <ChangelogFact romId={base.id} console={base.console} kind={mode} id={sel.id} />
     </>

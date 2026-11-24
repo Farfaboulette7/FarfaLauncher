@@ -71,6 +71,9 @@ pub struct RecompOffer {
     pub size: u64,
     /// « Conseillé » : le petit message de la fiche.
     pub advice: Option<String>,
+    /// Remarque de la fiche (`remarque:`) : une information, sans étiquette « Conseillé ».
+    #[serde(default)]
+    pub note: Option<String>,
     /// Pas de build pour ce système : la raison donnée par la fiche (`systemes-manquants:`,
     /// point P3), affichée à la place de « Disponible pour : … ».
     #[serde(default)]
@@ -127,6 +130,9 @@ pub struct CatalogRecomp {
     /// Version conseillée pour ses jeux quand ils ont plusieurs recomps ou émulateurs.
     #[serde(default)]
     pub advice: Option<String>,
+    /// Remarque (`remarque:`) : une information sur la recomp, pas une recommandation.
+    #[serde(default)]
+    pub note: Option<String>,
     /// Dossiers hors du jeu reliés à un dossier du jeu (`lien:`).
     #[serde(default)]
     pub links: Vec<crate::links::Link>,
@@ -255,6 +261,9 @@ pub struct Emulator {
     /// Consoles pour lesquelles il est l'émulateur conseillé, avec le message.
     #[serde(default)]
     pub advice: Vec<ConsoleAdvice>,
+    /// Remarques par console (`remarque: console | texte`) : une information, pas un conseil.
+    #[serde(default)]
+    pub note: Vec<ConsoleAdvice>,
     /// ROM à préparer avant de la donner à l'émulateur (`decompresser:`, `dechiffrer:`).
     #[serde(default)]
     pub rom_prep: Option<RomPrep>,
@@ -323,6 +332,11 @@ impl Emulator {
     /// Message de conseil de cet émulateur pour une console.
     pub fn advice_for(&self, console: &str) -> Option<String> {
         self.advice.iter().find(|a| a.console == console).map(|a| a.text.clone())
+    }
+
+    /// Remarque de cet émulateur pour une console.
+    pub fn note_for(&self, console: &str) -> Option<String> {
+        self.note.iter().find(|a| a.console == console).map(|a| a.text.clone())
     }
 
     /// Archives de ce jeu.
@@ -494,6 +508,9 @@ pub struct EmulatorOffer {
     /// Émulateur conseillé pour cette console : le petit message de sa fiche.
     #[serde(default)]
     pub advice: Option<String>,
+    /// Remarque de sa fiche pour cette console (`remarque:`), sans étiquette « Conseillé ».
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 /// Identifiant d'un émulateur dans les installations : les ID RomM sont positifs.
@@ -539,7 +556,7 @@ impl Catalog {
 
     pub fn offer(&self, console: &str, target: Target) -> Option<EmulatorOffer> {
         let e = self.emulator_for_console(console, target)?;
-        Some(EmulatorOffer { advice: e.advice_for(console), ..Self::offer_of(e, target) })
+        Some(EmulatorOffer { advice: e.advice_for(console), note: e.note_for(console), ..Self::offer_of(e, target) })
     }
 
     /// Tous les émulateurs d'une console, dans l'ordre du catalogue (le premier est proposé d'abord).
@@ -547,7 +564,7 @@ impl Catalog {
         self.emulators
             .iter()
             .filter(|e| e.consoles.iter().any(|c| c == console))
-            .map(|e| EmulatorOffer { advice: e.advice_for(console), ..Self::offer_of(e, target) })
+            .map(|e| EmulatorOffer { advice: e.advice_for(console), note: e.note_for(console), ..Self::offer_of(e, target) })
             .collect()
     }
 
@@ -586,6 +603,7 @@ impl Catalog {
             repo: Some(r.repo.clone()).filter(|u| !u.is_empty()),
             size: mine.map(|a| a.file.size).unwrap_or(0),
             advice: r.advice.clone(),
+            note: r.note.clone(),
         }
     }
 
@@ -609,6 +627,7 @@ impl Catalog {
             game_version_key: e.version.cle.clone(),
             packs_size: 0,
             advice: None,
+            note: None,
         }
     }
 
@@ -1079,6 +1098,7 @@ mod tests {
             dialogs: vec![],
             packs: vec![],
             advice: vec![],
+            note: vec![],
             rom_prep: None,
             external_content: None,
             shaders: None,
@@ -1387,6 +1407,20 @@ mod catalog_tests {
         assert_eq!(reason("mkw", Target::Windows), None);
         assert_eq!(reason("mkw", Target::MacArm), None);
         assert_eq!(reason("x", Target::Linux), None);
+    }
+
+    // `remarque:` : publiée à part du conseil, pour une recomp et pour un émulateur (par console).
+    #[test]
+    fn notes_are_offered_apart_from_advice() {
+        let c: Catalog = serde_json::from_str(
+            r#"{"recomps":[{"id":"r","repo":"x","advice":"Le plus à jour","note":"Pas de français"}],
+               "emulators":[{"id":"e","name":"E","consoles":["psp"],"version":{"cle":"k","nom":"1"},"note":[{"console":"psp","text":"Pas de français"}]}]}"#,
+        )
+        .unwrap();
+        let r = Catalog::recomp_offer(c.recomp("r").unwrap(), Target::Windows);
+        assert_eq!((r.advice.as_deref(), r.note.as_deref()), (Some("Le plus à jour"), Some("Pas de français")));
+        let o = c.offer("psp", Target::Windows).unwrap();
+        assert_eq!((o.advice, o.note.as_deref()), (None, Some("Pas de français")));
     }
 
     // Écart E20 : `lien:` d'une fiche d'émulateur est lu au catalogue (absent : aucun lien).
