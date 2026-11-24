@@ -80,6 +80,8 @@ Outils passés :
   - Signer le catalogue (fiches + empreintes) avec une clé gardée hors du NAS (minisign).
     Le launcher refuse un catalogue mal signé.
   - Effort : gros. Risque pour les joueurs : faible si le catalogue en cache reste utilisable.
+- **Décision du propriétaire (2026-11-24) : risque accepté.** On garde « toujours la dernière
+  version tout de suite », sans attente ni catalogue signé. À revoir si un dépôt suivi est piraté.
 
 ### SL3 — Le gestionnaire reçoit le jeton RomM de chaque joueur
 
