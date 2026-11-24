@@ -163,9 +163,31 @@ fn move_into(src: &Path, dst: &Path) -> std::io::Result<()> {
     fs::remove_dir_all(src)
 }
 
+/// Suffixe d'un fichier en cours de copie : jamais pris pour un vrai fichier.
+const PART: &str = ".farfa-part";
+
+/// Copie un fichier sans laisser de fichier partiel sous son vrai nom : copie vers
+/// `<to>.farfa-part`, puis renommage. Une copie interrompue (coupure, disque plein) ne laisse
+/// qu'un `.farfa-part`, effacé au prochain essai : jamais une sauvegarde tronquée active.
+fn copy_file(from: &Path, to: &Path) -> std::io::Result<()> {
+    let mut part = to.as_os_str().to_owned();
+    part.push(PART);
+    let part = PathBuf::from(part);
+    fs::copy(from, &part)?;
+    fs::rename(&part, to).inspect_err(|_| {
+        let _ = fs::remove_file(&part);
+    })
+}
+
 /// Copie récursive de `src` dans `dst`, sans rien écraser ; note chaque (source, copie).
 fn merge_copy(src: &Path, dst: &Path, copied: &mut Vec<(PathBuf, PathBuf)>) -> std::io::Result<()> {
     fs::create_dir_all(dst)?;
+    // Restes d'une copie interrompue : effacés (la source, elle, est intacte).
+    for entry in fs::read_dir(dst)?.filter_map(Result::ok) {
+        if entry.file_name().to_string_lossy().ends_with(PART) && entry.path().is_file() {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
     for entry in fs::read_dir(src)? {
         let entry = entry?;
         let (from, to) = (entry.path(), dst.join(entry.file_name()));
@@ -177,11 +199,11 @@ fn merge_copy(src: &Path, dst: &Path, copied: &mut Vec<(PathBuf, PathBuf)>) -> s
                 merge_copy(&from, &to, copied)?;
             }
         } else if !to.exists() {
-            fs::copy(&from, &to)?;
+            copy_file(&from, &to)?;
             copied.push((from, to));
         } else if !same_content(&from, &to) {
             let aside = free_name(&to);
-            fs::copy(&from, &aside)?;
+            copy_file(&from, &aside)?;
             tracing::info!("{} gardé à côté : {}", from.display(), aside.display());
             copied.push((from, aside));
         } else {
@@ -313,6 +335,25 @@ mod tests {
         fs::create_dir_all(file.parent().unwrap()).unwrap();
         fs::write(&file, "[GCPad1]").unwrap();
         assert_eq!(fs::read_to_string(target.join("Config").join("GCPadNew.ini")).unwrap(), "[GCPad1]");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    // Copie interrompue : le reste `.farfa-part` est effacé au prochain essai et ne prend jamais
+    // la place du vrai fichier ; une copie réussie n'en laisse aucun.
+    #[test]
+    fn interrupted_copy_never_becomes_the_save() {
+        let root = std::env::temp_dir().join(format!("farfa-links-part-{}", uuid::Uuid::new_v4()));
+        let (src, dst) = (root.join("src"), root.join("dst"));
+        fs::create_dir_all(src.join("saves")).unwrap();
+        fs::write(src.join("saves").join("jeu.sav"), "complet").unwrap();
+        fs::create_dir_all(dst.join("saves")).unwrap();
+        fs::write(dst.join("autre"), "x").unwrap(); // jeu déjà rempli : chemin de la copie
+        // Reste d'un essai coupé en pleine copie.
+        fs::write(dst.join("saves").join("jeu.sav.farfa-part"), "comp").unwrap();
+        move_into(&src, &dst).unwrap();
+        assert_eq!(fs::read_to_string(dst.join("saves").join("jeu.sav")).unwrap(), "complet");
+        assert!(!dst.join("saves").join("jeu.sav.farfa-part").exists());
+        assert!(!dst.join("saves").join("jeu.sav.avant-farfa").exists());
         fs::remove_dir_all(root).unwrap();
     }
 
