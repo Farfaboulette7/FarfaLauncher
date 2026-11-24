@@ -71,12 +71,13 @@ pub async fn sync_boiii(
     mut on_progress: impl FnMut(u64, u64),
 ) -> AppResult<()> {
     let installed = game_dir.join("boiii.exe").is_file();
-    let file = access.catalog.recomp(cod::BOIII_CLIENT).and_then(|r| r.archives(Target::Windows).1).map(|a| a.file);
+    // Fiche du client qui déclare `pour: bo3_game_files` (repli : la fiche « boiii »).
+    let file = access.catalog.pc_client(CodGame::Bo3.zip_motif()).and_then(|r| r.archives(Target::Windows).1).map(|a| a.file);
     let marker = game_dir.join("boiii").join(BOIII_MARKER);
     match file {
         None if installed => tracing::warn!("boiii absent du catalogue : client en place gardé"),
         None => {
-            tracing::error!("boiii absent du catalogue de FarfaRomManager (fiche « {} »)", cod::BOIII_CLIENT);
+            tracing::error!("boiii absent du catalogue de FarfaRomManager (fiche « pour: {} », ou « {} »)", CodGame::Bo3.zip_motif(), cod::BOIII_CLIENT);
             return Err(AppError::NotAvailable);
         }
         Some(f) if std::fs::read_to_string(&marker).ok().as_deref() == f.sha1.as_deref() && installed => {}

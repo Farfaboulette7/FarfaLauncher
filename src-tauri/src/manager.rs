@@ -118,6 +118,9 @@ pub struct CatalogRecomp {
     /// Dossiers hors du jeu reliés à un dossier du jeu (`lien:`).
     #[serde(default)]
     pub links: Vec<crate::links::Link>,
+    /// Client de jeu PC : motifs des zips du jeu qu'il fait tourner (`pour:`, écart E2).
+    #[serde(default, rename = "for")]
+    pub for_zips: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -586,6 +589,21 @@ impl Catalog {
 
     pub fn recomp(&self, id: &str) -> Option<&CatalogRecomp> {
         self.recomps.iter().find(|r| r.id == id)
+    }
+
+    /// Fiche du client de jeu PC qui fait tourner les zips de ce motif (`bo3_game_files`).
+    ///
+    /// Transition (écart E2) : la fiche le déclare par `pour:`. Tant qu'aucune fiche du
+    /// catalogue n'a `pour:` (ancien gestionnaire, fiches pas encore complétées), on garde
+    /// l'ancienne règle : la fiche nommée `boiii` pour Black Ops III.
+    pub fn pc_client(&self, motif: &str) -> Option<&CatalogRecomp> {
+        if self.recomps.iter().any(|r| !r.for_zips.is_empty()) {
+            return self.recomps.iter().find(|r| r.for_zips.iter().any(|m| m == motif));
+        }
+        if motif == crate::pc::cod::CodGame::Bo3.zip_motif() {
+            return self.recomp(crate::pc::cod::BOIII_CLIENT);
+        }
+        None
     }
 
     /// Réglages de langue du programme qui lance ce jeu : sa recomp ou son émulateur.
@@ -1282,6 +1300,20 @@ mod catalog_tests {
              "externalContent":{"format":"ini","file":"{exedir}/user/config/qt-config.ini","key":"UI.Paths\\external_content_dirs"}}]}"#).unwrap();
         assert!(new.external_content(&new.emulators[0]).is_none());
         assert_eq!(new.external_content(&new.emulators[1]), Some(rule));
+    }
+
+    // Écart E2 : le client d'un jeu PC est la fiche qui déclare le motif de ses zips (`pour:`) ;
+    // sans `pour:` dans tout le catalogue (ancien gestionnaire), la fiche « boiii » pour BO3.
+    #[test]
+    fn pc_client_by_zip_motif_with_a_fallback() {
+        let old: Catalog = serde_json::from_str(r#"{"recomps":[{"id":"boiii","repo":"r"},{"id":"x","repo":"r"}]}"#).unwrap();
+        assert_eq!(old.pc_client("bo3_game_files").map(|r| r.id.as_str()), Some("boiii"));
+        assert!(old.pc_client("bo2_game_files").is_none());
+        let new: Catalog =
+            serde_json::from_str(r#"{"recomps":[{"id":"boiii","repo":"r","for":[]},{"id":"boiii-neuf","repo":"r","for":["bo3_game_files"]}]}"#).unwrap();
+        assert_eq!(new.pc_client("bo3_game_files").map(|r| r.id.as_str()), Some("boiii-neuf"));
+        assert!(new.pc_client("bo2_game_files").is_none());
+        assert_eq!(crate::pc::cod::CodGame::from_zip_name("bo3_game_files-02.zip").map(|g| g.zip_motif()), Some("bo3_game_files"));
     }
 
     // Écart E7 : le partage des shaders suit la clé `shaders:` ; sans elle dans tout le

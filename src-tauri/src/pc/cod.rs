@@ -47,7 +47,8 @@ pub enum CodGame {
     Bo3,
 }
 
-/// Fiche de FarfaRomManager qui fournit boiii (client de Black Ops III).
+/// Fiche de FarfaRomManager qui fournit boiii (client de Black Ops III), quand aucune fiche du
+/// catalogue ne déclare encore `pour:` (ancien gestionnaire) : voir `Catalog::pc_client`.
 pub const BOIII_CLIENT: &str = "boiii";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -87,6 +88,20 @@ pub enum ModeLaunch {
 }
 
 impl CodGame {
+    /// Motif de ses zips dans RomM (sans morceau ni `.zip`) : ce que déclare `pour:` dans la
+    /// fiche de son client (écart E2).
+    pub fn zip_motif(self) -> &'static str {
+        match self {
+            CodGame::Cod4 => "cod4_game_files",
+            CodGame::Waw => "waw_game_files",
+            CodGame::Mw2 => "mw2_game_files",
+            CodGame::Bo1 => "bo1_game_files",
+            CodGame::Bo2 => "bo2_game_files",
+            CodGame::Mw3 => "mw3_game_files",
+            CodGame::Bo3 => "bo3_game_files",
+        }
+    }
+
     /// `bo2_game_files.zip`, ou un morceau `bo3_game_files-01.zip`.
     pub fn from_zip_name(name: &str) -> Option<Self> {
         let lower = name.to_ascii_lowercase();
