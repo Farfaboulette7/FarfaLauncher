@@ -316,7 +316,7 @@ export interface Game {
   variant?: string | null;
   /** Nombre maximal de joueurs sur une même machine (RomM). */
   players?: number | null;
-  /** Console d'origine, commune à `gba` et `portage-gba`. */
+  /** Console d'origine (slug RomM). */
   console: string;
   /** Ce jeu a une recomp. */
   recomp: boolean;

@@ -91,6 +91,9 @@ async fn start_refresh(app: &AppHandle, state: &AppState) -> AppResult<LibrarySn
         tracing::info!("{aligned} installation(s) déjà à la version du catalogue");
     }
     let recomps = catalog.recomp_rom_ids();
+    // Installations faites sur une ancienne fiche `portage-*` (retirée de RomM le 08/11/2026) :
+    // reprises sous leur vraie console. Gardé (écart E14) : un joueur qui n'a pas relancé le
+    // launcher depuis a encore ses jeux sous l'ancien ID (previousRomId du gestionnaire).
     let moves = catalog.moved_games();
     let moved = install_state::rekey_ids(&state.config_dir, &moves);
     if moved > 0 {

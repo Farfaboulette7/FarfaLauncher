@@ -405,7 +405,7 @@ async fn config(state: &AppState, args: &[String]) -> AppResult<Value> {
     info(state).await
 }
 
-/// Consoles où le Deck peut jouer : recomps (`portage-*`), jeux PC et consoles avec un émulateur.
+/// Consoles où le Deck peut jouer : recomps, jeux PC et consoles avec un émulateur.
 async fn consoles(state: &AppState) -> AppResult<Value> {
     let client = state.client()?;
     refresh_catalog(state).await;
@@ -415,7 +415,7 @@ async fn consoles(state: &AppState) -> AppResult<Value> {
     for p in platforms.iter_mut() {
         p.has_emulator = catalog.offer(&p.slug, me).is_some_and(|o| o.available) || catalog.offer(&p.fs_slug, me).is_some_and(|o| o.available);
     }
-    platforms.retain(|p| p.rom_count > 0 && (p.has_emulator || library::is_portage(&p.fs_slug) || crate::pc::is_pc_folder(&p.fs_slug)));
+    platforms.retain(|p| p.rom_count > 0 && (p.has_emulator || crate::pc::is_pc_folder(&p.fs_slug)));
     // Les recomps sont rangées dans leur vraie console (souvent sans émulateur pour le
     // Deck) : regroupées dans une console à part, en tête.
     let recomps = deck_recomps(state).len();

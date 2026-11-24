@@ -33,7 +33,7 @@ pub enum AppError {
     TokenRejected,
     #[error("Impossible d'accéder au trousseau sécurisé du système.")]
     Keychain,
-    #[error("Aucune plateforme « portage-… » n'a été trouvée sur ce serveur RomM.")]
+    #[error("Aucune plateforme avec des jeux n'a été trouvée sur ce serveur RomM.")]
     PlatformMissing,
     #[error("Cette fonction demande une autorisation de plus : reconnectez-vous une fois (Paramètres → Se déconnecter).")]
     ScopeMissing,

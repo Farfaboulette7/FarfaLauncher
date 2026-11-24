@@ -55,7 +55,7 @@ const KINDS: { id: Kind; label: string }[] = [
   { id: "emulation", label: "Émulation" },
 ];
 
-/** Une console, toutes plateformes RomM confondues (`gba` et `portage-gba`). */
+/** Une console, toutes plateformes RomM confondues (`nes` et `nes-hack`). */
 interface ConsoleGroup {
   key: string;
   name: string;
@@ -370,9 +370,8 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
     const byKey = new Map<string, ConsoleGroup>();
     for (const p of snapshot?.platforms ?? []) {
       const key = keyOf(p);
-      const portage = p.fsSlug.toLowerCase().startsWith("portage");
-      const group = byKey.get(key) ?? { key, name: shortPlatformName(p.name), iconUrls: p.iconUrls, lazyIds: [], lazyCount: 0, hasEmulator: false };
-      if (!portage && key !== PC_PLATFORM) {
+      const group = byKey.get(key) ?? { key, name: p.name, iconUrls: p.iconUrls, lazyIds: [], lazyCount: 0, hasEmulator: false };
+      if (key !== PC_PLATFORM) {
         // Le dossier principal de la console donne son nom (`nes`, pas sa variante `nes-hack`).
         if (group.lazyIds.length === 0 || p.fsSlug === p.slug) {
           group.name = p.name;
@@ -1006,11 +1005,6 @@ function groupByDay(games: Game[]): { day: string; games: Game[] }[] {
   return groups;
 }
 
-/** « Portage GameCube » → « GameCube » : tous les jeux sont des portages, le mot n'apprend rien sur la carte. */
-function shortPlatformName(name: string): string {
-  return name.replace(/^portages?\s+/i, "").trim() || name;
-}
-
 /**
  * Grille où seules les rangées proches de l'écran existent : une console compte des
  * milliers de jeux, et les recréer tous au retour d'une fiche figerait la fenêtre.
@@ -1128,7 +1122,7 @@ function PlatformCard({ group, count, fresh, onOpen }: { group: ConsoleGroup; co
   return (
     <button className="pcard n-marquee-host" onClick={onOpen} title={group.name}>
       <span className="pcard-icon">{src ? <img src={src} alt="" draggable={false} /> : <span className="pcard-glyph">◆</span>}</span>
-      <span className="pcard-name">{shortPlatformName(group.name)}</span>
+      <span className="pcard-name">{group.name}</span>
       <span className="pcard-foot">
         <span className="pcard-count">
           {count} jeu{count > 1 ? "x" : ""}
