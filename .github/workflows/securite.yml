@@ -1,0 +1,122 @@
+# Contrôles de sécurité automatiques, séparés de ci.yml pour que les tests restent lisibles :
+#   1. secrets : gitleaks cherche jetons, mots de passe et clés dans TOUT l'historique git ;
+#   2. npm     : failles connues des paquets de l'interface (npm audit) ;
+#   3. cargo   : failles connues des crates Rust (cargo audit, base RustSec).
+# Quand : à chaque push sur une branche, à chaque pull request, chaque lundi (de nouvelles
+# failles sont publiées même quand le code ne change pas) et à la main (« Run workflow »).
+# Les tags (release.yml, test.yml) ne passent pas par ici : une faille sans correctif ne bloque
+# jamais une publication.
+# Lire un échec, ignorer une faille sans correctif : docs/tests.md, « Contrôles de sécurité ».
+name: Sécurité
+
+on:
+  push:
+    # Les branches de Dependabot sont vérifiées par leur pull request (évite les doublons).
+    branches: ["**", "!dependabot/**"]
+  pull_request:
+  schedule:
+    - cron: "0 5 * * 1"   # chaque lundi vers 6 h (heure de Paris en hiver)
+  workflow_dispatch:
+
+# Lecture seule : ces contrôles ne modifient rien et n'utilisent aucun secret.
+permissions:
+  contents: read
+
+concurrency:
+  group: securite-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  secrets:
+    name: Secrets (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # Version épinglée et empreinte SHA-256 de l'archive officielle
+      # (gitleaks_<version>_checksums.txt de la release GitHub). Pour monter de version :
+      # changer les deux lignes ensemble.
+      GITLEAKS_VERSION: "8.30.1"
+      GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+    steps:
+      # fetch-depth: 0 = tout l'historique, pas seulement le dernier commit : un secret
+      # effacé depuis reste lisible dans un ancien commit, donc il compte.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Le binaire officiel, vérifié par son empreinte : si l'archive a changé, l'étape échoue
+      # (« FAILED » de sha256sum) et rien n'est lancé.
+      - name: Installer gitleaks
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -sSfL -o gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum --check
+          tar -xzf gitleaks.tar.gz gitleaks
+          ./gitleaks version
+
+      # Attrape : jeton GitHub, webhook Discord, clé privée, mot de passe… dans n'importe quel
+      # commit de la branche. Exceptions connues : .gitleaks.toml.
+      # --redact : les secrets trouvés sont masqués dans le journal (le dépôt est public).
+      # Échec : le journal donne le commit, le fichier et la ligne. Si c'est un vrai secret, le
+      # révoquer d'abord ; sinon ajouter une exception (voir docs/tests.md).
+      - name: Chercher des secrets dans tout l'historique
+        run: |
+          "$RUNNER_TEMP/gitleaks" git --redact --verbose --no-banner .
+
+  npm:
+    name: Dépendances npm (npm audit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Attrape : un paquet npm embarqué dans le launcher qui a une faille publiée.
+      # Bloquant pour « high » et « critical », simple avertissement en dessous.
+      # Pas besoin de « npm ci » : npm audit ne lit que package-lock.json.
+      # Échec : la ligne « ::error » donne l'avis (GHSA-…), le paquet et la version touchée.
+      - name: Chercher les failles connues
+        run: node scripts/npm-audit.mjs
+
+  cargo:
+    name: Dépendances Rust (cargo audit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Version épinglée de l'outil ; la base des failles (RustSec), elle, est toujours la
+      # plus récente.
+      CARGO_AUDIT_VERSION: "0.23.0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # cargo-audit compilé une fois (quelques minutes), puis gardé en cache pour cette version.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: cargo-audit-${{ env.CARGO_AUDIT_VERSION }}-${{ runner.os }}
+
+      # Rust est déjà installé sur les machines Ubuntu de GitHub.
+      - name: Installer cargo-audit
+        run: |
+          [ -x ~/.cargo/bin/cargo-audit ] || cargo install cargo-audit --locked --version "$CARGO_AUDIT_VERSION"
+
+      # Attrape : une crate de src-tauri/Cargo.lock qui a une faille publiée (RUSTSEC-…).
+      # Bloquant pour toute faille (RustSec ne donne pas toujours de gravité). Les crates « non
+      # maintenues » ou « unsound » sont de simples avertissements (« warning »).
+      # Les failles listées dans securite/failles-ignorees.txt sont passées (--ignore).
+      # Échec : chaque faille donne sa crate, sa version et « Solution: Upgrade to … ».
+      # Le plus souvent, « cargo update -p <crate> » dans src-tauri suffit.
+      - name: Chercher les failles connues
+        working-directory: src-tauri
+        run: |
+          ignorer=$(grep -oE '^RUSTSEC-[0-9]{4}-[0-9]{4}' ../securite/failles-ignorees.txt | sed 's/^/--ignore /' | tr '\n' ' ' || true)
+          echo "Failles ignorées : ${ignorer:-aucune}"
+          cargo audit $ignorer

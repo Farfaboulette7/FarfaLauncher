@@ -76,6 +76,7 @@ Il n'y a pas de tests de l'interface (React) : `tsc` vérifie seulement les type
 | `release.yml` | tag `vX.Y.Z` ou `vX.Y.Z-beta.N` | **tests** (Windows, Linux) d'abord ; seulement s'ils passent : création de la release, compilation Windows, AppImage, Mac et Deck, publication et canal bêta |
 | `test.yml` | tag `test-<rapport>-<n>` (poussé par `outils/surveille-rapports`) | **tests** (Windows, Linux) d'abord ; seulement s'ils passent : pré-release de test pour le joueur |
 | `mac-e2e.yml` | tag `tour-mac-*` ou à la main | tour réel des émulateurs sur Mac (vrai serveur) |
+| `securite.yml` | chaque push sur une branche, chaque pull request, chaque lundi, ou à la main | **contrôles de sécurité** : secrets (gitleaks), failles connues des dépendances npm et Rust (voir section 4) |
 
 L'ancien `deck.yml` (branche `deck`, fusionnée) a été retiré : `ci.yml` compile le binaire du
 Deck à chaque push, et le bouton « Run workflow » de `ci.yml` le donne à la demande.
@@ -109,3 +110,95 @@ sur `main`, puis :
   le reposer sur le commit corrigé et le repousser ;
 - version de test : le run en échec fait passer le rapport « à décider » (surveillance des
   rapports) ; la suite se décide dans `valider.bat`.
+
+## 4. Contrôles de sécurité (`securite.yml`, Dependabot)
+
+Le workflow **Sécurité** est séparé de la CI : un rouge de sécurité ne cache pas le résultat
+des tests, et un rouge des tests ne cache pas une faille. Il ne tourne pas sur les tags :
+**une faille ne bloque jamais `release.yml` ni `test.yml`**. Il tourne aussi chaque lundi, car
+de nouvelles failles sont publiées même quand le code ne bouge pas : un rouge du lundi sans
+aucun push veut dire « nouvelle faille publiée », pas « j'ai cassé quelque chose ».
+
+| Job | Ce qu'il attrape | Bloquant ? |
+|---|---|---|
+| **Secrets (gitleaks)** | jeton, mot de passe, clé privée, webhook… dans **n'importe quel commit** de la branche, même effacé depuis | oui |
+| **Dépendances npm (npm audit)** | paquet npm embarqué dans le launcher (pas les outils de dev) qui a une faille publiée | oui pour `high` et `critical` ; simple avertissement pour `moderate` et `low` |
+| **Dépendances Rust (cargo audit)** | crate de `src-tauri/Cargo.lock` qui a une faille publiée (base RustSec) | oui pour toute faille (RustSec ne donne pas toujours de gravité) ; crates « non maintenues » ou « unsound » : avertissement |
+
+### Lancer les contrôles sur ce PC
+
+```bash
+node scripts/npm-audit.mjs        # même contrôle npm que la CI (pas besoin d'installer quoi que ce soit)
+```
+
+`cargo audit` et `gitleaks` ne sont pas installés sur ce PC. Pour les avoir (facultatif) :
+`cargo install cargo-audit --locked`, puis `cd src-tauri && cargo audit` ; gitleaks se
+télécharge depuis ses releases GitHub (`gitleaks git --redact -v .` à la racine du dépôt).
+Sinon, le bouton « Run workflow » du workflow **Sécurité** les lance sur GitHub.
+
+### Lire un échec
+
+- **Secrets (gitleaks)** : le journal donne `RuleID`, `File`, `Line`, `Commit` ; le secret
+  lui-même est masqué (`REDACTED`, le dépôt est public).
+  1. **Vrai secret** : le considérer comme volé (le dépôt est public). Le révoquer ou le
+     changer tout de suite (jeton RomM, webhook Discord, clé…), puis le retirer du code.
+     Le retirer du code ne suffit pas : il reste dans l'historique. Une fois révoqué, il ne
+     risque plus rien : ajouter son empreinte dans `.gitleaksignore` (voir plus bas).
+  2. **Faux positif** (exemple de la doc, faux jeton d'un test, clé publique) : ajouter une
+     exception précise dans `.gitleaks.toml` (fichier + motif), avec sa raison en
+     commentaire. Exemple déjà là : la clé **publique** de mise à jour dans `tauri.conf.json`.
+  - `.gitleaksignore` : une ligne par découverte, l'empreinte `Fingerprint` affichée par
+    gitleaks (`commit:fichier:règle:ligne`), avec un commentaire `#` au-dessus (date, raison).
+- **npm audit** : une ligne `::error` par faille bloquante : avis `GHSA-…`, gravité, paquet,
+  versions touchées. Corriger : `npm audit fix` (sans `--force`), ou monter la version du
+  paquet dans `package.json`, puis `npm run build` et les tests. Les avertissements
+  (`::warning`) se corrigent quand on peut.
+- **cargo audit** : chaque faille donne `Crate`, `Version`, `ID` (`RUSTSEC-…`) et
+  `Solution: Upgrade to …`. Le plus souvent : `cd src-tauri && cargo update -p <crate>`
+  (reste dans les versions permises par `Cargo.toml`), puis les tests. Si c'est une crate
+  tirée par une autre (`cargo tree -i <crate>` dit laquelle), c'est cette autre qu'il faut
+  monter. Crates Tauri : monter la crate `tauri*` **et** le paquet npm `@tauri-apps/*`
+  ensemble (même version mineure).
+
+### Ignorer proprement une faille sans correctif
+
+Seulement quand **aucune version corrigée n'existe** (ou qu'on ne peut pas encore la
+prendre), et après avoir vérifié que le launcher n'utilise pas la partie touchée.
+
+Ajouter une ligne dans `securite/failles-ignorees.txt` (lu par npm audit **et** cargo audit) :
+
+```
+RUSTSEC-2099-0001  2026-11-24  paquet-x : pas de version corrigée ; la fonction touchée
+                               (lecture de fichiers .xyz) n'est jamais appelée par le launcher.
+```
+
+L'identifiant en début de ligne (`GHSA-…` pour npm, `RUSTSEC-…` pour cargo), puis la date et
+la raison. Le contrôle passe alors en vert et rappelle la faille ignorée dans son journal.
+À chaque mise à jour des dépendances, relire ce fichier et retirer les lignes devenues inutiles.
+
+### Dependabot (`.github/dependabot.yml`)
+
+Chaque lundi matin, Dependabot ouvre au plus deux pull requests par écosystème : actions des
+workflows, paquets npm, crates Rust. Les mises à jour mineures sont groupées en une seule pull
+request ; les versions majeures arrivent une par une. Chaque pull request passe par la CI et
+par **Sécurité** : fusionner seulement si tout est vert (et, pour une majeure, après un essai
+de la version de test). Sur une pull request de Dependabot, GitHub ne donne pas les secrets :
+le job `mac-app` construit alors le `.dmg` sans paquet de mise à jour signé (c'est normal).
+
+### Durcissement des workflows
+
+- Chaque workflow est en **lecture seule** par défaut (`permissions: contents: read`). Seuls
+  les jobs de `release.yml` et `test.yml` qui créent, remplissent ou publient la release ont
+  `contents: write`.
+- Pas de `pull_request_target`, et aucune valeur venant de l'extérieur (`github.event.…`)
+  écrite directement dans un `run:` (elle passerait par `env:`).
+- Les actions qui ne sont pas de GitHub (`dtolnay/rust-toolchain`, `Swatinem/rust-cache`,
+  `tauri-apps/tauri-action`) sont épinglées par empreinte de commit, avec la version en
+  commentaire : un tag déplacé chez eux ne change rien chez nous. Dependabot propose les
+  nouvelles versions. Les binaires téléchargés (gitleaks) sont vérifiés par leur SHA-256.
+- `gitleaks` : version et empreinte en tête du job `secrets` de `securite.yml`, à changer
+  ensemble à la main (Dependabot ne les voit pas). On n'utilise pas l'action
+  `gitleaks/gitleaks-action` : le binaire seul n'a besoin ni de licence ni de droits en
+  écriture, et relit tout l'historique à chaque fois (l'action ne relit que les commits
+  poussés). La licence de l'action n'est de toute façon exigée que pour les comptes
+  d'organisation, pas pour un compte personnel comme celui-ci.

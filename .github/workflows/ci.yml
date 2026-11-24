@@ -9,10 +9,16 @@ name: CI
 
 on:
   push:
-    branches: ["**"]
+    # Toutes les branches, sauf celles de Dependabot : elles sont vérifiées par leur pull
+    # request (sinon chaque mise à jour lancerait la CI deux fois).
+    branches: ["**", "!dependabot/**"]
   pull_request:
   # Bouton « Run workflow » de l'onglet Actions (par exemple pour avoir le binaire du Deck).
   workflow_dispatch:
+
+# Lecture seule : la CI ne peut rien modifier dans le dépôt (ni release, ni tag, ni branche).
+permissions:
+  contents: read
 
 # Un nouveau push sur la même branche annule le run précédent, devenu inutile.
 concurrency:
@@ -34,9 +40,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # branche stable (2026-11-24)
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: src-tauri -> target
           key: deck
@@ -89,9 +95,9 @@ jobs:
           node-version: 22
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # branche stable (2026-11-24)
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: src-tauri -> target
 
@@ -101,7 +107,16 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npx tauri build --bundles app,dmg
+        # Sans clé de signature (pull request de Dependabot ou d'un fork : GitHub ne leur donne
+        # pas les secrets), l'application est construite sans paquet de mise à jour signé,
+        # au lieu d'échouer.
+        run: |
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            npx tauri build --bundles app,dmg
+          else
+            echo "::notice::Pas de clé de signature : .dmg construit sans paquet de mise à jour."
+            npx tauri build --bundles app,dmg --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          fi
 
       - uses: actions/upload-artifact@v4
         with:

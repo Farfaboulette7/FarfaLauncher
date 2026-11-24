@@ -55,6 +55,9 @@ La dernière ligne construit **la** version de test :
 - `test.yml` : tag `test-<rapport>-<n>` (version de test d'un rapport de bug). Tests d'abord.
 - `smoke.yml` : chaque matin, partie réseau du smoke test (secrets `ROMM_SMOKE_*`).
 - `mac-e2e.yml` : à la main, tour réel des émulateurs sur Mac.
+- `securite.yml` : chaque push, chaque pull request et chaque lundi : secrets (gitleaks),
+  `npm audit`, `cargo audit`. Ne bloque jamais une publication. Failles acceptées :
+  `securite/failles-ignorees.txt`. Dependabot : `.github/dependabot.yml`.
 
 ## Publier (seulement après le test de l'utilisateur)
 

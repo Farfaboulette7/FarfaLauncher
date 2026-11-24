@@ -27,6 +27,9 @@ jobs:
       matrix:
         platform: ${{ fromJSON(inputs.plateformes) }}
     runs-on: ${{ matrix.platform }}
+    # Lecture seule, même quand le workflow appelant a plus de droits (release.yml).
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -35,9 +38,9 @@ jobs:
           node-version: 22
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # branche stable (2026-11-24)
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: src-tauri -> target
 

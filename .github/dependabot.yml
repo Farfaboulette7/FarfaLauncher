@@ -1,0 +1,59 @@
+# Dependabot : propose chaque semaine des pull requests de mise à jour des dépendances.
+# Réglé pour un propriétaire seul : une fois par semaine (lundi matin), les mises à jour
+# mineures groupées en UNE pull request par écosystème, et peu de pull requests ouvertes à la
+# fois. Chaque pull request passe par ci.yml et securite.yml : ne fusionner que si tout est vert.
+# Les alertes de sécurité (onglet Security) restent séparées et arrivent dès qu'une faille est
+# publiée, si « Dependabot security updates » est activé dans les réglages du dépôt.
+#
+# Attention (Tauri) : le paquet npm @tauri-apps/api et la crate tauri doivent rester sur la
+# même version mineure (2.X). Si Dependabot n'en monte qu'un, « tauri build » (job mac-app de
+# ci.yml) le signale : fermer la pull request et monter les deux ensemble à la main.
+version: 2
+updates:
+  # Actions utilisées par les workflows (.github/workflows/*.yml), y compris celles épinglées
+  # par empreinte (Dependabot met à jour l'empreinte et le commentaire de version).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Europe/Paris
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "CI"
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Paquets npm de l'interface (package.json, package-lock.json).
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Europe/Paris
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "Dépendances npm"
+    groups:
+      # Correctifs et versions mineures : une seule pull request. Les versions majeures
+      # (qui peuvent casser quelque chose) arrivent une par une.
+      npm-mineures:
+        update-types: ["minor", "patch"]
+
+  # Crates Rust (src-tauri/Cargo.toml, Cargo.lock).
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Europe/Paris
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "Dépendances Rust"
+    groups:
+      cargo-mineures:
+        update-types: ["minor", "patch"]

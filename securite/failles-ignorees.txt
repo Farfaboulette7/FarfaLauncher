@@ -1,0 +1,14 @@
+# Failles connues que l'on accepte, faute de correctif (lu par .github/workflows/securite.yml).
+#
+# Une faille par ligne : son identifiant en début de ligne, puis la date et la raison.
+#   - npm   : l'identifiant GHSA-… affiché par scripts/npm-audit.mjs ;
+#   - cargo : l'identifiant RUSTSEC-AAAA-NNNN affiché par cargo audit.
+# Les lignes qui commencent par # sont des commentaires.
+#
+# N'ignorer une faille que si aucune version corrigée n'existe (ou si on ne peut pas encore la
+# prendre), et seulement après avoir vérifié que le launcher n'est pas touché. Relire cette
+# liste à chaque mise à jour des dépendances : retirer les lignes devenues inutiles.
+#
+# Exemple :
+# RUSTSEC-2099-0001  2026-11-24  paquet-x : pas de version corrigée ; la fonction touchée
+#                                (lecture de fichiers .xyz) n'est jamais appelée par le launcher.

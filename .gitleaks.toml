@@ -1,0 +1,17 @@
+# Réglages de gitleaks (recherche de secrets, .github/workflows/securite.yml).
+# On garde toutes les règles par défaut de gitleaks et on n'ajoute que des exceptions précises,
+# chacune avec sa raison. Ne jamais ajouter d'exception pour un vrai secret : le changer
+# (révoquer le jeton, régénérer la clé), puis suivre docs/tests.md, « Contrôles de sécurité ».
+
+[extend]
+useDefault = true
+
+# Clé PUBLIQUE de mise à jour (minisign) dans tauri.conf.json : elle doit être publique, le
+# launcher s'en sert pour vérifier les mises à jour. Seule cette clé est acceptée : le texte
+# encodé commence par « untrusted comment: minisign public k… ». La clé privée
+# (« … encrypted secret key ») reste détectée.
+[[allowlists]]
+description = "Clé publique de mise à jour Tauri (minisign)"
+condition = "AND"
+paths = ['''^src-tauri/tauri\.conf\.json$''']
+regexes = ['''^dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBr''']
