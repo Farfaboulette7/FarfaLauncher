@@ -5,6 +5,19 @@ Les points sont numérotés **SL1, SL2…** (« sécurité launcher »).
 
 Résumé : **1 critique, 5 élevées, 4 moyennes, 8 faibles.**
 
+**État au 2026-11-24 (launcher 1.2.3)** :
+
+| Point | État |
+|---|---|
+| SL1 | corrigé : Claude des rapports restreint (lecture/écriture de sa copie seulement), plus de publication automatique (`publier-beta.bat`), signature approuvée par le propriétaire |
+| SL2 | **risque accepté** par le propriétaire (toujours la dernière version tout de suite) |
+| SL4 | corrigé (1.2.3) : chemins simples seulement, dossiers protégés refusés pour toutes les clés |
+| SL5 | corrigé (1.2.3) : liens des archives contenus dans le dossier du jeu, jamais suivis à la fusion |
+| SL6 | corrigé : clé de signature seulement dans l'environment `signature`, approbation obligatoire |
+| SL7 | corrigé (1.2.3) : version de test jamais plus ancienne, jamais hors de sa release |
+| SL8 | en partie : le moteur du Deck se compile en lecture seule |
+| SL3, SL9 à SL18 | ouverts (gravité moyenne ou faible), à traiter plus tard |
+
 Comment lire ce rapport :
 - **Où** : le fichier et la ligne à regarder.
 - **Qui** : qui peut s'en servir. « Un ami connecté » = quelqu'un qui a un compte RomM.
