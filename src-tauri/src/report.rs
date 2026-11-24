@@ -94,7 +94,7 @@ fn find(pattern: &LogPattern, exe_dir: &Path) -> Vec<PathBuf> {
 }
 
 /// `*` : n'importe quelle suite de caractères (casse ignorée).
-fn wildcard(pattern: &str, name: &str) -> bool {
+pub(crate) fn wildcard(pattern: &str, name: &str) -> bool {
     let (pattern, name) = (pattern.to_lowercase(), name.to_lowercase());
     let parts: Vec<&str> = pattern.split('*').collect();
     if parts.len() == 1 {

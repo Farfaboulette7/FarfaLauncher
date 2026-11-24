@@ -239,6 +239,10 @@ pub struct Emulator {
     /// Absent d'un gestionnaire d'avant la clé : voir `Catalog::external_content`.
     #[serde(default)]
     pub external_content: Option<ExternalContent>,
+    /// Cache de shaders partagé (`shaders:`, écart E7) : `dossier/{titleid}/fichier`.
+    /// Absent d'un gestionnaire d'avant la clé : voir `Catalog::shader_rule`.
+    #[serde(default)]
+    pub shaders: Option<String>,
 }
 
 /// Liste de dossiers où l'émulateur lit les mises à jour et DLC des jeux (`contenu-externe:`).
@@ -633,6 +637,18 @@ impl Catalog {
         e.consoles.iter().any(|c| c == "switch").then(legacy_external_content)
     }
 
+    /// Partage des shaders de cet émulateur (`shaders:`). Même transition que
+    /// `external_content` (écart E7) : tant qu'aucun émulateur du catalogue n'a la clé, l'ancien
+    /// relevé sur le disque vaut pour les consoles `switch` et `switch-2`, comme le fait aussi
+    /// le gestionnaire (`api.py`, `emulateur_shaders`).
+    #[cfg(feature = "gui")]
+    pub fn shader_rule(&self, e: &Emulator) -> Option<crate::shaders::Rule> {
+        if self.emulators.iter().any(|x| x.shaders.is_some()) {
+            return e.shaders.clone().map(crate::shaders::Rule::Key);
+        }
+        e.consoles.iter().any(|c| c == "switch" || c == "switch-2").then_some(crate::shaders::Rule::Legacy)
+    }
+
     /// Émulateur qui lance ce jeu installé.
     pub fn emulator_for_install(&self, st: &crate::install::state::InstalledGame) -> Option<&Emulator> {
         let s = st.shared.as_ref().filter(|s| s.is_emulator())?;
@@ -972,7 +988,7 @@ mod tests {
         assert_eq!(c.offer("switch-2", Target::MacArm).unwrap().id, "a");
     }
 
-    fn emu(id: &str, consoles: &[&str], systems: &[&str]) -> Emulator {
+    pub(super) fn emu(id: &str, consoles: &[&str], systems: &[&str]) -> Emulator {
         Emulator {
             id: id.into(),
             name: id.into(),
@@ -994,6 +1010,7 @@ mod tests {
             advice: vec![],
             rom_prep: None,
             external_content: None,
+            shaders: None,
         }
     }
 
@@ -1266,5 +1283,23 @@ mod catalog_tests {
              "externalContent":{"format":"ini","file":"{exedir}/user/config/qt-config.ini","key":"UI.Paths\\external_content_dirs"}}]}"#).unwrap();
         assert!(new.external_content(&new.emulators[0]).is_none());
         assert_eq!(new.external_content(&new.emulators[1]), Some(rule));
+    }
+
+    // Écart E7 : le partage des shaders suit la clé `shaders:` ; sans elle dans tout le
+    // catalogue (ancien gestionnaire), l'ancien relevé vaut pour switch et switch-2.
+    #[cfg(feature = "gui")]
+    #[test]
+    fn shader_rule_follows_the_key_with_a_fallback() {
+        use crate::shaders::Rule;
+        let emu = super::tests::emu;
+        let mut c = Catalog { emulators: vec![emu("citron", &["switch"], &[]), emu("lichii", &["switch-2"], &[]), emu("mgba", &["gba"], &[])], ..Default::default() };
+        assert_eq!(c.shader_rule(&c.emulators[0]), Some(Rule::Legacy));
+        assert_eq!(c.shader_rule(&c.emulators[1]), Some(Rule::Legacy));
+        assert_eq!(c.shader_rule(&c.emulators[2]), None);
+        c.emulators[0].shaders = Some("user/shader/{titleid}/vulkan.bin".into());
+        c.emulators[2].shaders = Some("cache/{titleid}/v.bin".into());
+        assert_eq!(c.shader_rule(&c.emulators[0]), Some(Rule::Key("user/shader/{titleid}/vulkan.bin".into())));
+        assert_eq!(c.shader_rule(&c.emulators[1]), None);
+        assert_eq!(c.shader_rule(&c.emulators[2]), Some(Rule::Key("cache/{titleid}/v.bin".into())));
     }
 }

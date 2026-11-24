@@ -243,10 +243,14 @@ pub async fn finish(state: &AppState, rom_id: i64, started: OffsetDateTime, lear
     Finished { duration_ms: session.duration_ms, recorded, pending, save, save_error, game }
 }
 
-/// Partage des shaders pour un jeu Switch lancé par Citron ou Eden.
+/// Partage des shaders pour un jeu lancé par un émulateur dont la fiche a `shaders:`
+/// (Citron, Eden…), ou repli sur l'ancien test de la console (voir `Catalog::shader_rule`).
 fn shaders_job(state: &AppState, st: &state::InstalledGame, exe_dir: &std::path::Path) -> Option<crate::shaders::Job> {
-    let emulator = state.catalog().emulator_for_install(st).filter(|e| e.consoles.iter().any(|c| c == "switch" || c == "switch-2"))?.id.clone();
-    let (shader_root, cache_name) = crate::shaders::locate(exe_dir)?;
+    let catalog = state.catalog();
+    let e = catalog.emulator_for_install(st)?;
+    let rule = catalog.shader_rule(e)?;
+    let emulator = e.id.clone();
+    let (shader_root, cache_name) = crate::shaders::locate_rule(exe_dir, &rule)?;
     let base = crate::manager::base_url(&state.settings())?;
     let rom_dir = st.shared.as_ref()?.rom_dir.clone()?;
     Some(crate::shaders::Job {

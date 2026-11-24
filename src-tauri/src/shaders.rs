@@ -1,5 +1,9 @@
 //! Shaders partagés des émulateurs Switch (Citron, Eden), via FarfaRomManager.
 //!
+//! L'emplacement du cache vient de la fiche de l'émulateur (`shaders:
+//! user/shader/{titleid}/vulkan.bin`, écart E7), plus de sa console : voir `Rule` et
+//! `Catalog::shader_rule` (repli pour un ancien gestionnaire).
+//!
 //! Ces émulateurs gardent les shaders d'un jeu dans `user/shader/<ID du jeu>/vulkan.bin`, sous
 //! une forme indépendante de la carte graphique : ils les recompilent pour elle au démarrage, et
 //! le jeu ne saccade plus aux endroits déjà vus. Chaque joueur envoie son fichier après la partie
@@ -43,18 +47,52 @@ pub fn locate(exe_dir: &Path) -> Option<(PathBuf, String)> {
     let switch2 = exe_dir.join("user").join("cache").join("shader");
     let is_switch2 = switch2.is_dir();
     let root = if is_switch2 { switch2 } else { classic };
-    let files: Vec<String> = std::fs::read_dir(&root)
+    let files = cache_files(&root);
+    if files.iter().any(|f| f.starts_with("lichii-cache")) {
+        return None;
+    }
+    let name = files.into_iter().filter(|f| is_cache_name(f)).max_by_key(|f| f == CACHE).or_else(|| (!is_switch2).then(|| CACHE.to_string()))?;
+    Some((root, name))
+}
+
+/// Noms des fichiers rangés dans les dossiers des jeux (`<root>/<jeu>/<fichier>`).
+fn cache_files(root: &Path) -> Vec<String> {
+    std::fs::read_dir(root)
         .into_iter()
         .flatten()
         .filter_map(Result::ok)
         .filter(|e| e.path().is_dir())
         .flat_map(|e| std::fs::read_dir(e.path()).into_iter().flatten().filter_map(Result::ok))
         .map(|f| f.file_name().to_string_lossy().into_owned())
-        .collect();
-    if files.iter().any(|f| f.starts_with("lichii-cache")) {
+        .collect()
+}
+
+/// Où chercher le cache de shaders d'un émulateur (écart E7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Rule {
+    /// Clé `shaders:` de la fiche : `dossier/{titleid}/fichier`, relatif à l'exécutable. Un `*`
+    /// dans le fichier : son nom est relevé sur le disque (parmi les caches `vulkan*.bin`).
+    Key(String),
+    /// Gestionnaire d'avant la clé : ancien relevé sur le disque (`locate`).
+    Legacy,
+}
+
+/// Dossier des shaders et nom du cache selon la règle. `None` : rien à partager (règle
+/// invalide, ou cache au nom relevé sur le disque encore jamais écrit).
+pub fn locate_rule(exe_dir: &Path, rule: &Rule) -> Option<(PathBuf, String)> {
+    let key = match rule {
+        Rule::Legacy => return locate(exe_dir),
+        Rule::Key(key) => key,
+    };
+    let (dir, file) = key.split_once("/{titleid}/")?;
+    if dir.split('/').any(|p| p.is_empty() || p == "." || p == "..") || file.is_empty() || file.contains(['/', '\\']) {
         return None;
     }
-    let name = files.into_iter().filter(|f| is_cache_name(f)).max_by_key(|f| f == CACHE).or_else(|| (!is_switch2).then(|| CACHE.to_string()))?;
+    let root = exe_dir.join(crate::install::rel_to_path(dir));
+    if !file.contains('*') {
+        return Some((root, file.to_string()));
+    }
+    let name = cache_files(&root).into_iter().filter(|f| is_cache_name(f) && crate::report::wildcard(file, f)).max_by_key(|f| f == CACHE)?;
     Some((root, name))
 }
 
@@ -428,6 +466,27 @@ mod tests {
         put("lichii", "user/cache/shader/040074a01bf12000/lichii-cache.v2.bin");
         put("lichii", "user/cache/shader/0400486024dec000/vulkan.fork-v54.bin");
         assert_eq!(locate(&base.join("lichii")), None);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // Écart E7 : la clé `shaders:` de la fiche donne le dossier et le cache, `*` le relève sur le disque.
+    #[test]
+    fn cache_from_the_key_of_the_card() {
+        let base = std::env::temp_dir().join(format!("farfa-shaderkey-{}", uuid::Uuid::new_v4()));
+        let key = |k: &str| Rule::Key(k.to_string());
+        assert_eq!(locate_rule(&base, &key("user/shader/{titleid}/vulkan.bin")), Some((base.join("user/shader"), "vulkan.bin".into())));
+        // Nom relevé sur le disque : rien tant que le cache n'a jamais été écrit.
+        assert_eq!(locate_rule(&base, &key("user/cache/shader/{titleid}/*")), None);
+        let p = base.join("user/cache/shader/0400486024dec000");
+        std::fs::create_dir_all(&p).unwrap();
+        std::fs::write(p.join("vulkan_used-x.bin"), b"").unwrap();
+        std::fs::write(p.join("vulkan-x.bin"), b"").unwrap();
+        assert_eq!(locate_rule(&base, &key("user/cache/shader/{titleid}/*")), Some((base.join("user/cache/shader"), "vulkan-x.bin".into())));
+        // Règles invalides : aucun partage.
+        assert_eq!(locate_rule(&base, &key("user/shader/vulkan.bin")), None);
+        assert_eq!(locate_rule(&base, &key("../shader/{titleid}/vulkan.bin")), None);
+        // Ancien gestionnaire : ancien relevé.
+        assert_eq!(locate_rule(&base, &Rule::Legacy), locate(&base));
         let _ = std::fs::remove_dir_all(&base);
     }
 
