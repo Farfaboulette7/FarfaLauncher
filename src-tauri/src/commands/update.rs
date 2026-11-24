@@ -106,13 +106,78 @@ pub fn test_endpoint(tag: &str) -> Option<String> {
     ok.then(|| format!("https://github.com/Farfaboulette7/FarfaLauncher/releases/download/{tag}/latest.json"))
 }
 
+/// Le fichier à installer doit venir de la release `tag` du dépôt officiel (faille SL7) :
+/// `latest.json` ne peut pas envoyer le launcher télécharger ailleurs ni dans une autre release.
+/// (La signature, elle, est déjà vérifiée par le module de mise à jour avec la clé publique.)
+pub fn test_download_allowed(tag: &str, download_url: &str) -> bool {
+    download_url.starts_with(&format!("https://github.com/Farfaboulette7/FarfaLauncher/releases/download/{tag}/"))
+}
+
+/// `true` si la version `remote` n'est pas plus ancienne que `current` (règles semver :
+/// 1.2.2-beta.1 < 1.2.2 < 1.2.3-beta.1 ; la partie `+…` est ignorée). Une version illisible
+/// est refusée. Sert à ne pas installer une vieille version de test, qui ramènerait une
+/// faille déjà corrigée (faille SL7). Même numéro : accepté, c'est le cas normal (une version
+/// de test garde le numéro du launcher dont elle part).
+pub fn version_not_older(current: &str, remote: &str) -> bool {
+    use std::cmp::Ordering;
+
+    // « 1.2.3-beta.4+abc » → ([1, 2, 3], Some(["beta", "4"])).
+    fn parse(v: &str) -> Option<([u64; 3], Option<Vec<&str>>)> {
+        let v = v.trim().split('+').next()?;
+        let (core, pre) = match v.split_once('-') {
+            Some((c, p)) => (c, Some(p.split('.').collect::<Vec<_>>())),
+            None => (v, None),
+        };
+        let nums = core.split('.').map(|n| n.parse::<u64>().ok()).collect::<Option<Vec<_>>>()?;
+        let core: [u64; 3] = nums.try_into().ok()?;
+        if pre.as_ref().is_some_and(|p| p.iter().any(|s| s.is_empty())) {
+            return None;
+        }
+        Some((core, pre))
+    }
+    // Ordre de deux suffixes de pré-version, morceau par morceau : nombres comparés comme
+    // nombres, un nombre passe avant un mot, et à égalité le plus court passe avant.
+    fn cmp_pre(a: &[&str], b: &[&str]) -> Ordering {
+        for (x, y) in a.iter().zip(b) {
+            let o = match (x.parse::<u64>(), y.parse::<u64>()) {
+                (Ok(x), Ok(y)) => x.cmp(&y),
+                (Ok(_), Err(_)) => Ordering::Less,
+                (Err(_), Ok(_)) => Ordering::Greater,
+                (Err(_), Err(_)) => x.cmp(y),
+            };
+            if o != Ordering::Equal {
+                return o;
+            }
+        }
+        a.len().cmp(&b.len())
+    }
+
+    let (Some((c, cp)), Some((r, rp))) = (parse(current), parse(remote)) else {
+        return false;
+    };
+    match r.cmp(&c) {
+        Ordering::Greater => true,
+        Ordering::Less => false,
+        // Même X.Y.Z : une version sans suffixe (stable) passe après ses pré-versions.
+        Ordering::Equal => match (cp, rp) {
+            (None, None) | (Some(_), None) => true,
+            (None, Some(_)) => false,
+            (Some(cp), Some(rp)) => cmp_pre(&rp, &cp) != Ordering::Less,
+        },
+    }
+}
+
 /// Installe la version de test d'un signalement, proposée dans la discussion avec le support.
 /// Elle porte le numéro de version du launcher dont elle part : on l'installe donc même sans
-/// numéro plus grand. La prochaine version publiée la remplace par le canal habituel.
+/// numéro plus grand, mais jamais une version plus ancienne que celle en service, ni un
+/// fichier venu d'ailleurs que la release `tag` du dépôt officiel (faille SL7). La prochaine
+/// version publiée la remplace par le canal habituel.
 #[tauri::command]
 pub async fn install_test_version(app: AppHandle, tag: String) -> AppResult<()> {
     let url = test_endpoint(&tag).ok_or(AppError::NotAvailable)?;
     let url = url::Url::parse(&url).map_err(|e| log_err(AppError::Internal, "adresse de la version de test", e))?;
+    // Le comparateur accepte tout ici : la comparaison des versions est faite juste après,
+    // par version_not_older, pour pouvoir dire dans le journal pourquoi on refuse.
     let updater = app
         .updater_builder()
         .endpoints(vec![url])
@@ -123,6 +188,14 @@ pub async fn install_test_version(app: AppHandle, tag: String) -> AppResult<()> 
         .await
         .map_err(|e| log_err(AppError::ServerUnreachable, "version de test", e))?
         .ok_or(AppError::NotAvailable)?;
+    if !version_not_older(&update.current_version, &update.version) {
+        tracing::warn!("version de test {tag} refusée : {} est plus ancienne que {}", update.version, update.current_version);
+        return Err(AppError::NotAvailable);
+    }
+    if !test_download_allowed(&tag, update.download_url.as_str()) {
+        tracing::warn!("version de test {tag} refusée : fichier hors de la release {tag} du dépôt officiel");
+        return Err(AppError::NotAvailable);
+    }
     tracing::info!("version de test {tag} : {} → {}", update.current_version, update.version);
     *app.state::<PendingUpdate>().0.lock_or_recover() = Some(update);
     install_update(app).await
@@ -193,6 +266,75 @@ mod tests {
         assert!(test_endpoint("test-x").is_some());
         assert_eq!(test_endpoint("Test-x"), None);
         assert_eq!(test_endpoint("test-a b"), None);
+    }
+
+    // Garantit : une version de test n'est jamais plus ancienne que celle en service (SL7),
+    // mais le même numéro (cas normal) passe.
+    #[test]
+    fn test_version_never_older_than_current() {
+        // Même numéro : la version de test garde celui du launcher dont elle part.
+        assert!(version_not_older("1.2.2", "1.2.2"));
+        assert!(version_not_older("1.2.3-beta.1", "1.2.3-beta.1"));
+        // Plus récente.
+        assert!(version_not_older("1.2.2", "1.2.3"));
+        assert!(version_not_older("1.2.2", "1.2.3-beta.1"));
+        assert!(version_not_older("1.2.3-beta.1", "1.2.3"));
+        assert!(version_not_older("1.2.3-beta.2", "1.2.3-beta.10"));
+        assert!(version_not_older("1.9.0", "1.10.0"));
+        // Plus ancienne : refusée.
+        assert!(!version_not_older("1.2.2", "1.2.1"));
+        assert!(!version_not_older("1.2.3", "1.2.3-beta.4"));
+        assert!(!version_not_older("1.2.3-beta.10", "1.2.3-beta.2"));
+        assert!(!version_not_older("2.0.0", "1.99.99"));
+        // La partie « +… » ne compte pas.
+        assert!(version_not_older("1.2.2", "1.2.2+test"));
+        // Illisible : refusée.
+        assert!(!version_not_older("1.2.2", "abc"));
+        assert!(!version_not_older("1.2.2", "1.2"));
+        assert!(!version_not_older("1.2.2", "1.2.3-"));
+        assert!(!version_not_older("1.2.2", ""));
+    }
+
+    // Garantit : le fichier d'une version de test vient de la release de son tag, dans le
+    // dépôt officiel, et nulle part ailleurs (SL7).
+    #[test]
+    fn test_download_only_from_its_own_release() {
+        let tag = "test-20261117-130619-1-10625-1";
+        let base = format!("https://github.com/Farfaboulette7/FarfaLauncher/releases/download/{tag}/");
+        assert!(test_download_allowed(tag, &format!("{base}FaRFa.project_1.2.2_x64-setup.exe")));
+        assert!(!test_download_allowed(tag, "https://github.com/Farfaboulette7/FarfaLauncher/releases/download/test-autre-1/x.exe"));
+        assert!(!test_download_allowed(tag, "https://github.com/Farfaboulette7/FarfaLauncher/releases/download/v1.0.0/x.exe"));
+        assert!(!test_download_allowed(tag, "https://github.com/quelquun/FarfaLauncher/releases/download/test-20261117-130619-1-10625-1/x.exe"));
+        assert!(!test_download_allowed(tag, "https://exemple.invalid/x.exe"));
+        assert!(!test_download_allowed(tag, &format!("http://github.com/Farfaboulette7/FarfaLauncher/releases/download/{tag}/x.exe")));
+        // Un tag préfixe d'un autre ne suffit pas (« test-1 » ne couvre pas « test-10 »).
+        assert!(!test_download_allowed("test-1", "https://github.com/Farfaboulette7/FarfaLauncher/releases/download/test-10/x.exe"));
+    }
+
+    // Garantit : la clé de signature n'est jamais donnée à la CI des branches, et les
+    // workflows qui la reçoivent passent par l'approbation du propriétaire (SG3, SL6).
+    #[test]
+    fn signing_key_only_behind_owner_approval() {
+        let ci = include_str!("../../../.github/workflows/ci.yml");
+        assert!(!ci.contains("TAURI_SIGNING"), "ci.yml ne doit jamais recevoir la clé de signature");
+        for (nom, wf) in [
+            ("test.yml", include_str!("../../../.github/workflows/test.yml")),
+            ("release.yml", include_str!("../../../.github/workflows/release.yml")),
+        ] {
+            assert_eq!(wf.matches("secrets.TAURI_SIGNING_PRIVATE_KEY }}").count(), 1, "{nom} : la clé dans un seul job");
+            assert_eq!(wf.matches("environment: signature").count(), 1, "{nom} : environnement « signature » manquant");
+            // L'environnement est déclaré dans le job qui reçoit la clé (« build »).
+            // Lignes du job : de « build: » jusqu'au job suivant (ligne à deux espaces de retrait).
+            let wf = wf.replace("\r\n", "\n");
+            let build: String = wf
+                .lines()
+                .skip_while(|l| *l != "  build:")
+                .skip(1)
+                .take_while(|l| !(l.starts_with("  ") && l.chars().nth(2).is_some_and(|c| c.is_ascii_alphabetic())))
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(build.contains("environment: signature") && build.contains("TAURI_SIGNING_PRIVATE_KEY"), "{nom} : job build");
+        }
     }
 
     // Un tag de plus de 80 caractères est refusé (garde-fou sur l'adresse construite).
