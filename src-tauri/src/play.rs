@@ -115,8 +115,6 @@ pub async fn start(state: &AppState, rom_id: i64, save_choice: SaveChoice, cod: 
         None => None,
     };
     let st = healed.unwrap_or(st);
-    save_sync::before_play(state, rom_id, save_choice).await?;
-    let prepared = prepare_pc(state, &st, cod).await?;
     // « Ouvrir la recomp » : son launcher, sans les arguments qui le passent (`--play`…) ni le
     // jeu relevé derrière lui.
     // Un émulateur partagé s'ouvre aussi sans jeu (« Ouvrir l'émulateur »).
@@ -132,13 +130,28 @@ pub async fn start(state: &AppState, rom_id: i64, save_choice: SaveChoice, cod: 
     // Recomp ou émulateur : français par défaut, posé avant le lancement.
     // Ses variables (`variable:`) restent posées quand on ouvre le launcher de la recomp.
     let mut env: Vec<(String, String)> = direct.or(refreshed.as_ref().filter(|_| open_menu)).map(|d| d.env.clone()).unwrap_or_default();
-    let mut shader_job: Option<crate::shaders::Job> = None;
-    if prepared.is_none() {
+    // Dossier de référence du programme (`{exedir}`) : celui de l'exécutable lancé.
+    let exe_dir = {
         let program = st.game_dir.join(rel_to_path(direct.map(|d| d.exe.as_str()).unwrap_or(&exe)));
-        let exe_dir = match state.catalog().emulator_for_install(&st) {
+        match state.catalog().emulator_for_install(&st) {
             Some(e) => e.data_dir(&st.game_dir, direct.map(|d| d.exe.as_str()).unwrap_or(&exe)),
             None => program.parent().unwrap_or(&st.game_dir).to_path_buf(),
-        };
+        }
+    };
+    // Liens (`lien:`) posés en premier, hors jeu PC : la sauvegarde reçue du serveur, la langue
+    // et les manettes s'écrivent ensuite à travers eux, dans le dossier du jeu (sinon elles
+    // iraient dans le vrai dossier, déplacé juste après).
+    if st.pc.is_none() {
+        let links = state.catalog().links_for_install(&st);
+        if !links.is_empty() {
+            let dir = exe_dir.clone();
+            let _ = tokio::task::spawn_blocking(move || crate::links::apply(&links, &dir)).await;
+        }
+    }
+    save_sync::before_play(state, rom_id, save_choice).await?;
+    let prepared = prepare_pc(state, &st, cod).await?;
+    let mut shader_job: Option<crate::shaders::Job> = None;
+    if prepared.is_none() {
         let rules = state.catalog().language_for_install(&st);
         if !rules.is_empty() {
             env.extend(crate::language::prepare(&st.game_dir, &exe_dir, &rules));
@@ -152,22 +165,19 @@ pub async fn start(state: &AppState, rom_id: i64, save_choice: SaveChoice, cod: 
             let dir = exe_dir.clone();
             let _ = tokio::task::spawn_blocking(move || launch::before::run_all(&before, &dir)).await;
         }
-        // Recomp qui écrit à un endroit fixe (boiii : %LOCALAPPDATA%\boiii) : relié au dossier du jeu.
-        if let Some(r) = state.catalog().recomp_for_install(&st).filter(|r| !r.links.is_empty()) {
-            crate::links::apply(&r.links, &exe_dir);
-        }
         // Manette de chaque joueur, posée avant que le jeu ne prenne les manettes.
         if let Some(format) = state.catalog().controllers_for_install(&st) {
             if let Err(e) = crate::controllers::apply(&format, &st.players, pads, &exe_dir) {
                 tracing::warn!("manettes non attribuées: {e}");
             }
         }
-        // Citron et Eden : mises à jour et DLC du jeu lus dans son dossier.
-        if let Some(e) = state.catalog().emulator_for_install(&st).filter(|e| e.consoles.iter().any(|c| c == "switch")) {
+        // Mises à jour et DLC du jeu lus dans son dossier (`contenu-externe:` de l'émulateur).
+        let content = state.catalog().emulator_for_install(&st).and_then(|e| Some((e.name.clone(), state.catalog().external_content(e)?)));
+        if let Some((name, rule)) = content {
             if let Some(rom_dir) = st.shared.as_ref().and_then(|s| s.rom_dir.as_ref()) {
-                match crate::switch_content::apply(&exe_dir, rom_dir) {
-                    Ok(()) => tracing::info!("{} : contenu (mises à jour, DLC) lu dans {}", e.name, rom_dir.display()),
-                    Err(err) => tracing::warn!("contenu du jeu non déclaré à {}: {err}", e.name),
+                match crate::switch_content::apply(&rule, &exe_dir, rom_dir) {
+                    Ok(()) => tracing::info!("{name} : contenu (mises à jour, DLC) lu dans {}", rom_dir.display()),
+                    Err(err) => tracing::warn!("contenu du jeu non déclaré à {name}: {err}"),
                 }
             }
         }
@@ -242,10 +252,14 @@ pub async fn finish(state: &AppState, rom_id: i64, started: OffsetDateTime, lear
     Finished { duration_ms: session.duration_ms, recorded, pending, save, save_error, game }
 }
 
-/// Partage des shaders pour un jeu Switch lancé par Citron ou Eden.
+/// Partage des shaders pour un jeu lancé par un émulateur dont la fiche a `shaders:`
+/// (Citron, Eden…), ou repli sur l'ancien test de la console (voir `Catalog::shader_rule`).
 fn shaders_job(state: &AppState, st: &state::InstalledGame, exe_dir: &std::path::Path) -> Option<crate::shaders::Job> {
-    let emulator = state.catalog().emulator_for_install(st).filter(|e| e.consoles.iter().any(|c| c == "switch" || c == "switch-2"))?.id.clone();
-    let (shader_root, cache_name) = crate::shaders::locate(exe_dir)?;
+    let catalog = state.catalog();
+    let e = catalog.emulator_for_install(st)?;
+    let rule = catalog.shader_rule(e)?;
+    let emulator = e.id.clone();
+    let (shader_root, cache_name) = crate::shaders::locate_rule(exe_dir, &rule)?;
     let base = crate::manager::base_url(&state.settings())?;
     let rom_dir = st.shared.as_ref()?.rom_dir.clone()?;
     Some(crate::shaders::Job {

@@ -33,7 +33,7 @@ pub enum AppError {
     TokenRejected,
     #[error("Impossible d'accéder au trousseau sécurisé du système.")]
     Keychain,
-    #[error("Aucune plateforme « portage-… » n'a été trouvée sur ce serveur RomM.")]
+    #[error("Aucune plateforme avec des jeux n'a été trouvée sur ce serveur RomM.")]
     PlatformMissing,
     #[error("Cette fonction demande une autorisation de plus : reconnectez-vous une fois (Paramètres → Se déconnecter).")]
     ScopeMissing,
@@ -49,6 +49,10 @@ pub enum AppError {
     Disk,
     #[error("Le disque est plein. Libérez de l'espace puis réessayez.")]
     DiskFull,
+    /// Désinstallation : un dossier d'avant le launcher (repère `.farfa-migre`) n'a pas pu
+    /// retourner à son chemin d'origine. Rien n'a été effacé, la désinstallation est arrêtée.
+    #[error("Le dossier {path} n'a pas pu être remis à sa place : rien n'a été effacé. Fermez le programme qui l'utilise ou libérez de la place, puis réessayez.")]
+    FolderNotRestored { path: String },
     #[error("Espace disque insuffisant : il faut {needed}, il reste {available}.")]
     NotEnoughSpace { needed: String, available: String },
     #[error("L'archive du jeu est illisible ou endommagée.")]
@@ -114,6 +118,7 @@ impl AppError {
             AppError::Integrity => "integrity",
             AppError::Disk => "disk",
             AppError::DiskFull => "disk_full",
+            AppError::FolderNotRestored { .. } => "folder_not_restored",
             AppError::NotEnoughSpace { .. } => "not_enough_space",
             AppError::Extract => "extract",
             AppError::KeysMissing => "keys_missing",

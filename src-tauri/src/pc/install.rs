@@ -71,12 +71,13 @@ pub async fn sync_boiii(
     mut on_progress: impl FnMut(u64, u64),
 ) -> AppResult<()> {
     let installed = game_dir.join("boiii.exe").is_file();
-    let file = access.catalog.recomp(cod::BOIII_CLIENT).and_then(|r| r.archives(Target::Windows).1).map(|a| a.file);
+    // Fiche du client qui déclare `pour: bo3_game_files` (repli : la fiche « boiii »).
+    let file = access.catalog.pc_client(CodGame::Bo3.zip_motif()).and_then(|r| r.archives(Target::Windows).1).map(|a| a.file);
     let marker = game_dir.join("boiii").join(BOIII_MARKER);
     match file {
         None if installed => tracing::warn!("boiii absent du catalogue : client en place gardé"),
         None => {
-            tracing::error!("boiii absent du catalogue de FarfaRomManager (fiche « {} »)", cod::BOIII_CLIENT);
+            tracing::error!("boiii absent du catalogue de FarfaRomManager (fiche « pour: {} », ou « {} »)", CodGame::Bo3.zip_motif(), cod::BOIII_CLIENT);
             return Err(AppError::NotAvailable);
         }
         Some(f) if std::fs::read_to_string(&marker).ok().as_deref() == f.sha1.as_deref() && installed => {}
@@ -118,6 +119,32 @@ pub async fn sync_boiii(
         Ok(())
     })
     .await
+}
+
+/// `%LOCALAPPDATA%` possibles d'un jeu PC installé, sans préparer Proton (désinstallation) :
+/// celui du système sous Windows, ceux du préfixe sous Linux (avec ou sans `pfx/`, selon umu).
+fn local_appdata_candidates(pc: &super::PcInstall) -> Vec<PathBuf> {
+    match &pc.proton {
+        Some(setup) => [setup.prefix.join("pfx").join("drive_c"), setup.prefix.join("drive_c")]
+            .into_iter()
+            .map(|c| c.join("users").join("steamuser").join("AppData").join("Local"))
+            .collect(),
+        None => std::env::var_os("LOCALAPPDATA").map(PathBuf::from).into_iter().collect(),
+    }
+}
+
+/// Désinstallation de Black Ops III : la jonction `%LOCALAPPDATA%\boiii` posée par
+/// `sync_boiii` part avec le jeu ; un dossier boiii d'avant le launcher (repère
+/// `.farfa-migre`, posé par `links::place`) retourne à son chemin d'origine. Si c'est
+/// impossible, erreur : la désinstallation s'arrête, rien n'est effacé.
+pub fn unlink_boiii(pc: &super::PcInstall, game_dir: &Path) -> AppResult<()> {
+    if pc.cod != Some(CodGame::Bo3) {
+        return Ok(());
+    }
+    for local in local_appdata_candidates(pc) {
+        crate::links::remove_link_into(&local.join("boiii"), game_dir)?;
+    }
+    Ok(())
 }
 
 /// `%LOCALAPPDATA%` vu par le jeu (celui du préfixe sous Proton).
@@ -496,10 +523,12 @@ pub async fn prepare_cod(
     let launch = cod.launch(mode).ok_or(AppError::Internal)?;
     if let Some(r) = runner {
         let (r, gd) = (r.clone(), game_dir.to_path_buf());
+        // Client qui exige Steam dans le préfixe (boiii), que Proton ne pose pas sous umu :
+        // `proton-steam: oui` de sa fiche (repli : Black Ops III).
+        let steam = access.catalog.pc_client_needs_steam(cod.zip_motif());
         blocking(move || {
             r.ensure_prefix()?;
-            // boiii exige Steam dans le préfixe, que Proton ne pose pas sous umu.
-            if cod == CodGame::Bo3 {
+            if steam {
                 if let Err(e) = r.ensure_steam_marker(&gd) {
                     tracing::warn!("Steam non préparé dans le préfixe: {}", e.code());
                 }
@@ -676,6 +705,29 @@ fn group_alive(pgid: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Relecture 3 : désinstaller Black Ops III retire la jonction boiii du préfixe, et rend à
+    // sa place un dossier boiii d'avant le launcher ; rien pour un autre jeu PC.
+    #[test]
+    fn uninstalling_bo3_gives_back_boiii() {
+        let root = std::env::temp_dir().join(format!("farfa-boiii-{}", uuid::Uuid::new_v4()));
+        let prefix = root.join("prefixe");
+        let local = prefix.join("pfx").join("drive_c").join("users").join("steamuser").join("AppData").join("Local");
+        let game = root.join("Jeux").join("bo3");
+        std::fs::create_dir_all(local.join("boiii")).unwrap();
+        std::fs::write(local.join("boiii").join("avant.txt"), "a").unwrap();
+        std::fs::create_dir_all(&game).unwrap();
+        assert!(crate::links::place(&local.join("boiii"), &game.join("boiii")).unwrap());
+        let pc = |cod: &str| -> super::super::PcInstall {
+            serde_json::from_value(serde_json::json!({"kind": "archive", "os": "windows", "cod": cod, "proton": {"prefix": prefix}})).unwrap()
+        };
+        unlink_boiii(&pc("bo2"), &game).unwrap();
+        assert!(game.join("boiii").join("avant.txt").exists()); // autre Call of Duty : rien
+        unlink_boiii(&pc("bo3"), &game).unwrap();
+        assert_eq!(std::fs::read_to_string(local.join("boiii").join("avant.txt")).unwrap(), "a");
+        assert!(!game.join("boiii").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn chunks_keep_their_folders() {

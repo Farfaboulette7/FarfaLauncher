@@ -1,4 +1,8 @@
-//! Lecture des plateformes `portage-*` et de leurs jeux (docs/romm-api.md §2-4).
+//! Lecture des plateformes de RomM et de leurs jeux (docs/romm-api.md §2-4).
+//!
+//! Écart E14 : les plateformes `portage-*` ont quitté RomM le 08/11/2026 ; leur code est retiré.
+//! Reste la migration des installations faites sur elles (`previousRomId` du catalogue,
+//! `Catalog::moved_games`), qui sert encore aux joueurs qui n'ont pas relancé le launcher depuis.
 
 use serde::{Deserialize, Serialize};
 
@@ -6,9 +10,6 @@ use super::client::{parse_json, RommClient};
 use crate::error::{log_err, AppError, AppResult};
 use crate::platform::{self, ArchiveKind, Target};
 
-/// Plateformes gérées : dossiers dont le nom commence par ce préfixe
-/// (`portage-n64`, `portage-ngc`…).
-pub const PLATFORM_PREFIX: &str = "portage";
 const VERSION_FILE: &str = "VERSION.txt";
 const PAGE_SIZE: usize = 100;
 /// RomM peut mettre longtemps à décrire un jeu aux nombreux fichiers.
@@ -226,7 +227,7 @@ pub struct Game {
     /// Nombre maximal de joueurs sur une même machine, d'après RomM.
     #[serde(default)]
     pub players: Option<u8>,
-    /// Console d'origine (slug RomM), commune à `gba` et `portage-gba`.
+    /// Console d'origine (slug RomM).
     #[serde(default)]
     pub console: String,
     /// Ce jeu a une recomp.
@@ -260,15 +261,15 @@ pub struct Game {
     pub updated_at: String,
 }
 
-/// Plateformes du serveur qui ont des jeux, triées par nom. Les `portage-*` et les
-/// jeux PC sont chargés d'un coup ; les autres consoles à l'ouverture de leur liste.
+/// Plateformes du serveur qui ont des jeux, triées par nom. Les jeux PC sont chargés d'un
+/// coup ; les autres consoles à l'ouverture de leur liste.
 pub async fn list_platforms(client: &RommClient) -> AppResult<Vec<Platform>> {
     let raws: Vec<RawPlatform> = client.get_json("api/platforms").await?;
     let total = raws.len();
     let base = client.base();
     let mut platforms: Vec<Platform> = raws
         .into_iter()
-        .filter(|p| is_portage(&p.fs_slug) || crate::pc::is_pc_folder(&p.fs_slug) || p.rom_count > 0)
+        .filter(|p| crate::pc::is_pc_folder(&p.fs_slug) || p.rom_count > 0)
         .map(|p| {
             let pc = crate::pc::is_pc_folder(&p.fs_slug);
             let icon_urls = [&p.fs_slug, &p.slug]
@@ -305,16 +306,12 @@ fn is_pc_rom(r: &RawRom) -> bool {
     path.trim_end_matches('/').rsplit('/').skip(1).take(2).any(crate::pc::is_pc_folder)
 }
 
-pub fn is_portage(fs_slug: &str) -> bool {
-    fs_slug.to_ascii_lowercase().starts_with(PLATFORM_PREFIX)
-}
-
 /// Liste légère des jeux (sans leurs fichiers) : rapide même sur un serveur lent.
 /// Les fichiers sont chargés ensuite jeu par jeu (`fetch_game_details`), pour
 /// qu'un jeu lent à décrire par RomM ne bloque pas toute la bibliothèque.
 pub async fn list_games(client: &RommClient, platforms: &[Platform], me: Target) -> AppResult<Vec<Game>> {
     let mut raws: Vec<RawRom> = Vec::new();
-    for p in platforms.iter().filter(|p| is_portage(&p.fs_slug) || crate::pc::is_pc_folder(&p.fs_slug)) {
+    for p in platforms.iter().filter(|p| crate::pc::is_pc_folder(&p.fs_slug)) {
         list_platform_games(client, p.id, &mut raws).await?;
     }
     let base = client.base().to_string();
@@ -633,8 +630,7 @@ fn top_folder(rel: &str) -> Option<String> {
 fn to_game(r: RawRom, base: &str, me: Target, details_loaded: bool) -> Game {
     let pc_rom = is_pc_rom(&r);
     // Entrée de console : pas de RECOMP/ ni de ROM/, tous ses fichiers sont la ROM.
-    let plain_rom = !pc_rom && !r.platform_fs_slug.is_empty() && !is_portage(&r.platform_fs_slug);
-    let portage = is_portage(&r.platform_fs_slug);
+    let plain_rom = !pc_rom && !r.platform_fs_slug.is_empty();
     let console = r.platform_slug.clone();
     let files: Vec<(RemoteFile, Option<String>)> = r
         .files
@@ -772,7 +768,8 @@ fn to_game(r: RawRom, base: &str, me: Target, details_loaded: bool) -> Game {
         variant,
         players: meta.player_count.as_deref().and_then(max_players),
         console,
-        recomp: portage,
+        // Une recomp se reconnaît au catalogue du gestionnaire (`runtimes::annotate`).
+        recomp: false,
         emulator: None,
         emulators: Vec::new(),
         recomps: Vec::new(),
@@ -827,14 +824,6 @@ mod tests {
             relative_path("farfa-portage/roms/Super Mario 64", "Super Mario 64", "library/farfa-portage/roms/Super Mario 64/ROM/a.z64"),
             "ROM/a.z64"
         );
-    }
-
-    #[test]
-    fn portage_platforms() {
-        assert!(is_portage("portage-ngc"));
-        assert!(is_portage("Portage-N64"));
-        assert!(!is_portage("farfa-portage"));
-        assert!(!is_portage("ngc"));
     }
 
     #[test]

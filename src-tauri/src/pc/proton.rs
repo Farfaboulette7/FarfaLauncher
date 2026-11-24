@@ -324,6 +324,8 @@ impl Runner {
         Ok(())
     }
 
+    /// Seulement pour un client dont la fiche a `proton-steam: oui` (écart E5, voir
+    /// `Catalog::pc_client_needs_steam`).
     /// Steam « présent » dans le préfixe : `C:\Program Files (x86)\Steam\steam.exe` et la
     /// clé `HKLM\Software\Wow6432Node\Valve\Steam\InstallPath`. Proton ne pose `steam.exe`
     /// qu'à partir du Steam de Linux (`STEAM_COMPAT_CLIENT_INSTALL_PATH/legacycompat`),

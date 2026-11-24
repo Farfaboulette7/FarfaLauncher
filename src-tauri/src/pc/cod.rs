@@ -47,7 +47,8 @@ pub enum CodGame {
     Bo3,
 }
 
-/// Fiche de FarfaRomManager qui fournit boiii (client de Black Ops III).
+/// Fiche de FarfaRomManager qui fournit boiii (client de Black Ops III), quand aucune fiche du
+/// catalogue ne déclare encore `pour:` (ancien gestionnaire) : voir `Catalog::pc_client`.
 pub const BOIII_CLIENT: &str = "boiii";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -87,6 +88,20 @@ pub enum ModeLaunch {
 }
 
 impl CodGame {
+    /// Motif de ses zips dans RomM (sans morceau ni `.zip`) : ce que déclare `pour:` dans la
+    /// fiche de son client (écart E2).
+    pub fn zip_motif(self) -> &'static str {
+        match self {
+            CodGame::Cod4 => "cod4_game_files",
+            CodGame::Waw => "waw_game_files",
+            CodGame::Mw2 => "mw2_game_files",
+            CodGame::Bo1 => "bo1_game_files",
+            CodGame::Bo2 => "bo2_game_files",
+            CodGame::Mw3 => "mw3_game_files",
+            CodGame::Bo3 => "bo3_game_files",
+        }
+    }
+
     /// `bo2_game_files.zip`, ou un morceau `bo3_game_files-01.zip`.
     pub fn from_zip_name(name: &str) -> Option<Self> {
         let lower = name.to_ascii_lowercase();
@@ -336,6 +351,15 @@ impl CodGame {
 // en croyant le jeu bloqué en anglais par boiii : il cherchait alors les `fr_*` disparus et
 // plantait. Ces renommages sont défaits (`restore_bo3_zones`), au changement de langue et
 // avant chaque partie. Le choix se fait dans l'onglet Informations du jeu.
+//
+// Quand retirer la rustine (écart E3, noté le 24/11/2026) : `restore_bo3_zones` et
+// `repair_bo3_zone` (installations d'avant la 0.9.8) ne servent qu'aux jeux installés ou passés
+// en français par un launcher 1.0 ou 1.1 bêta. Les retirer quand plus aucun joueur n'a lancé
+// Black Ops III avec un de ces launchers depuis : au plus tôt quand tous les amis ont lancé BO3
+// au moins une fois avec la 1.2.0 ou plus (chaque partie répare le jeu), par exemple en
+// vérifiant les rapports et les statistiques du gestionnaire (version du launcher par joueur).
+// Garder alors `localization.txt` (le « Language Switcher ») : c'est la vraie façon de changer
+// la langue, voulue à terme sous forme de `langue: ligne | localization.txt | … | fr | en`.
 
 /// Langues proposées pour Black Ops III (le jeu les contient toutes les deux).
 pub const BO3_LANGUAGES: [&str; 2] = ["fr", "en"];

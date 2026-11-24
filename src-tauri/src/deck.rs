@@ -405,7 +405,7 @@ async fn config(state: &AppState, args: &[String]) -> AppResult<Value> {
     info(state).await
 }
 
-/// Consoles où le Deck peut jouer : recomps (`portage-*`), jeux PC et consoles avec un émulateur.
+/// Consoles où le Deck peut jouer : recomps, jeux PC et consoles avec un émulateur.
 async fn consoles(state: &AppState) -> AppResult<Value> {
     let client = state.client()?;
     refresh_catalog(state).await;
@@ -415,7 +415,7 @@ async fn consoles(state: &AppState) -> AppResult<Value> {
     for p in platforms.iter_mut() {
         p.has_emulator = catalog.offer(&p.slug, me).is_some_and(|o| o.available) || catalog.offer(&p.fs_slug, me).is_some_and(|o| o.available);
     }
-    platforms.retain(|p| p.rom_count > 0 && (p.has_emulator || library::is_portage(&p.fs_slug) || crate::pc::is_pc_folder(&p.fs_slug)));
+    platforms.retain(|p| p.rom_count > 0 && (p.has_emulator || crate::pc::is_pc_folder(&p.fs_slug)));
     // Les recomps sont rangées dans leur vraie console (souvent sans émulateur pour le
     // Deck) : regroupées dans une console à part, en tête.
     let recomps = deck_recomps(state).len();
@@ -777,11 +777,21 @@ async fn play(state: &AppState, id: i64) -> AppResult<Value> {
     Ok(json!({ "finished": finished, "crashed": crashed, "crash": crash }))
 }
 
+/// Essai permis : un jeu d'émulateur sans shaders partagés (`shaders:`) ni sauvegarde à
+/// compléter au lancement (`{profil}`). Écart E9 : la fiche décide, quelle que soit la console.
+fn smoke_allowed(catalog: &crate::manager::Catalog, st: &state::InstalledGame) -> bool {
+    st.pc.is_none() && catalog.emulator_for_install(st).is_some_and(|e| smoke_emulator(catalog, e))
+}
+
+fn smoke_emulator(catalog: &crate::manager::Catalog, e: &crate::manager::Emulator) -> bool {
+    catalog.shader_rule(e).is_none() && !crate::switch_saves::has_profile_rule(e)
+}
+
 /// Smoke test (`scripts/smoke-test.ps1`) : lance un jeu installé comme `jouer`, mais sans
 /// rien écrire sur le serveur.
-/// - Seulement un jeu d'émulateur, hors Switch : `play::start` ne prépare alors ni jeu PC
-///   (client Call of Duty) ni partage des shaders (Citron, Eden : `shaders::Job::before`
-///   peut envoyer au gestionnaire). Le reste est refusé.
+/// - Seulement un jeu d'émulateur sans partage avec le serveur (`smoke_allowed`) : `play::start`
+///   ne prépare alors ni jeu PC (client Call of Duty) ni partage des shaders
+///   (`shaders::Job::before` peut envoyer au gestionnaire). Le reste est refusé.
 /// - `SaveChoice::Unchanged` : ni téléchargement ni envoi de sauvegarde.
 /// - Ni `play::finish` (temps de jeu, sauvegarde, shaders), ni `stats::sync`, ni la présence.
 /// Le jeu doit tenir `secs` secondes, puis il est fermé (prié de se fermer, puis arrêté).
@@ -794,14 +804,12 @@ async fn smoke_launch(state: &AppState, id: i64, secs: u64) -> AppResult<Value> 
     if state.client().is_ok() {
         refresh_catalog(state).await;
     }
-    let allowed = st.pc.is_none()
-        && state.catalog().emulator_for_install(&st).is_some_and(|e| !e.consoles.iter().any(|c| c.starts_with("switch")));
-    if !allowed {
-        tracing::warn!("essai refusé pour « {} » : seulement un jeu d'émulateur hors Switch (rien ne doit partir au serveur)", st.name);
+    if !smoke_allowed(&state.catalog(), &st) {
+        tracing::warn!("essai refusé pour « {} » : seulement un jeu d'émulateur sans shaders partagés ni sauvegarde à compléter (rien ne doit partir au serveur)", st.name);
         return Err(AppError::NotAvailable);
     }
     let crate::play::Started { running, shader_job, .. } = crate::play::start(state, id, SaveChoice::Unchanged, None, false, &[]).await?;
-    // Impossible hors Switch ; vérifié quand même : aucun partage de shaders.
+    // Impossible sans `shaders:` ; vérifié quand même : aucun partage de shaders.
     debug_assert!(shader_job.is_none());
     emit(json!({ "type": "started", "data": { "romId": id } }));
     let stop = running.stop_flag();
@@ -930,5 +938,20 @@ mod tests {
         // Variable vide : le fichier.
         assert_eq!(pick_token(Some("  ".into()), &dir).as_deref(), Some("rmm_fichier"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // Écart E9 : l'essai est refusé pour un émulateur qui a `shaders:` ou une sauvegarde à
+    // compléter (`{profil}`), quelle que soit sa console ; permis sinon, même sur Switch.
+    #[test]
+    fn smoke_test_depends_on_the_card_not_the_console() {
+        let catalog: crate::manager::Catalog = serde_json::from_str(r#"{"emulators":[
+            {"id":"a","name":"A","consoles":["gba"],"version":{"cle":"k","nom":"1"},"shaders":"cache/{titleid}/v.bin"},
+            {"id":"b","name":"B","consoles":["wii"],"version":{"cle":"k","nom":"1"},"saves":{"dir":"nand/{profil}"}},
+            {"id":"c","name":"C","consoles":["switch"],"version":{"cle":"k","nom":"1"},"saves":{"dir":"saves"},"shaders":false},
+            {"id":"s","name":"S","consoles":["switch"],"version":{"cle":"k","nom":"1"},"saves":{"dir":"saves"}},
+            {"id":"d","name":"D","consoles":["psx"],"version":{"cle":"k","nom":"1"},"saves":{"dir":"{romdir}"}}]}"#).unwrap();
+        let ok: Vec<bool> = catalog.emulators.iter().map(|e| smoke_emulator(&catalog, e)).collect();
+        // s : Switch sans `shaders:` → ancienne règle, partage, donc refusé.
+        assert_eq!(ok, [false, false, true, false, true]);
     }
 }

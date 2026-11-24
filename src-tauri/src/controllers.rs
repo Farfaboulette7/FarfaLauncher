@@ -21,9 +21,20 @@ pub struct PlayerPad {
     pub name: String,
 }
 
-/// Nombre de joueurs qu'un format sait attribuer (0 : format inconnu).
+/// Nombre de joueurs attribués. Par défaut, tous ceux que le format sait attribuer ; la fiche
+/// peut en demander moins avec `joueurs=N` (`manettes: dolphin | joueurs=2`, écart E11), jamais
+/// plus : le code de chaque format ne connaît que ses ports. 0 : format inconnu.
 pub fn ports(format: &str) -> usize {
-    match format_name(format) {
+    let max = max_ports(format_name(format));
+    match params(format).iter().find(|(k, _)| k == "joueurs").and_then(|(_, v)| v.parse::<usize>().ok()) {
+        Some(wanted) => wanted.min(max),
+        None => max,
+    }
+}
+
+/// Nombre de joueurs qu'un format sait attribuer (0 : format inconnu).
+fn max_ports(name: &str) -> usize {
+    match name {
         "dolphin" | "punes" | "aurora" | "recharged" | "eden" => 4,
         "snes9x" | "duckstation" | "pcsx2" => 2,
         "mgba" | "ppsspp" | "melonds" | "azahar" => 1,
@@ -111,6 +122,10 @@ fn write(path: &Path, before: &str, after: &str) -> Result<(), String> {
     std::fs::write(path, after).map_err(|e| format!("{}: {e}", path.display()))
 }
 
+/// Fichier des manettes. Un chemin hors de l'émulateur (`{config}/dolphin-emu/…` sous Linux)
+/// reste écrit à cet endroit : si la fiche a un `lien:` de ce dossier vers l'émulateur
+/// (écart E20), posé avant les manettes (play.rs), l'écriture passe par le lien et arrive dans
+/// le dossier de l'émulateur. Sans lien, rien ne change.
 fn path_for(windows: &str, linux: &str, exe_dir: &Path) -> Result<PathBuf, String> {
     let rel = if cfg!(windows) { windows } else { linux };
     expand(rel, exe_dir).ok_or_else(|| format!("dossier introuvable : {rel}"))
@@ -1322,6 +1337,20 @@ mod tests {
         assert_eq!(ini_value(&toml, "Instance0.Joystick", "HK_SwapScreens"), Some(rt.as_str()));
         assert_eq!(ini_value(&toml, "Instance0.Joystick", "HK_SwapScreenEmphasis"), Some(rt.as_str()));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // Écart E11 : `joueurs=N` réduit le nombre de joueurs ; sans lui, rien ne change.
+    #[test]
+    fn players_count_from_the_card() {
+        assert_eq!(ports("dolphin"), 4);
+        assert_eq!(ports("dolphin | joueurs=2"), 2);
+        assert_eq!(ports("aurora | windows={documents}/X | joueurs=1"), 1);
+        assert_eq!(ports("snes9x | joueurs=4"), 2); // jamais plus que le format
+        assert_eq!(ports("eden | joueurs=beaucoup"), 4); // illisible : défaut
+        assert_eq!(ports("inconnu | joueurs=2"), 0);
+        let a = pad(0, "Xbox", "g", "a", Some(0));
+        let b = pad(1, "Xbox", "g", "b", Some(1));
+        assert_eq!(resolve(&[], &[a.clone(), b], ports("dolphin | joueurs=1")), vec![Some(a)]);
     }
 
     #[test]
