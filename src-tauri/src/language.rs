@@ -194,7 +194,8 @@ pub fn expand(file: &str, exe_dir: &Path) -> Option<PathBuf> {
     };
     // Jamais en dehors du dossier de départ (faille SL4) : après le joker, seulement `/nom/nom…`.
     let rest = rest.strip_prefix('/')?;
-    if !is_simple_relative(rest) {
+    // Ni dossier protégé (Démarrage, autostart, .ssh…), quelle que soit la clé de la fiche.
+    if !is_simple_relative(rest) || is_sensitive(rest) {
         return None;
     }
     let path = rest.split('/').fold(base.clone(), |p, part| p.join(part));
@@ -217,6 +218,47 @@ pub(crate) fn is_simple_relative(rest: &str) -> bool {
     !rest.is_empty()
         && !rest.contains(['\\', ':', '\0'])
         && rest.split('/').all(|part| !part.trim_end_matches(['.', ' ']).is_empty())
+}
+
+/// Dossiers où une fiche n'écrit ni ne relie jamais rien (faille SL4), quelle que soit la clé
+/// (`lien:`, `langue:`, `manettes:`, `optimiser:`, `sauvegardes:`, `journaux:`…) : un fichier
+/// ou un lien y ferait lancer un programme au démarrage de la session ou du shell, ou y
+/// prendrait des clés. Comparés sans tenir compte de la casse, à chaque dossier du chemin
+/// après le joker. Une seule liste, pour toutes les clés.
+const SENSITIVE: &[&str] = &[
+    // Windows : tout `Microsoft` (menu Démarrer, dossier Démarrage, profils…).
+    "microsoft",
+    "start menu",
+    "startup",
+    // Profils PowerShell, lancés à chaque ouverture (`{documents}/WindowsPowerShell`).
+    "windowspowershell",
+    "powershell",
+    // Linux / Steam Deck : programmes lancés à l'ouverture de session.
+    "autostart",
+    "systemd",
+    "environment.d",
+    // Clés SSH et GPG.
+    ".ssh",
+    ".gnupg",
+    // Fichiers lus par les shells à leur démarrage.
+    ".bashrc",
+    ".bash_profile",
+    ".bash_login",
+    ".profile",
+    ".zshrc",
+    ".zprofile",
+    "fish",
+];
+
+/// Le chemin (`{appdata}/…`, ou ce qui suit le joker) touche-t-il un dossier protégé (`SENSITIVE`) ?
+/// Un `~` est refusé aussi : sous Windows, le nom court `MICROS~1` désigne `Microsoft`.
+/// Les points et espaces de fin sont ignorés : Windows les enlève (`Startup.` = `Startup`).
+pub(crate) fn is_sensitive(pattern: &str) -> bool {
+    let rest = pattern.split_once('}').map_or(pattern, |(_, rest)| rest);
+    rest.split('/').any(|part| {
+        let name = part.trim().trim_end_matches(['.', ' ']).to_lowercase();
+        name.contains('~') || SENSITIVE.contains(&name.as_str())
+    })
 }
 
 fn env_dir(key: &str) -> Option<PathBuf> {
@@ -438,6 +480,31 @@ mod tests {
         for path in refused {
             assert_eq!(expand(path, exe), None, "{path} doit être refusé");
         }
+    }
+
+    // Faille SL4 : `langue:` (et toute clé passant par `expand`) n'écrit jamais dans un
+    // dossier protégé, quelle que soit la casse.
+    #[test]
+    fn sl4_language_rule_never_writes_in_startup() {
+        let base = std::env::temp_dir().join(format!("farfa-langue-sl4-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&base).unwrap();
+        for file in [
+            "{appdata}/Microsoft/Windows/Start Menu/Programs/Startup/x.bat",
+            "{exedir}/Microsoft/Windows/Start Menu/Programs/Startup/x.bat",
+            "{exedir}/startup/x.bat",
+            "{exedir}/STARTUP./x.bat",
+            "{config}/autostart/x.desktop",
+            "{exedir}/autostart/x.desktop",
+            "{exedir}/.ssh/authorized_keys",
+            "{exedir}/MICROS~1/x.ini",
+        ] {
+            let rule = LanguageRule { system: None, format: "ini".into(), file: Some(file.into()), key: "a".into(), value: "1".into(), english: None };
+            assert_eq!(apply(&rule, &base), Err("dossier introuvable".to_string()), "{file} doit être refusé");
+            assert_eq!(expand(file, &base), None);
+        }
+        // Rien n'a été écrit dans le dossier du jeu.
+        assert_eq!(std::fs::read_dir(&base).unwrap().count(), 0);
+        std::fs::remove_dir_all(&base).unwrap();
     }
 
     // Chemins des fiches réelles du gestionnaire (recomps/ et emulateurs/, 24/11/2026) : tous

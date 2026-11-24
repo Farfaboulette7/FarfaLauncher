@@ -56,8 +56,8 @@ fiches des recomps et des émulateurs) est décrit dans le dépôt du gestionnai
 | `pc/` | Jeux PC de la plateforme « Ordinateur » : `gog`, `cod` (Call of Duty et ses clients), `proton` (Linux), `steam`, `dosbox`, `net`, `install`. |
 | `play.rs` | Tout ce qui se fait avant et après une partie, sans Tauri (partagé avec le Deck). |
 | `launch/` | Lancement du processus, suivi de la durée, `kill_tree` (arrêt de tout l'arbre). |
-| `links.rs` | Clé `lien:` : un dossier hors du jeu remplacé par un lien vers un dossier du jeu. Jamais un dossier protégé (`SENSITIVE` : `Microsoft`, Démarrage, `autostart`, `.ssh`…). |
-| `language.rs` | Clé `langue:` et jokers `{exedir}`, `{appdata}`, `{localappdata}`, `{config}`, `{documents}`, suivis seulement de `/nom/nom` (ni `..`, ni `.`, ni `\`, ni `:`, ni chemin absolu). |
+| `links.rs` | Clé `lien:` : un dossier hors du jeu remplacé par un lien vers un dossier du jeu. |
+| `language.rs` | Clé `langue:` et jokers `{exedir}`, `{appdata}`, `{localappdata}`, `{config}`, `{documents}`, suivis seulement de `/nom/nom` (ni `..`, ni `.`, ni `\`, ni `:`, ni chemin absolu), jamais vers un dossier protégé (liste `SENSITIVE` : `Microsoft`, Démarrage, `autostart`, `.ssh`…), pour toutes les clés. |
 | `controllers.rs`, `gamepad.rs` | Manettes (SDL 3) et leur écriture dans la configuration de l'émulateur ou de la recomp. |
 | `optimize.rs`, `hardware.rs` | Réglages optimisés selon le PC (clé `optimiser:`). |
 | `shaders.rs`, `switch_content.rs`, `switch_saves.rs`, `n3ds.rs` | Cas propres à Switch et 3DS, pilotés par les clés des fiches. |

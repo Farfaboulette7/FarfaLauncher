@@ -30,7 +30,7 @@ pub struct Link {
 /// Pose les liens de ce système. Une erreur est notée au journal sans bloquer le lancement.
 pub fn apply(links: &[Link], exe_dir: &Path) {
     for link in links.iter().filter(|l| l.system.as_deref().is_none_or(|s| s == crate::language::current_system())) {
-        if is_sensitive(&link.path) {
+        if crate::language::is_sensitive(&link.path) {
             tracing::warn!("lien refusé : dossier « {} » protégé", link.path);
             continue;
         }
@@ -48,45 +48,6 @@ pub fn apply(links: &[Link], exe_dir: &Path) {
             Err(e) => tracing::warn!("lien {} -> {} non posé: {e}", path.display(), target.display()),
         }
     }
-}
-
-/// Dossiers qu'un `lien:` ne remplace jamais (faille SL4) : un lien y ferait lancer un
-/// programme du jeu au démarrage de la session ou du shell, ou y prendrait des clés.
-/// Comparés sans tenir compte de la casse, à chaque dossier du chemin après le joker.
-const SENSITIVE: &[&str] = &[
-    // Windows : tout `Microsoft` (menu Démarrer, dossier Démarrage, profils…).
-    "microsoft",
-    "start menu",
-    "startup",
-    // Profils PowerShell, lancés à chaque ouverture (`{documents}/WindowsPowerShell`).
-    "windowspowershell",
-    "powershell",
-    // Linux / Steam Deck : programmes lancés à l'ouverture de session.
-    "autostart",
-    "systemd",
-    "environment.d",
-    // Clés SSH et GPG.
-    ".ssh",
-    ".gnupg",
-    // Fichiers lus par les shells à leur démarrage.
-    ".bashrc",
-    ".bash_profile",
-    ".bash_login",
-    ".profile",
-    ".zshrc",
-    ".zprofile",
-    "fish",
-];
-
-/// Le dossier d'un `lien:` (`{appdata}/…`) touche-t-il un dossier protégé (`SENSITIVE`) ?
-/// Un `~` est refusé aussi : sous Windows, le nom court `MICROS~1` désigne `Microsoft`.
-/// Les points et espaces de fin sont ignorés : Windows les enlève (`Startup.` = `Startup`).
-fn is_sensitive(pattern: &str) -> bool {
-    let rest = pattern.split_once('}').map_or(pattern, |(_, rest)| rest);
-    rest.split('/').any(|part| {
-        let name = part.trim().trim_end_matches(['.', ' ']).to_lowercase();
-        name.contains('~') || SENSITIVE.contains(&name.as_str())
-    })
 }
 
 /// Repère posé dans le dossier du jeu quand on y a déplacé un vrai dossier qui existait avant
@@ -456,7 +417,7 @@ mod tests {
             "{appdata}/x/.zshrc",
         ];
         for path in refused {
-            assert!(is_sensitive(path), "{path} doit être refusé");
+            assert!(crate::language::is_sensitive(path), "{path} doit être refusé");
         }
         // Les `lien:` des fiches réelles (24/11/2026) passent tous.
         let real = [
@@ -474,7 +435,7 @@ mod tests {
             "{localappdata}/boiii",
         ];
         for path in real {
-            assert!(!is_sensitive(path), "{path} doit passer");
+            assert!(!crate::language::is_sensitive(path), "{path} doit passer");
         }
     }
 

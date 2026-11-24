@@ -450,8 +450,8 @@ fn resolve_mods_dir(pattern: &str, exe_dir: &std::path::Path, title: impl FnOnce
     }
     if pattern.starts_with('{') {
         crate::language::expand(&pattern, exe_dir)
-    } else if !crate::language::is_simple_relative(&pattern) {
-        // Même règle que les jokers (faille SL4) : ni `..`, ni `\`, ni `C:`.
+    } else if !crate::language::is_simple_relative(&pattern) || crate::language::is_sensitive(&pattern) {
+        // Même règle que les jokers (faille SL4) : ni `..`, ni `\`, ni `C:`, ni dossier protégé.
         None
     } else {
         Some(pattern.split('/').fold(exe_dir.to_path_buf(), |p, part| p.join(part)))
