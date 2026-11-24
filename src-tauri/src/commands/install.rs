@@ -334,9 +334,11 @@ pub async fn uninstall_game(app: AppHandle, state: State<'_, AppState>, rom_id: 
     // Toutes les façons dont le jeu est installé partent : celle en service, puis celles en
     // réserve, qui passent en service l'une après l'autre.
     while let Some(st) = state::find(&state.config_dir, rom_id) {
-        // Recomp qui avait relié un dossier hors du jeu (boiii) : le lien part avec le jeu.
-        if let Some(r) = state.catalog().recomp_for_install(&st) {
-            crate::links::remove_into(&r.links, &st.game_dir);
+        // Programme qui avait relié un dossier hors du jeu (`lien:`) : le lien part avec le jeu,
+        // sauf si son dossier sert encore à un autre jeu installé (runtime partagé : Pokemon,
+        // émulateur), qui en a toujours besoin.
+        if !crate::links::used_by_others(&state::pages_in(&state.config_dir, &st.game_dir), st.rom_id) {
+            crate::links::remove_into(&state.catalog().links_for_install(&st), &st.game_dir);
         }
         install::uninstall(&state.config_dir, st, keep_saves).await?;
     }

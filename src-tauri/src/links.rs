@@ -56,6 +56,13 @@ pub fn remove_into(links: &[Link], game_dir: &Path) {
     }
 }
 
+/// Le dossier de ce jeu sert-il encore à un autre jeu (runtime partagé : launcher Pokemon,
+/// émulateur) ? `pages` : jeux installés sur ce dossier (`state::pages_in`, réserve comprise).
+/// Ses liens doivent alors rester à la désinstallation de celui-ci.
+pub fn used_by_others(pages: &[i64], rom_id: i64) -> bool {
+    pages.iter().any(|id| *id != rom_id)
+}
+
 fn remove_if_inside(path: &Path, game: &Path) -> bool {
     if !(is_link(path) && fs::canonicalize(path).is_ok_and(|t| t.starts_with(game))) {
         return false;
@@ -264,6 +271,14 @@ mod tests {
         assert!(remove_if_inside(&outside, &fs::canonicalize(root.join("autre-jeu")).unwrap()));
         assert!(!outside.exists() && other.join("d.txt").exists());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    // Désinstallation d'un jeu d'un runtime partagé : les liens restent tant qu'un autre jeu y est.
+    #[test]
+    fn links_stay_while_another_game_uses_the_runtime() {
+        assert!(used_by_others(&[10550, 7, 8], 7));
+        assert!(!used_by_others(&[7], 7));
+        assert!(!used_by_others(&[], 7));
     }
 
     // Jamais de perte : parent de la cible absent (créé), jeu qui a déjà des fichiers (fusion :
