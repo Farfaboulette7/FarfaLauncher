@@ -121,6 +121,10 @@ pub struct CatalogRecomp {
     /// Client de jeu PC : motifs des zips du jeu qu'il fait tourner (`pour:`, écart E2).
     #[serde(default, rename = "for")]
     pub for_zips: Vec<String>,
+    /// Client de jeu PC qui exige Steam : faux Steam posé dans le préfixe Proton
+    /// (`proton-steam: oui`, écart E5).
+    #[serde(default)]
+    pub proton_steam: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -604,6 +608,18 @@ impl Catalog {
             return self.recomp(crate::pc::cod::BOIII_CLIENT);
         }
         None
+    }
+
+    /// Le client des zips de ce motif exige-t-il Steam dans le préfixe Proton ?
+    ///
+    /// Transition (écart E5) : la fiche le dit par `proton-steam: oui`. Tant qu'aucune fiche du
+    /// catalogue n'a la clé (ancien gestionnaire), on garde l'ancienne règle : Black Ops III
+    /// (boiii) seulement.
+    pub fn pc_client_needs_steam(&self, motif: &str) -> bool {
+        if self.recomps.iter().any(|r| r.proton_steam) {
+            return self.pc_client(motif).is_some_and(|r| r.proton_steam);
+        }
+        motif == crate::pc::cod::CodGame::Bo3.zip_motif()
     }
 
     /// Réglages de langue du programme qui lance ce jeu : sa recomp ou son émulateur.
@@ -1314,6 +1330,20 @@ mod catalog_tests {
         assert_eq!(new.pc_client("bo3_game_files").map(|r| r.id.as_str()), Some("boiii-neuf"));
         assert!(new.pc_client("bo2_game_files").is_none());
         assert_eq!(crate::pc::cod::CodGame::from_zip_name("bo3_game_files-02.zip").map(|g| g.zip_motif()), Some("bo3_game_files"));
+    }
+
+    // Écart E5 : le faux Steam du préfixe suit `proton-steam:` de la fiche du client ; sans la
+    // clé dans tout le catalogue (ancien gestionnaire), Black Ops III seulement.
+    #[test]
+    fn proton_steam_follows_the_card_with_a_fallback() {
+        let old: Catalog = serde_json::from_str(r#"{"recomps":[{"id":"boiii","repo":"r"}]}"#).unwrap();
+        assert!(old.pc_client_needs_steam("bo3_game_files") && !old.pc_client_needs_steam("bo2_game_files"));
+        let new: Catalog = serde_json::from_str(
+            r#"{"recomps":[{"id":"boiii","repo":"r","for":["bo3_game_files"],"protonSteam":false},
+                           {"id":"t6","repo":"r","for":["bo2_game_files"],"protonSteam":true}]}"#,
+        )
+        .unwrap();
+        assert!(!new.pc_client_needs_steam("bo3_game_files") && new.pc_client_needs_steam("bo2_game_files"));
     }
 
     // Écart E7 : le partage des shaders suit la clé `shaders:` ; sans elle dans tout le

@@ -497,10 +497,12 @@ pub async fn prepare_cod(
     let launch = cod.launch(mode).ok_or(AppError::Internal)?;
     if let Some(r) = runner {
         let (r, gd) = (r.clone(), game_dir.to_path_buf());
+        // Client qui exige Steam dans le préfixe (boiii), que Proton ne pose pas sous umu :
+        // `proton-steam: oui` de sa fiche (repli : Black Ops III).
+        let steam = access.catalog.pc_client_needs_steam(cod.zip_motif());
         blocking(move || {
             r.ensure_prefix()?;
-            // boiii exige Steam dans le préfixe, que Proton ne pose pas sous umu.
-            if cod == CodGame::Bo3 {
+            if steam {
                 if let Err(e) = r.ensure_steam_marker(&gd) {
                     tracing::warn!("Steam non préparé dans le préfixe: {}", e.code());
                 }
