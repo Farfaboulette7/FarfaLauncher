@@ -415,6 +415,9 @@ mod tests {
             "{appdata}/x/.bashrc",
             "{appdata}/x/.profile",
             "{appdata}/x/.zshrc",
+            "{config}/x}/autostart",
+            "{appdata}/a}/Startup",
+            "{config}/plasma-workspace/env",
         ];
         for path in refused {
             assert!(crate::language::is_sensitive(path), "{path} doit être refusé");

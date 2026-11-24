@@ -194,15 +194,20 @@ pub fn expand(file: &str, exe_dir: &Path) -> Option<PathBuf> {
     };
     // Jamais en dehors du dossier de départ (faille SL4) : après le joker, seulement `/nom/nom…`.
     let rest = rest.strip_prefix('/')?;
-    // Ni dossier protégé (Démarrage, autostart, .ssh…), quelle que soit la clé de la fiche.
-    if !is_simple_relative(rest) || is_sensitive(rest) {
+    if !is_simple_relative(rest) {
         return None;
     }
     let path = rest.split('/').fold(base.clone(), |p, part| p.join(part));
-    // Seconde barrière : chaque morceau ajouté est un nom ordinaire, et le résultat reste dans la base.
+    // Seconde barrière, sur le chemin final (les variables comme `{region}` ou `{titleid}` sont
+    // remplacées avant l'appel) : chaque morceau ajouté est un nom ordinaire, le résultat reste
+    // dans la base, et aucun morceau n'est un dossier protégé (Démarrage, autostart, .ssh…),
+    // quelle que soit la clé de la fiche.
     let added = path.strip_prefix(&base).ok()?;
-    if !added.components().all(|c| matches!(c, std::path::Component::Normal(_))) {
-        return None;
+    for part in added.components() {
+        let std::path::Component::Normal(name) = part else { return None };
+        if is_sensitive_name(&name.to_string_lossy()) {
+            return None;
+        }
     }
     Some(path)
 }
@@ -225,6 +230,8 @@ pub(crate) fn is_simple_relative(rest: &str) -> bool {
 /// ou un lien y ferait lancer un programme au démarrage de la session ou du shell, ou y
 /// prendrait des clés. Comparés sans tenir compte de la casse, à chaque dossier du chemin
 /// après le joker. Une seule liste, pour toutes les clés.
+/// C'est une liste de refus, donc forcément incomplète : elle ferme les endroits connus, pas
+/// tous les dossiers dangereux possibles.
 const SENSITIVE: &[&str] = &[
     // Windows : tout `Microsoft` (menu Démarrer, dossier Démarrage, profils…).
     "microsoft",
@@ -235,12 +242,18 @@ const SENSITIVE: &[&str] = &[
     "powershell",
     // Linux / Steam Deck : programmes lancés à l'ouverture de session.
     "autostart",
+    "autostart-scripts",
     "systemd",
     "environment.d",
+    // KDE (bureau du Steam Deck) : scripts de session, services D-Bus, raccourcis `.desktop`.
+    "plasma-workspace",
+    "dbus-1",
+    "applications",
     // Clés SSH et GPG.
     ".ssh",
     ".gnupg",
-    // Fichiers lus par les shells à leur démarrage.
+    // Fichiers lus par les shells à leur démarrage. Aucun joker ne donne le dossier personnel
+    // ($HOME) : gardés seulement par prudence.
     ".bashrc",
     ".bash_profile",
     ".bash_login",
@@ -250,15 +263,23 @@ const SENSITIVE: &[&str] = &[
     "fish",
 ];
 
-/// Le chemin (`{appdata}/…`, ou ce qui suit le joker) touche-t-il un dossier protégé (`SENSITIVE`) ?
+/// Le chemin (`{appdata}/…`, ou un chemin relatif) touche-t-il un dossier protégé (`SENSITIVE`) ?
+/// Seul le joker du début est retiré ; tout le reste est contrôlé morceau par morceau, même
+/// après une autre `}` (`{config}/autostart/x}.desktop` est refusé).
+pub(crate) fn is_sensitive(pattern: &str) -> bool {
+    let rest = match pattern.strip_prefix('{').and_then(|p| p.split_once('}')) {
+        Some((_, rest)) => rest,
+        None => pattern,
+    };
+    rest.split('/').any(is_sensitive_name)
+}
+
+/// Un seul morceau de chemin est-il un dossier protégé (`SENSITIVE`) ?
 /// Un `~` est refusé aussi : sous Windows, le nom court `MICROS~1` désigne `Microsoft`.
 /// Les points et espaces de fin sont ignorés : Windows les enlève (`Startup.` = `Startup`).
-pub(crate) fn is_sensitive(pattern: &str) -> bool {
-    let rest = pattern.split_once('}').map_or(pattern, |(_, rest)| rest);
-    rest.split('/').any(|part| {
-        let name = part.trim().trim_end_matches(['.', ' ']).to_lowercase();
-        name.contains('~') || SENSITIVE.contains(&name.as_str())
-    })
+fn is_sensitive_name(part: &str) -> bool {
+    let name = part.trim().trim_end_matches(['.', ' ']).to_lowercase();
+    name.contains('~') || SENSITIVE.contains(&name.as_str())
 }
 
 fn env_dir(key: &str) -> Option<PathBuf> {
@@ -497,6 +518,16 @@ mod tests {
             "{exedir}/autostart/x.desktop",
             "{exedir}/.ssh/authorized_keys",
             "{exedir}/MICROS~1/x.ini",
+            // Relecture : une `}` dans le reste du chemin ne cache plus le dossier protégé.
+            "{appdata}/Microsoft/Windows/Start Menu/Programs/Startup/x}.bat",
+            "{config}/autostart/x}.desktop",
+            "{exedir}/autostart/x}.desktop",
+            "{exedir}/a}/startup/x.bat",
+            // KDE (Steam Deck).
+            "{config}/plasma-workspace/env/x.sh",
+            "{config}/autostart-scripts/x.sh",
+            "{appdata}/dbus-1/services/x.service",
+            "{appdata}/applications/x.desktop",
         ] {
             let rule = LanguageRule { system: None, format: "ini".into(), file: Some(file.into()), key: "a".into(), value: "1".into(), english: None };
             assert_eq!(apply(&rule, &base), Err("dossier introuvable".to_string()), "{file} doit être refusé");
