@@ -115,8 +115,6 @@ pub async fn start(state: &AppState, rom_id: i64, save_choice: SaveChoice, cod: 
         None => None,
     };
     let st = healed.unwrap_or(st);
-    save_sync::before_play(state, rom_id, save_choice).await?;
-    let prepared = prepare_pc(state, &st, cod).await?;
     // « Ouvrir la recomp » : son launcher, sans les arguments qui le passent (`--play`…) ni le
     // jeu relevé derrière lui.
     // Un émulateur partagé s'ouvre aussi sans jeu (« Ouvrir l'émulateur »).
@@ -132,13 +130,28 @@ pub async fn start(state: &AppState, rom_id: i64, save_choice: SaveChoice, cod: 
     // Recomp ou émulateur : français par défaut, posé avant le lancement.
     // Ses variables (`variable:`) restent posées quand on ouvre le launcher de la recomp.
     let mut env: Vec<(String, String)> = direct.or(refreshed.as_ref().filter(|_| open_menu)).map(|d| d.env.clone()).unwrap_or_default();
-    let mut shader_job: Option<crate::shaders::Job> = None;
-    if prepared.is_none() {
+    // Dossier de référence du programme (`{exedir}`) : celui de l'exécutable lancé.
+    let exe_dir = {
         let program = st.game_dir.join(rel_to_path(direct.map(|d| d.exe.as_str()).unwrap_or(&exe)));
-        let exe_dir = match state.catalog().emulator_for_install(&st) {
+        match state.catalog().emulator_for_install(&st) {
             Some(e) => e.data_dir(&st.game_dir, direct.map(|d| d.exe.as_str()).unwrap_or(&exe)),
             None => program.parent().unwrap_or(&st.game_dir).to_path_buf(),
-        };
+        }
+    };
+    // Liens (`lien:`) posés en premier, hors jeu PC : la sauvegarde reçue du serveur, la langue
+    // et les manettes s'écrivent ensuite à travers eux, dans le dossier du jeu (sinon elles
+    // iraient dans le vrai dossier, déplacé juste après).
+    if st.pc.is_none() {
+        let links = state.catalog().links_for_install(&st);
+        if !links.is_empty() {
+            let dir = exe_dir.clone();
+            let _ = tokio::task::spawn_blocking(move || crate::links::apply(&links, &dir)).await;
+        }
+    }
+    save_sync::before_play(state, rom_id, save_choice).await?;
+    let prepared = prepare_pc(state, &st, cod).await?;
+    let mut shader_job: Option<crate::shaders::Job> = None;
+    if prepared.is_none() {
         let rules = state.catalog().language_for_install(&st);
         if !rules.is_empty() {
             env.extend(crate::language::prepare(&st.game_dir, &exe_dir, &rules));
@@ -151,10 +164,6 @@ pub async fn start(state: &AppState, rom_id: i64, save_choice: SaveChoice, cod: 
         if !before.is_empty() {
             let dir = exe_dir.clone();
             let _ = tokio::task::spawn_blocking(move || launch::before::run_all(&before, &dir)).await;
-        }
-        // Recomp qui écrit à un endroit fixe (boiii : %LOCALAPPDATA%\boiii) : relié au dossier du jeu.
-        if let Some(r) = state.catalog().recomp_for_install(&st).filter(|r| !r.links.is_empty()) {
-            crate::links::apply(&r.links, &exe_dir);
         }
         // Manette de chaque joueur, posée avant que le jeu ne prenne les manettes.
         if let Some(format) = state.catalog().controllers_for_install(&st) {

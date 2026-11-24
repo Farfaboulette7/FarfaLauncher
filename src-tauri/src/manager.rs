@@ -657,6 +657,11 @@ impl Catalog {
         }
     }
 
+    /// Dossiers hors du jeu reliés au dossier du programme qui lance ce jeu (`lien:`).
+    pub fn links_for_install(&self, st: &crate::install::state::InstalledGame) -> Vec<crate::links::Link> {
+        self.recomp_for_install(st).map(|r| r.links.clone()).unwrap_or_default()
+    }
+
     /// Réglages optimisés du programme qui lance ce jeu (émulateur ou recomp).
     pub fn optimize_for_install(&self, st: &crate::install::state::InstalledGame) -> Vec<crate::optimize::OptimizeRule> {
         match &st.shared {
