@@ -338,7 +338,12 @@ pub async fn uninstall_game(app: AppHandle, state: State<'_, AppState>, rom_id: 
         // sauf si son dossier sert encore à un autre jeu installé (runtime partagé : Pokemon,
         // émulateur), qui en a toujours besoin.
         if !crate::links::used_by_others(&state::pages_in(&state.config_dir, &st.game_dir), st.rom_id) {
-            crate::links::remove_into(&state.catalog().links_for_install(&st), &st.game_dir);
+            // Un dossier d'avant le lien (repère .farfa-migre) retourne à son chemin d'origine ;
+            // si c'est impossible, la désinstallation s'arrête plutôt que de l'effacer.
+            crate::links::remove_into(&state.catalog().links_for_install(&st), &st.game_dir).map_err(|e| {
+                tracing::error!("désinstallation arrêtée : {e}");
+                AppError::Disk
+            })?;
         }
         install::uninstall(&state.config_dir, st, keep_saves).await?;
     }

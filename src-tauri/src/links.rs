@@ -46,15 +46,23 @@ pub fn apply(links: &[Link], exe_dir: &Path) {
     }
 }
 
+/// Repère posé dans le dossier du jeu quand on y a déplacé un vrai dossier qui existait avant
+/// le lien (ex. configuration d'un Dolphin installé à part) : à la désinstallation, son
+/// contenu retourne à son chemin d'origine au lieu de partir avec le jeu.
+const MIGRATED: &str = ".farfa-migre";
+
 /// Retire les liens qui mènent dans ce dossier de jeu (désinstallation) : ils ne pointeraient
-/// plus sur rien.
-pub fn remove_into(links: &[Link], game_dir: &Path) {
-    let Ok(game) = fs::canonicalize(game_dir) else { return };
+/// plus sur rien. Un dossier qui existait avant le lien (repère `.farfa-migre`) est remis à
+/// son chemin d'origine, par la même copie sûre. Erreur : la remise a échoué, le lien est
+/// reposé et la désinstallation doit s'arrêter (sinon ces fichiers partiraient avec le jeu).
+pub fn remove_into(links: &[Link], game_dir: &Path) -> Result<(), String> {
+    let Ok(game) = fs::canonicalize(game_dir) else { return Ok(()) };
     for link in links.iter().filter(|l| l.system.as_deref().is_none_or(|s| s == crate::language::current_system())) {
         if let Some(path) = crate::language::expand(&link.path, game_dir) {
-            remove_if_inside(&path, &game);
+            remove_if_inside(&path, &game)?;
         }
     }
+    Ok(())
 }
 
 /// Le dossier de ce jeu sert-il encore à un autre jeu (runtime partagé : launcher Pokemon,
@@ -64,20 +72,26 @@ pub fn used_by_others(pages: &[i64], rom_id: i64) -> bool {
     pages.iter().any(|id| *id != rom_id)
 }
 
-fn remove_if_inside(path: &Path, game: &Path) -> bool {
-    if !(is_link(path) && fs::canonicalize(path).is_ok_and(|t| t.starts_with(game))) {
-        return false;
+fn remove_if_inside(path: &Path, game: &Path) -> Result<bool, String> {
+    let target = match fs::canonicalize(path) {
+        Ok(t) if is_link(path) && t.starts_with(game) => t,
+        _ => return Ok(false),
+    };
+    let migrated = target.join(MIGRATED).is_file();
+    if let Err(e) = remove_link(path) {
+        tracing::warn!("lien {} non retiré: {e}", path.display());
+        return Ok(false);
     }
-    match remove_link(path) {
-        Ok(()) => {
-            tracing::info!("lien {} retiré", path.display());
-            true
+    tracing::info!("lien {} retiré", path.display());
+    if migrated {
+        if let Err(e) = move_into(&target, path) {
+            let _ = make_link(&target, path);
+            return Err(format!("{} non remis à son chemin d'origine : {e}", path.display()));
         }
-        Err(e) => {
-            tracing::warn!("lien {} non retiré: {e}", path.display());
-            false
-        }
+        let _ = fs::remove_file(path.join(MIGRATED));
+        tracing::info!("{} remis à son chemin d'origine", path.display());
     }
+    Ok(true)
 }
 
 fn same_dir(a: &Path, b: &Path) -> bool {
@@ -125,6 +139,14 @@ pub(crate) fn place(path: &Path, target: &Path) -> std::io::Result<bool> {
             try_link(path, target)?;
             move_into(path, target)?;
             moved = true;
+            // Dossier d'avant le lien : rendu à son chemin d'origine à la désinstallation.
+            if let Err(e) = fs::write(target.join(MIGRATED), path.to_string_lossy().as_bytes()) {
+                match move_into(target, path) {
+                    Ok(()) => tracing::warn!("repère non posé : {} remis à sa place", path.display()),
+                    Err(back) => tracing::error!("repère non posé, et {} non remis à sa place ({back})", path.display()),
+                }
+                return Err(e);
+            }
             tracing::info!("{} déplacé dans {}", path.display(), target.display());
         }
     } else if !is_link(path) && path.exists() {
@@ -138,6 +160,7 @@ pub(crate) fn place(path: &Path, target: &Path) -> std::io::Result<bool> {
         // Lien impossible malgré l'essai : le dossier est remis à sa place (avec ce que le jeu
         // avait déjà), pour que le programme ne reparte pas d'un dossier vide.
         if moved {
+            let _ = fs::remove_file(target.join(MIGRATED));
             match move_into(target, path) {
                 Ok(()) => tracing::warn!("lien impossible : {} remis à sa place", path.display()),
                 Err(back) => tracing::error!("lien impossible, et {} non remis à sa place ({back}) : fichiers dans {}", path.display(), target.display()),
@@ -333,6 +356,35 @@ mod tests {
         pub(super) static FAIL_LINKS: std::cell::RefCell<std::collections::VecDeque<bool>> = Default::default();
     }
 
+    // Relecture 2 (B) : dossier créé par le launcher (pas de repère) : seul le lien part ;
+    // dossier d'avant (repère) : il retourne à son chemin d'origine, sans perte.
+    #[test]
+    fn uninstall_gives_back_a_folder_that_existed_before() {
+        let root = std::env::temp_dir().join(format!("farfa-links-back-{}", uuid::Uuid::new_v4()));
+        let game = root.join("Emulateurs").join("dolphin");
+        let (fresh, before) = (root.join("config").join("neuf"), root.join("config").join("dolphin-emu"));
+        assert!(place(&fresh, &game.join("neuf")).unwrap());
+        fs::create_dir_all(&before).unwrap();
+        fs::write(before.join("Dolphin.ini"), "à moi").unwrap();
+        assert!(place(&before, &game.join("config")).unwrap());
+        assert!(game.join("config").join(MIGRATED).is_file());
+        fs::write(before.join("nouveau.sav"), "joué avec le launcher").unwrap();
+        let links = [
+            Link { system: None, path: fresh.to_string_lossy().replace('\\', "/"), target: "neuf".into() },
+            Link { system: None, path: before.to_string_lossy().replace('\\', "/"), target: "config".into() },
+        ];
+        let game_c = fs::canonicalize(&game).unwrap();
+        for l in &links {
+            assert!(remove_if_inside(Path::new(&l.path), &game_c).unwrap());
+        }
+        assert!(!fresh.exists());
+        assert!(!is_link(&before));
+        assert_eq!(fs::read_to_string(before.join("Dolphin.ini")).unwrap(), "à moi");
+        assert_eq!(fs::read_to_string(before.join("nouveau.sav")).unwrap(), "joué avec le launcher");
+        assert!(!before.join(MIGRATED).exists() && !game.join("config").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
     // Relecture 2 (C) : lien d'essai refusé → le vrai dossier n'est pas touché ; lien final
     // refusé après le déplacement → le dossier est remis à sa place ; aucun essai ne traîne.
     #[test]
@@ -392,11 +444,13 @@ mod tests {
         assert!(other.join("c.txt").exists() && !root.join("appdata").join("boiii.avant-farfa").exists());
         assert!(same_dir(&outside, &other));
 
-        // Désinstallation d'un autre jeu : le lien reste ; de celui-ci : il part.
-        assert!(!remove_if_inside(&outside, &fs::canonicalize(&game).unwrap()));
+        // Désinstallation d'un autre jeu : le lien reste ; de celui-ci : il part, et le dossier
+        // qui existait avant (repère .farfa-migre) retourne à son chemin d'origine, au complet.
+        assert!(!remove_if_inside(&outside, &fs::canonicalize(&game).unwrap()).unwrap());
         assert!(is_link(&outside));
-        assert!(remove_if_inside(&outside, &fs::canonicalize(root.join("autre-jeu")).unwrap()));
-        assert!(!outside.exists() && other.join("d.txt").exists());
+        assert!(remove_if_inside(&outside, &fs::canonicalize(root.join("autre-jeu")).unwrap()).unwrap());
+        assert!(!is_link(&outside) && outside.join("c.txt").exists() && outside.join("d.txt").exists());
+        assert!(!outside.join(MIGRATED).exists());
         fs::remove_dir_all(root).unwrap();
     }
 
