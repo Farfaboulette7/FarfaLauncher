@@ -162,12 +162,13 @@ pub async fn start(state: &AppState, rom_id: i64, save_choice: SaveChoice, cod: 
                 tracing::warn!("manettes non attribuées: {e}");
             }
         }
-        // Citron et Eden : mises à jour et DLC du jeu lus dans son dossier.
-        if let Some(e) = state.catalog().emulator_for_install(&st).filter(|e| e.consoles.iter().any(|c| c == "switch")) {
+        // Mises à jour et DLC du jeu lus dans son dossier (`contenu-externe:` de l'émulateur).
+        let content = state.catalog().emulator_for_install(&st).and_then(|e| Some((e.name.clone(), state.catalog().external_content(e)?)));
+        if let Some((name, rule)) = content {
             if let Some(rom_dir) = st.shared.as_ref().and_then(|s| s.rom_dir.as_ref()) {
-                match crate::switch_content::apply(&exe_dir, rom_dir) {
-                    Ok(()) => tracing::info!("{} : contenu (mises à jour, DLC) lu dans {}", e.name, rom_dir.display()),
-                    Err(err) => tracing::warn!("contenu du jeu non déclaré à {}: {err}", e.name),
+                match crate::switch_content::apply(&rule, &exe_dir, rom_dir) {
+                    Ok(()) => tracing::info!("{name} : contenu (mises à jour, DLC) lu dans {}", rom_dir.display()),
+                    Err(err) => tracing::warn!("contenu du jeu non déclaré à {name}: {err}"),
                 }
             }
         }

@@ -235,6 +235,27 @@ pub struct Emulator {
     /// ROM à préparer avant de la donner à l'émulateur (`decompresser:`, `dechiffrer:`).
     #[serde(default)]
     pub rom_prep: Option<RomPrep>,
+    /// Dossiers de mises à jour et DLC de l'émulateur (`contenu-externe:`, écart E6).
+    /// Absent d'un gestionnaire d'avant la clé : voir `Catalog::external_content`.
+    #[serde(default)]
+    pub external_content: Option<ExternalContent>,
+}
+
+/// Liste de dossiers où l'émulateur lit les mises à jour et DLC des jeux (`contenu-externe:`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExternalContent {
+    /// `ini` (liste Qt `clé\1\path`, `clé\size`).
+    pub format: String,
+    /// `{exedir}/user/config/qt-config.ini`…
+    pub file: String,
+    /// `section.clé` : `UI.Paths\external_content_dirs`.
+    pub key: String,
+}
+
+/// Règle de Citron et Eden, utilisée tant que le catalogue ne déclare `contenu-externe:` pour
+/// aucun émulateur (ancien gestionnaire, ou fiches pas encore complétées).
+fn legacy_external_content() -> ExternalContent {
+    ExternalContent { format: "ini".into(), file: "{exedir}/user/config/qt-config.ini".into(), key: "UI.Paths\\external_content_dirs".into() }
 }
 
 /// Préparation de la ROM : zip extrait, puis jeu déchiffré (3DS, pour Azahar).
@@ -599,6 +620,19 @@ impl Catalog {
         }
     }
 
+    /// Dossiers de mises à jour et DLC de cet émulateur (`contenu-externe:`).
+    ///
+    /// Transition (écart E6) : le gestionnaire publie la clé depuis fin 2026, et les fiches la
+    /// reçoivent ensuite. Tant qu'aucun émulateur du catalogue ne l'a, on garde l'ancien
+    /// comportement : la règle de Citron et Eden pour un émulateur de la console `switch`.
+    /// Dès qu'une fiche l'a, seule la clé compte (quelle que soit la console).
+    pub fn external_content(&self, e: &Emulator) -> Option<ExternalContent> {
+        if self.emulators.iter().any(|x| x.external_content.is_some()) {
+            return e.external_content.clone();
+        }
+        e.consoles.iter().any(|c| c == "switch").then(legacy_external_content)
+    }
+
     /// Émulateur qui lance ce jeu installé.
     pub fn emulator_for_install(&self, st: &crate::install::state::InstalledGame) -> Option<&Emulator> {
         let s = st.shared.as_ref().filter(|s| s.is_emulator())?;
@@ -959,6 +993,7 @@ mod tests {
             packs: vec![],
             advice: vec![],
             rom_prep: None,
+            external_content: None,
         }
     }
 
@@ -1215,5 +1250,21 @@ mod catalog_tests {
     fn runtime_ids_never_change() {
         assert_eq!(runtime_id("mgba"), -1534277117161153806);
         assert_eq!(runtime_id("eden"), -1052650270587837512);
+    }
+
+    // Écart E6 : le contenu externe suit la clé `contenu-externe:` ; sans elle dans tout le
+    // catalogue (ancien gestionnaire), l'ancienne règle de la console `switch` reste.
+    #[test]
+    fn external_content_follows_the_key_with_a_fallback() {
+        let old: Catalog = serde_json::from_str(r#"{"emulators":[{"id":"citron","name":"C","consoles":["switch"],"version":{"cle":"k","nom":"1"}},
+            {"id":"lichii","name":"L","consoles":["switch-2"],"version":{"cle":"k","nom":"1"}}]}"#).unwrap();
+        let rule = old.external_content(&old.emulators[0]).unwrap();
+        assert_eq!((rule.file.as_str(), rule.key.as_str()), ("{exedir}/user/config/qt-config.ini", "UI.Paths\\external_content_dirs"));
+        assert!(old.external_content(&old.emulators[1]).is_none());
+        let new: Catalog = serde_json::from_str(r#"{"emulators":[{"id":"citron","name":"C","consoles":["switch"],"version":{"cle":"k","nom":"1"},"externalContent":null},
+            {"id":"lichii","name":"L","consoles":["switch-2"],"version":{"cle":"k","nom":"1"},
+             "externalContent":{"format":"ini","file":"{exedir}/user/config/qt-config.ini","key":"UI.Paths\\external_content_dirs"}}]}"#).unwrap();
+        assert!(new.external_content(&new.emulators[0]).is_none());
+        assert_eq!(new.external_content(&new.emulators[1]), Some(rule));
     }
 }

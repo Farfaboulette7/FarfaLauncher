@@ -1676,8 +1676,8 @@ mod tests {
         let exe_dir = st.game_dir.join(rel_to_path(&d.exe)).parent().unwrap().to_path_buf();
         let rules = catalog.language_for_install(&st);
         crate::language::prepare(&st.game_dir, &exe_dir, &rules);
-        if catalog.emulator_for_install(&st).is_some_and(|e| e.consoles.iter().any(|c| c == "switch")) {
-            crate::switch_content::apply(&exe_dir, st.shared.as_ref().and_then(|s| s.rom_dir.as_ref()).unwrap()).unwrap();
+        if let Some(rule) = catalog.emulator_for_install(&st).and_then(|e| catalog.external_content(e)) {
+            crate::switch_content::apply(&rule, &exe_dir, st.shared.as_ref().and_then(|s| s.rom_dir.as_ref()).unwrap()).unwrap();
         }
         println!("ROM {:?} ; lancement {:?} ; saves {:?} {:?}", st.roms, d.args, st.saves.dir, st.saves.patterns);
         let launch = crate::launch::Launch { exe: rel_to_path(&d.exe), args: &d.args, env: &d.env, cwd: None, learn: false, runner: None };
