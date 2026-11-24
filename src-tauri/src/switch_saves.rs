@@ -135,10 +135,12 @@ fn title_of(config_dir: &Path, emulator: &str, rom_id: i64, roms: &[PathBuf]) ->
         .map(|t| t.to_ascii_uppercase())
 }
 
-/// ID de titre d'un jeu Switch installé sous émulateur, s'il est connu sans y avoir joué.
+/// ID de titre d'un jeu installé sous émulateur (Switch, Switch 2), s'il est connu sans y avoir
+/// joué : lu dans le nom de ses fichiers, son NSP ou son NUP. Sert aux lignes `optimiser:` d'un
+/// jeu précis et à `{titleid}` de `dossier-mods:`. Écart E10 : aucune console testée ; un jeu
+/// d'une autre console n'a simplement pas d'ID de titre (`None`).
 pub fn title_id(catalog: &Catalog, config_dir: &Path, st: &InstalledGame) -> Option<String> {
     let emulator = catalog.emulator_for_install(st)?;
-    emulator.consoles.iter().find(|c| *c == "switch" || *c == "switch-2")?;
     let rom_dir = st.shared.as_ref()?.rom_dir.clone().unwrap_or_default();
     let roms: Vec<PathBuf> = st.roms.iter().map(|r| rom_dir.join(crate::install::rel_to_path(r))).collect();
     title_of(config_dir, &emulator.id, st.rom_id, &roms)
@@ -187,6 +189,22 @@ mod tests {
         std::fs::create_dir_all(root.join("E950DDCEAF68288B78E244D05F295F3A/0400245021D2C000")).unwrap();
         assert_eq!(learned_title(&root, since).as_deref(), Some("0400245021D2C000"));
         std::fs::remove_dir_all(&exe).unwrap();
+    }
+
+    // Écart E10 : l'ID de titre (lignes `optimiser:` d'un jeu) ne dépend plus de la console.
+    #[test]
+    fn title_id_without_console_test() {
+        let catalog: Catalog = serde_json::from_str(r#"{"emulators":[{"id":"e","name":"E","consoles":["nouvelle-console"],"version":{"cle":"k","nom":"1"}}]}"#).unwrap();
+        let shared = format!(
+            r#"{{"runtimeRomId":{},"game":"e","runtimeName":"E","dataDir":"","saveDir":"","kind":"emulator","romDir":"roms"}}"#,
+            crate::manager::runtime_id("e")
+        );
+        let st: InstalledGame = serde_json::from_str(&format!(
+            r#"{{"romId":5,"name":"J","target":"Windows","archiveName":"e_Windows.zip","roms":["Jeu [0100AE00096EA000][v0].nsp"],"installedAt":0,"updatedAt":0,"shared":{shared}}}"#
+        ))
+        .unwrap();
+        let dir = std::env::temp_dir().join(format!("farfa-titleid-{}", uuid::Uuid::new_v4()));
+        assert_eq!(title_id(&catalog, &dir, &st).as_deref(), Some("0100AE00096EA000"));
     }
 
     // Écart E8 : `{profil}` dans la règle active la complétion, quelle que soit la console.
