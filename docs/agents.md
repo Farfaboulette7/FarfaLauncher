@@ -97,4 +97,4 @@ La commande `/agents` de Claude Code liste les agents disponibles.
 - `python` n'existe pas : `py -3`.
 - Ne pas changer l'apparence d'un écran que la tâche ne demande pas de changer.
 - Parité Windows / Linux (AppImage) / Steam Deck, ou prévenir le propriétaire.
-- Commits terminés par `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
+- Commits terminés par la ligne d'attribution demandée par la session.

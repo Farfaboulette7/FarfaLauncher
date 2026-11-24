@@ -23,10 +23,7 @@ Avant de coder, lis `CLAUDE.md` (s'il existe dans la copie, sinon celui du dép�
 1. Vérifier où tu es : `git -C <copie> branch --show-current` doit donner ta branche. Sinon,
    t'arrêter et le dire.
 2. Découper la tâche en points. **Un commit par point**, message en français qui dit ce qui
-   change pour le joueur, terminé par :
-   ```
-   Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
-   ```
+   change pour le joueur, terminé par la ligne d'attribution demandée par la session (jamais écrite de mémoire).
    N'indexer que tes fichiers (`git add <fichiers>`, jamais `git commit -am`) : le changement
    local de `[profile.dev]` dans `src-tauri/Cargo.toml` ne doit jamais être commité.
 3. **Tests** : chaque correction ou fonction a son test Rust, en bas du fichier, dans
@@ -66,6 +63,8 @@ Avant de coder, lis `CLAUDE.md` (s'il existe dans la copie, sinon celui du dép�
 - Relier un jeu PC (`.exe` de la plateforme « Ordinateur ») à une recomp : il passe par `pc/`
   (Proton sous Linux).
 - Rien sur le NAS ni sur RomM : aucune requête qui écrit.
+- Lancer `claude -p`, toucher la tâche planifiée « FaRFa - surveille rapports » ou ses copies
+  `FarfaLauncher-correctifs\…` (support des rapports de bug).
 - Un autre dossier de build que `target-test` du dépôt principal.
 - `python` n'existe pas : `py -3`.
 
