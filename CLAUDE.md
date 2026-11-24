@@ -20,6 +20,7 @@ Documentation (à lire avant de toucher à une partie) :
 | `docs/romm-api.md` | l'API RomM utilisée |
 | `docs/agents.md` | travailler avec des agents IA sur ce dépôt |
 | `docs/audit-2026-11.md` | audit de la phase 1 (bugs L1-L19, ce qui reste) |
+| `docs/securite.md` | audit sécurité de la phase 2 (SL1-SL18, par gravité, contrôles à ajouter en CI) |
 | `AGENTS.md` | règles courtes pour un agent IA |
 
 Architecture d'ensemble (NAS, RomM, gestionnaire, fiches) : dépôt FarfaRomManager,
