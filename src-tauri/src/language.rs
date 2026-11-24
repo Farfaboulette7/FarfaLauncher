@@ -192,12 +192,31 @@ pub fn expand(file: &str, exe_dir: &Path) -> Option<PathBuf> {
         "documents" => documents()?,
         _ => return None,
     };
-    let rest = rest.trim_start_matches('/');
-    // Jamais en dehors du dossier de départ.
-    if rest.split('/').any(|p| p == ".." || p.is_empty()) {
+    // Jamais en dehors du dossier de départ (faille SL4) : après le joker, seulement `/nom/nom…`.
+    let rest = rest.strip_prefix('/')?;
+    if !is_simple_relative(rest) {
         return None;
     }
-    Some(rest.split('/').fold(base, |p, part| p.join(part)))
+    let path = rest.split('/').fold(base.clone(), |p, part| p.join(part));
+    // Seconde barrière : chaque morceau ajouté est un nom ordinaire, et le résultat reste dans la base.
+    let added = path.strip_prefix(&base).ok()?;
+    if !added.components().all(|c| matches!(c, std::path::Component::Normal(_))) {
+        return None;
+    }
+    Some(path)
+}
+
+/// Chemin relatif simple : des noms séparés par `/`, rien d'autre (faille SL4).
+/// Refusés, sous Windows comme sous Linux (même fiche, même résultat) :
+/// - `\` : sous Windows, il sépare aussi les dossiers (`..\..\Desktop` passerait) ;
+/// - `:` : lecteur (`C:`) ou flux caché NTFS (`a.txt:flux`) ;
+/// - un début `/` (chemin absolu), un `//` (morceau vide) ;
+/// - un morceau fait seulement de points et d'espaces (`.`, `..`, `...`, `. .`) : Windows
+///   enlève les points et espaces de fin, `.. ` y vaudrait `..`.
+pub(crate) fn is_simple_relative(rest: &str) -> bool {
+    !rest.is_empty()
+        && !rest.contains(['\\', ':', '\0'])
+        && rest.split('/').all(|part| !part.trim_end_matches(['.', ' ']).is_empty())
 }
 
 fn env_dir(key: &str) -> Option<PathBuf> {
@@ -384,6 +403,117 @@ mod tests {
         assert_eq!(expand_value("fr", "json", d), "fr");
         assert_eq!(expand("{inconnu}/x", exe), None);
         assert_eq!(expand("/etc/x", exe), None);
+    }
+
+    // Faille SL4 : chaque contournement connu donne `None`, sous Windows comme sous Linux.
+    #[test]
+    fn sl4_no_way_out_of_the_folder() {
+        let exe = Path::new("jeu");
+        let refused = [
+            // Les deux exemples de l'audit.
+            r"{appdata}/..\..\Desktop\a.txt",
+            r"{appdata}/C:\Windows\x.ini",
+            // `\`, lecteur, flux NTFS, chemin absolu, `//`.
+            r"{exedir}/a\b.ini",
+            r"{exedir}/..\x",
+            "{exedir}/C:/Windows/x.ini",
+            "{exedir}/C:x.ini",
+            "{exedir}/a.txt:flux",
+            "{exedir}//etc/passwd",
+            "{exedir}x",
+            "{exedir}",
+            "{exedir}/",
+            // `..` et `.` sous toutes leurs formes.
+            "{exedir}/..",
+            "{exedir}/a/../../x",
+            "{exedir}/./x",
+            "{exedir}/a/.",
+            "{exedir}/.../x",
+            "{exedir}/.. /x",
+            "{exedir}/. ./x",
+            "{documents}/../x",
+            "{config}/../../.ssh/authorized_keys",
+            "{localappdata}/../Roaming/x",
+        ];
+        for path in refused {
+            assert_eq!(expand(path, exe), None, "{path} doit être refusé");
+        }
+    }
+
+    // Chemins des fiches réelles du gestionnaire (recomps/ et emulateurs/, 24/11/2026) : tous
+    // passent encore, et restent dans leur dossier de départ.
+    #[test]
+    fn sl4_real_sheets_still_work() {
+        let exe = Path::new("jeu");
+        let real = [
+            "{appdata}/bbport-launcher/settings.json",
+            "{appdata}/bbport-launcher",
+            "{appdata}/bbport/mods",
+            "{appdata}/TwilitRealm/Dusklight/config.json",
+            "{appdata}/TwilitRealm/Dusklight",
+            "{documents}/MarioWiiSaveData/Config.toml",
+            "{documents}/MarioWiiSaveData",
+            "{appdata}/WiiCompiled/Config.toml",
+            "{appdata}/WiiCompiled",
+            "{appdata}/ttyd",
+            "{appdata}/ttyd/mods",
+            "{appdata}/org.pkp-recomp.launcher/launcher.json",
+            "{appdata}/org.pkp-recomp.launcher",
+            "{appdata}/sm64coopdx/sm64config.txt",
+            "{appdata}/sm64coopdx",
+            "{appdata}/SMB1R/settings.cfg",
+            "{appdata}/SMB1R",
+            "{config}/SMS Launcher/preferences.json",
+            "{config}/SMS Launcher",
+            "{appdata}/melee-pc",
+            "{appdata}/HWDER/mods",
+            "{appdata}/dolphin-emu/GC/{region}/Card A",
+            "{appdata}/dolphin-emu/Wii/title/00010000",
+            "{appdata}/lichii/_",
+            "{appdata}/puNES/prb",
+            "{appdata}/mGBA/config.ini",
+            "{config}/dolphin-emu",
+            "{config}/dolphin-emu/Dolphin.ini",
+            "{config}/melonDS/melonDS.toml",
+            "{config}/mgba/config.ini",
+            "{config}/ppsspp/PSP/SAVEDATA",
+            "{config}/ppsspp/PSP/SYSTEM/ppsspp.ini",
+            "{config}/puNES/puNES.cfg",
+            "{config}/snes9x/snes9x.conf",
+            "{exedir}/mkw.ini",
+            "{exedir}/SMS-Launcher-Portable/preferences.json",
+            "{exedir}/config/display.ini",
+            "{exedir}/larecomp.ini",
+            "{exedir}/user/config/qt-config.ini",
+            "{exedir}/user/config/custom/0100F2C0115B6000.ini",
+            "{exedir}/User/Config/Dolphin.ini",
+            "{exedir}/settings.ini",
+            "{exedir}/portable/melonDS.toml",
+            "{exedir}/config.ini",
+            "{exedir}/PCSX2/inis/PCSX2.ini",
+            "{exedir}/memstick/PSP/SYSTEM/ppsspp.ini",
+            "{exedir}/puNES.cfg",
+            "{exedir}/snes9x.conf",
+            "{exedir}/saves",
+            "{exedir}/user/log/_",
+            "{exedir}/jeu/logs/_",
+            "{exedir}/build/play.prev.log",
+            "{exedir}/boiii/minidumps/_",
+        ];
+        for path in real {
+            let (var, rest) = path[1..].split_once("}/").unwrap();
+            let base = match var {
+                "exedir" => Some(exe.to_path_buf()),
+                "appdata" => appdata(),
+                "config" => config_dir(),
+                "documents" => documents(),
+                _ => unreachable!(),
+            };
+            // Machine de test sans ce dossier (variable absente) : rien à vérifier.
+            let Some(base) = base else { continue };
+            let expected = rest.split('/').fold(base, |p, part| p.join(part));
+            assert_eq!(expand(path, exe), Some(expected), "{path} doit passer");
+        }
     }
 
     #[test]

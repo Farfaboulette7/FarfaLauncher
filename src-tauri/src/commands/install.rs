@@ -450,7 +450,8 @@ fn resolve_mods_dir(pattern: &str, exe_dir: &std::path::Path, title: impl FnOnce
     }
     if pattern.starts_with('{') {
         crate::language::expand(&pattern, exe_dir)
-    } else if pattern.is_empty() || pattern.split('/').any(|p| p.is_empty() || p == "..") {
+    } else if !crate::language::is_simple_relative(&pattern) {
+        // Même règle que les jokers (faille SL4) : ni `..`, ni `\`, ni `C:`.
         None
     } else {
         Some(pattern.split('/').fold(exe_dir.to_path_buf(), |p, part| p.join(part)))
@@ -493,6 +494,11 @@ mod mods_dir_tests {
         assert_eq!(resolve_mods_dir("user/load/{titleid}", exe, || Some("0100f2c0115b6000".into())), Some(exe.join("user").join("load").join("0100F2C0115B6000")));
         assert_eq!(resolve_mods_dir("user/load/{titleid}", exe, || None), Some(exe.join("user").join("load")));
         assert_eq!(resolve_mods_dir("../x", exe, || None), None);
+        // Faille SL4 : `\`, lecteur et chemin absolu refusés aussi.
+        assert_eq!(resolve_mods_dir(r"..\x", exe, || None), None);
+        assert_eq!(resolve_mods_dir(r"C:\Windows", exe, || None), None);
+        assert_eq!(resolve_mods_dir("/etc", exe, || None), None);
+        assert_eq!(resolve_mods_dir("{appdata}/../x", exe, || None), None);
         assert_eq!(resolve_mods_dir("{exedir}/mods", exe, || None), Some(exe.join("mods")));
     }
 }

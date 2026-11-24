@@ -30,6 +30,10 @@ pub struct Link {
 /// Pose les liens de ce système. Une erreur est notée au journal sans bloquer le lancement.
 pub fn apply(links: &[Link], exe_dir: &Path) {
     for link in links.iter().filter(|l| l.system.as_deref().is_none_or(|s| s == crate::language::current_system())) {
+        if is_sensitive(&link.path) {
+            tracing::warn!("lien refusé : dossier « {} » protégé", link.path);
+            continue;
+        }
         let Some(path) = crate::language::expand(&link.path, exe_dir) else {
             tracing::warn!("lien ignoré : dossier « {} » incompris", link.path);
             continue;
@@ -44,6 +48,45 @@ pub fn apply(links: &[Link], exe_dir: &Path) {
             Err(e) => tracing::warn!("lien {} -> {} non posé: {e}", path.display(), target.display()),
         }
     }
+}
+
+/// Dossiers qu'un `lien:` ne remplace jamais (faille SL4) : un lien y ferait lancer un
+/// programme du jeu au démarrage de la session ou du shell, ou y prendrait des clés.
+/// Comparés sans tenir compte de la casse, à chaque dossier du chemin après le joker.
+const SENSITIVE: &[&str] = &[
+    // Windows : tout `Microsoft` (menu Démarrer, dossier Démarrage, profils…).
+    "microsoft",
+    "start menu",
+    "startup",
+    // Profils PowerShell, lancés à chaque ouverture (`{documents}/WindowsPowerShell`).
+    "windowspowershell",
+    "powershell",
+    // Linux / Steam Deck : programmes lancés à l'ouverture de session.
+    "autostart",
+    "systemd",
+    "environment.d",
+    // Clés SSH et GPG.
+    ".ssh",
+    ".gnupg",
+    // Fichiers lus par les shells à leur démarrage.
+    ".bashrc",
+    ".bash_profile",
+    ".bash_login",
+    ".profile",
+    ".zshrc",
+    ".zprofile",
+    "fish",
+];
+
+/// Le dossier d'un `lien:` (`{appdata}/…`) touche-t-il un dossier protégé (`SENSITIVE`) ?
+/// Un `~` est refusé aussi : sous Windows, le nom court `MICROS~1` désigne `Microsoft`.
+/// Les points et espaces de fin sont ignorés : Windows les enlève (`Startup.` = `Startup`).
+fn is_sensitive(pattern: &str) -> bool {
+    let rest = pattern.split_once('}').map_or(pattern, |(_, rest)| rest);
+    rest.split('/').any(|part| {
+        let name = part.trim().trim_end_matches(['.', ' ']).to_lowercase();
+        name.contains('~') || SENSITIVE.contains(&name.as_str())
+    })
 }
 
 /// Repère posé dans le dossier du jeu quand on y a déplacé un vrai dossier qui existait avant
@@ -384,6 +427,70 @@ mod tests {
         pub(super) static FAIL_LINKS: std::cell::RefCell<std::collections::VecDeque<bool>> = Default::default();
         /// Le prochain `remove_link` échoue (lien verrouillé).
         pub(super) static FAIL_UNLINK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+
+    // Faille SL4 : un `lien:` ne remplace jamais un dossier protégé, quelle que soit la casse.
+    #[test]
+    fn sl4_protected_folders_are_never_linked() {
+        let refused = [
+            "{appdata}/Microsoft/Windows/Start Menu/Programs/Startup",
+            "{appdata}/microsoft/windows/start menu/programs/startup",
+            "{appdata}/MICROSOFT/Windows",
+            "{appdata}/MICROS~1/Windows",
+            "{appdata}/Microsoft./Windows",
+            "{appdata}/x/Start Menu",
+            "{appdata}/x/STARTUP",
+            "{documents}/WindowsPowerShell",
+            "{documents}/PowerShell",
+            "{config}/autostart",
+            "{config}/AutoStart",
+            "{config}/systemd/user",
+            "{appdata}/systemd/user",
+            "{config}/environment.d",
+            "{config}/fish/conf.d",
+            "{appdata}/x/.ssh",
+            "{appdata}/x/.SSH",
+            "{appdata}/x/.gnupg",
+            "{appdata}/x/.bashrc",
+            "{appdata}/x/.profile",
+            "{appdata}/x/.zshrc",
+        ];
+        for path in refused {
+            assert!(is_sensitive(path), "{path} doit être refusé");
+        }
+        // Les `lien:` des fiches réelles (24/11/2026) passent tous.
+        let real = [
+            "{appdata}/bbport-launcher",
+            "{appdata}/TwilitRealm/Dusklight",
+            "{documents}/MarioWiiSaveData",
+            "{appdata}/WiiCompiled",
+            "{appdata}/ttyd",
+            "{appdata}/org.pkp-recomp.launcher",
+            "{appdata}/sm64coopdx",
+            "{appdata}/SMB1R",
+            "{config}/SMS Launcher",
+            "{appdata}/melee-pc",
+            "{config}/dolphin-emu",
+            "{localappdata}/boiii",
+        ];
+        for path in real {
+            assert!(!is_sensitive(path), "{path} doit passer");
+        }
+    }
+
+    // Un lien refusé ne touche à rien : le dossier protégé reste un vrai dossier.
+    #[test]
+    fn sl4_refused_link_is_not_placed() {
+        let root = std::env::temp_dir().join(format!("farfa-links-sl4-{}", uuid::Uuid::new_v4()));
+        let startup = root.join("jeu").join("Startup");
+        fs::create_dir_all(&startup).unwrap();
+        fs::write(startup.join("a.txt"), "x").unwrap();
+        let link = Link { system: None, path: "{exedir}/Startup".into(), target: "saves".into() };
+        apply(&[link], &root.join("jeu"));
+        assert!(!is_link(&startup));
+        assert!(startup.join("a.txt").is_file());
+        assert!(!root.join("jeu").join("saves").exists());
+        fs::remove_dir_all(&root).unwrap();
     }
 
     // Relecture 3 : lien impossible à retirer alors que le dossier d'avant est derrière (repère)
