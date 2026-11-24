@@ -351,6 +351,15 @@ impl CodGame {
 // en croyant le jeu bloqué en anglais par boiii : il cherchait alors les `fr_*` disparus et
 // plantait. Ces renommages sont défaits (`restore_bo3_zones`), au changement de langue et
 // avant chaque partie. Le choix se fait dans l'onglet Informations du jeu.
+//
+// Quand retirer la rustine (écart E3, noté le 24/11/2026) : `restore_bo3_zones` et
+// `repair_bo3_zone` (installations d'avant la 0.9.8) ne servent qu'aux jeux installés ou passés
+// en français par un launcher 1.0 ou 1.1 bêta. Les retirer quand plus aucun joueur n'a lancé
+// Black Ops III avec un de ces launchers depuis : au plus tôt quand tous les amis ont lancé BO3
+// au moins une fois avec la 1.2.0 ou plus (chaque partie répare le jeu), par exemple en
+// vérifiant les rapports et les statistiques du gestionnaire (version du launcher par joueur).
+// Garder alors `localization.txt` (le « Language Switcher ») : c'est la vraie façon de changer
+// la langue, voulue à terme sous forme de `langue: ligne | localization.txt | … | fr | en`.
 
 /// Langues proposées pour Black Ops III (le jeu les contient toutes les deux).
 pub const BO3_LANGUAGES: [&str; 2] = ["fr", "en"];
