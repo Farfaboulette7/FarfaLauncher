@@ -4,6 +4,11 @@
 //! ses données et ses plantages). Le launcher remplace ce dossier par un lien (une jonction
 //! sous Windows, sans droits d'administrateur) vers un dossier du jeu : tout reste dans le
 //! dossier « Jeux ».
+//!
+//! Un vrai dossier déjà là (le programme a tourné hors du launcher) passe dans le jeu sans
+//! perte, même sur un autre disque : fusion sans écrasement, vérifiée avant d'effacer la source
+//! (voir `move_into`). Avant le 25/11/2026, il était mis de côté en `<nom>.avant-farfa`, où le
+//! joueur ne voyait plus ses sauvegardes.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -101,15 +106,13 @@ pub(crate) fn place(path: &Path, target: &Path) -> std::io::Result<bool> {
         remove_link(path)?;
     } else if path.is_dir() {
         // Vrai dossier (le programme a déjà tourné hors du launcher) : ses fichiers vont dans le
-        // jeu s'il n'y a encore rien, sinon il est mis de côté.
+        // jeu, sans jamais rien perdre (voir `move_into`). En cas d'échec, rien n'est effacé et
+        // le lien n'est pas posé : le programme garde son dossier tel quel.
         if is_empty_dir(path) {
             fs::remove_dir(path)?;
-        } else if is_empty_dir(target) && (!target.exists() || fs::remove_dir(target).is_ok()) && fs::rename(path, target).is_ok() {
-            tracing::info!("{} déplacé dans {}", path.display(), target.display());
         } else {
-            let aside = free_name(path);
-            fs::rename(path, &aside)?;
-            tracing::info!("{} existant mis de côté : {}", path.display(), aside.display());
+            move_into(path, target)?;
+            tracing::info!("{} déplacé dans {}", path.display(), target.display());
         }
     } else if path.exists() {
         return Err(std::io::Error::other("un fichier porte déjà ce nom"));
@@ -120,6 +123,71 @@ pub(crate) fn place(path: &Path, target: &Path) -> std::io::Result<bool> {
     }
     make_link(target, path)?;
     Ok(true)
+}
+
+/// Fait passer le contenu du vrai dossier `src` dans `dst` (dossier du jeu), puis efface `src`.
+///
+/// - `dst` absent ou vide : simple déplacement (`rename`). S'il échoue (autre disque : dossier
+///   « Jeux » sur D: ou sur la carte SD du Deck), copie, vérification, puis effacement.
+/// - `dst` a déjà des fichiers : **fusion sans écrasement**. Un fichier absent du jeu y est
+///   copié ; un fichier identique n'est pas recopié ; un fichier différent est gardé à côté,
+///   sous `nom.avant-farfa` (puis `-2`…), dans le dossier du jeu, où le joueur le voit. Le
+///   dossier du jeu reste celui qui sert (c'est lui que les sauvegardes du launcher suivent).
+///
+/// `src` n'est effacé qu'après vérification : chaque fichier copié existe à destination avec la
+/// même taille. Sinon, erreur, et `src` reste intact (rien n'est jamais perdu ; une copie
+/// partielle dans le jeu est reprise sans doublon au prochain essai).
+fn move_into(src: &Path, dst: &Path) -> std::io::Result<()> {
+    if let Some(parent) = dst.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    if is_empty_dir(dst) && (!dst.exists() || fs::remove_dir(dst).is_ok()) && fs::rename(src, dst).is_ok() {
+        return Ok(());
+    }
+    let mut copied = Vec::new();
+    merge_copy(src, dst, &mut copied)?;
+    for (from, to) in &copied {
+        let (a, b) = (fs::metadata(from)?, fs::metadata(to)?);
+        if a.len() != b.len() {
+            return Err(std::io::Error::other(format!("copie incomplète : {}", to.display())));
+        }
+    }
+    fs::remove_dir_all(src)
+}
+
+/// Copie récursive de `src` dans `dst`, sans rien écraser ; note chaque (source, copie).
+fn merge_copy(src: &Path, dst: &Path, copied: &mut Vec<(PathBuf, PathBuf)>) -> std::io::Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let (from, to) = (entry.path(), dst.join(entry.file_name()));
+        if entry.file_type()?.is_dir() {
+            if to.exists() && !to.is_dir() {
+                // Un fichier du jeu porte le nom de ce dossier : le dossier va à côté.
+                merge_copy(&from, &free_name(&to), copied)?;
+            } else {
+                merge_copy(&from, &to, copied)?;
+            }
+        } else if !to.exists() {
+            fs::copy(&from, &to)?;
+            copied.push((from, to));
+        } else if !same_content(&from, &to) {
+            let aside = free_name(&to);
+            fs::copy(&from, &aside)?;
+            tracing::info!("{} gardé à côté : {}", from.display(), aside.display());
+            copied.push((from, aside));
+        } else {
+            copied.push((from, to)); // identique : déjà là
+        }
+    }
+    Ok(())
+}
+
+fn same_content(a: &Path, b: &Path) -> bool {
+    match (fs::metadata(a), fs::metadata(b)) {
+        (Ok(x), Ok(y)) if x.len() == y.len() => fs::read(a).ok() == fs::read(b).ok(),
+        _ => false,
+    }
 }
 
 fn remove_link(path: &Path) -> std::io::Result<()> {
@@ -181,13 +249,13 @@ mod tests {
         assert!(same_dir(&outside, &other));
         assert!(game.join("boiii").join("b.txt").exists());
 
-        // Vrai dossier rempli alors que le jeu a déjà le sien : mis de côté.
+        // Vrai dossier rempli alors que le jeu a déjà le sien : fusionné dans le jeu, sans écraser.
         remove_link(&outside).unwrap();
         fs::create_dir_all(&outside).unwrap();
         fs::write(outside.join("c.txt"), "c").unwrap();
         fs::write(other.join("d.txt"), "d").unwrap();
         assert!(place(&outside, &other).unwrap());
-        assert!(root.join("appdata").join("boiii.avant-farfa").join("c.txt").exists());
+        assert!(other.join("c.txt").exists() && !root.join("appdata").join("boiii.avant-farfa").exists());
         assert!(same_dir(&outside, &other));
 
         // Désinstallation d'un autre jeu : le lien reste ; de celui-ci : il part.
@@ -195,6 +263,49 @@ mod tests {
         assert!(is_link(&outside));
         assert!(remove_if_inside(&outside, &fs::canonicalize(root.join("autre-jeu")).unwrap()));
         assert!(!outside.exists() && other.join("d.txt").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    // Jamais de perte : parent de la cible absent (créé), jeu qui a déjà des fichiers (fusion :
+    // copie, vérification, puis effacement de la source), conflit gardé à côté dans le jeu.
+    #[test]
+    fn data_is_merged_never_lost() {
+        let root = std::env::temp_dir().join(format!("farfa-links-merge-{}", uuid::Uuid::new_v4()));
+        // Parent de la cible absent : déplacement quand même.
+        let outside = root.join("config").join("dolphin-emu");
+        fs::create_dir_all(outside.join("GC")).unwrap();
+        fs::write(outside.join("GC").join("carte.raw"), "sauvegarde").unwrap();
+        let target = root.join("Jeux").join("Emulateurs").join("dolphin").join("config");
+        assert!(place(&outside, &target).unwrap());
+        assert_eq!(fs::read_to_string(target.join("GC").join("carte.raw")).unwrap(), "sauvegarde");
+
+        // Le jeu a déjà ses fichiers : fusion par copie (même chemin que le changement de disque).
+        let outside2 = root.join("appdata").join("emu");
+        let target2 = root.join("Jeux").join("emu");
+        fs::create_dir_all(outside2.join("saves")).unwrap();
+        fs::create_dir_all(target2.join("saves")).unwrap();
+        fs::write(outside2.join("saves").join("nouveau.sav"), "n").unwrap();
+        fs::write(outside2.join("saves").join("meme.sav"), "m").unwrap();
+        fs::write(outside2.join("saves").join("conflit.sav"), "hors du jeu").unwrap();
+        fs::write(target2.join("saves").join("meme.sav"), "m").unwrap();
+        fs::write(target2.join("saves").join("conflit.sav"), "dans le jeu").unwrap();
+        assert!(place(&outside2, &target2).unwrap());
+        let saves = target2.join("saves");
+        assert_eq!(fs::read_to_string(saves.join("nouveau.sav")).unwrap(), "n");
+        assert_eq!(fs::read_to_string(saves.join("conflit.sav")).unwrap(), "dans le jeu");
+        assert_eq!(fs::read_to_string(saves.join("conflit.sav.avant-farfa")).unwrap(), "hors du jeu");
+        assert!(!saves.join("meme.sav.avant-farfa").exists());
+        assert!(is_link(&outside2) && same_dir(&outside2, &target2));
+
+        // Copie seule (rename impossible) : la source n'est effacée qu'après vérification.
+        let src = root.join("src");
+        fs::create_dir_all(src.join("a")).unwrap();
+        fs::write(src.join("a").join("x"), "x").unwrap();
+        let dst = root.join("dst");
+        fs::create_dir_all(&dst).unwrap();
+        fs::write(dst.join("y"), "y").unwrap();
+        move_into(&src, &dst).unwrap();
+        assert!(!src.exists() && dst.join("a").join("x").exists() && dst.join("y").exists());
         fs::remove_dir_all(root).unwrap();
     }
 }
