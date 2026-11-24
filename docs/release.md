@@ -305,7 +305,7 @@ privée. La clé publique correspondante est dans `src-tauri/tauri.conf.json`
 |---|---|
 | `C:\Users\Farfa\.tauri\farfalauncher.key` | la clé privée (secrète) |
 | votre mémoire / gestionnaire de mots de passe | son mot de passe |
-| GitHub, *Settings → Environments → `signature` → Environment secrets* (**pas** dans *Secrets and variables → Actions*) | `TAURI_SIGNING_PRIVATE_KEY` (contenu du fichier) et `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` |
+| GitHub, *Settings → Environments → `signature` → Environment secrets* (**pas** dans *Secrets and variables → Actions*) | `TAURI_SIGNING_PRIVATE_KEY` (contenu du fichier) ; le mot de passe `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` peut rester en secret du dépôt |
 
 GitHub ne rend **jamais** un secret : si le fichier disparaît de ce PC, il est perdu. Gardez
 donc deux copies hors du PC, dès aujourd'hui :
@@ -395,12 +395,14 @@ juste après la fusion)**
    - nom `TAURI_SIGNING_PRIVATE_KEY`, valeur : le contenu du fichier
      `C:\Users\Farfa\.tauri\farfalauncher.key` (l'ouvrir avec le Bloc-notes, Ctrl+A, Ctrl+C,
      coller dans la case, fermer le Bloc-notes **sans enregistrer**) ;
-   - nom `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, valeur : le mot de passe de la clé (depuis votre
-     gestionnaire de mots de passe).
+   - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` : **facultatif**. Si vous avez le mot de passe sous la
+     main, ajoutez-le ici aussi. Sinon, laissez-le où il est (secret du dépôt) : un job avec
+     `environment: signature` lit aussi les secrets du dépôt, et le mot de passe seul ne sert
+     à rien sans la clé.
 5. **Settings** → **Secrets and variables** → **Actions** → onglet *Secrets*, partie
-   **Repository secrets** : **supprimer** `TAURI_SIGNING_PRIVATE_KEY` et
-   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. C'est l'étape qui protège vraiment : tant qu'ils
-   restent ici, n'importe quel job peut les lire sans approbation.
+   **Repository secrets** : **supprimer** `TAURI_SIGNING_PRIVATE_KEY` (et le mot de passe
+   seulement s'il est aussi dans l'environnement). C'est l'étape qui protège vraiment : tant que
+   la clé reste ici, n'importe quel job peut la lire sans approbation.
 
 **C. Vérifier**
 
