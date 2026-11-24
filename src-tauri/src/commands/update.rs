@@ -167,6 +167,21 @@ pub fn version_not_older(current: &str, remote: &str) -> bool {
     }
 }
 
+/// Les deux contrôles de la version de test trouvée (faille SL7), avec l'erreur montrée au
+/// joueur : version plus ancienne → message clair (`TestVersionTooOld`) ; fichier venu
+/// d'ailleurs → `NotAvailable` (cas d'attaque, le détail est dans le journal).
+pub fn check_test_version(tag: &str, current: &str, remote: &str, download_url: &str) -> AppResult<()> {
+    if !version_not_older(current, remote) {
+        tracing::warn!("version de test {tag} refusée : {remote} est plus ancienne que {current}");
+        return Err(AppError::TestVersionTooOld);
+    }
+    if !test_download_allowed(tag, download_url) {
+        tracing::warn!("version de test {tag} refusée : fichier hors de la release {tag} du dépôt officiel");
+        return Err(AppError::NotAvailable);
+    }
+    Ok(())
+}
+
 /// Installe la version de test d'un signalement, proposée dans la discussion avec le support.
 /// Elle porte le numéro de version du launcher dont elle part : on l'installe donc même sans
 /// numéro plus grand, mais jamais une version plus ancienne que celle en service, ni un
@@ -188,14 +203,7 @@ pub async fn install_test_version(app: AppHandle, tag: String) -> AppResult<()> 
         .await
         .map_err(|e| log_err(AppError::ServerUnreachable, "version de test", e))?
         .ok_or(AppError::NotAvailable)?;
-    if !version_not_older(&update.current_version, &update.version) {
-        tracing::warn!("version de test {tag} refusée : {} est plus ancienne que {}", update.version, update.current_version);
-        return Err(AppError::NotAvailable);
-    }
-    if !test_download_allowed(&tag, update.download_url.as_str()) {
-        tracing::warn!("version de test {tag} refusée : fichier hors de la release {tag} du dépôt officiel");
-        return Err(AppError::NotAvailable);
-    }
+    check_test_version(&tag, &update.current_version, &update.version, update.download_url.as_str())?;
     tracing::info!("version de test {tag} : {} → {}", update.current_version, update.version);
     *app.state::<PendingUpdate>().0.lock_or_recover() = Some(update);
     install_update(app).await
@@ -309,6 +317,23 @@ mod tests {
         assert!(!test_download_allowed(tag, &format!("http://github.com/Farfaboulette7/FarfaLauncher/releases/download/{tag}/x.exe")));
         // Un tag préfixe d'un autre ne suffit pas (« test-1 » ne couvre pas « test-10 »).
         assert!(!test_download_allowed("test-1", "https://github.com/Farfaboulette7/FarfaLauncher/releases/download/test-10/x.exe"));
+    }
+
+    // Garantit : une version de test plus ancienne est refusée avec un message clair pour le
+    // joueur (code « test_version_too_old », lu par ReportsInbox.tsx), un fichier venu
+    // d'ailleurs avec « not_available », et le cas normal passe.
+    #[test]
+    fn test_version_refusals_have_their_own_error() {
+        let tag = "test-20261124-1-2";
+        let url = format!("https://github.com/Farfaboulette7/FarfaLauncher/releases/download/{tag}/x.exe");
+        assert!(check_test_version(tag, "1.2.2", "1.2.2", &url).is_ok());
+        let trop_vieille = check_test_version(tag, "1.2.3-beta.2", "1.2.3-beta.1", &url).unwrap_err();
+        assert_eq!(trop_vieille.code(), "test_version_too_old");
+        assert!(trop_vieille.to_string().contains("plus ancienne que votre launcher"));
+        let ailleurs = check_test_version(tag, "1.2.2", "1.2.2", "https://exemple.invalid/x.exe").unwrap_err();
+        assert_eq!(ailleurs.code(), "not_available");
+        let ui = include_str!("../../../src/components/ReportsInbox.tsx");
+        assert!(ui.contains("\"test_version_too_old\""), "ReportsInbox.tsx doit montrer ce message au joueur");
     }
 
     // Garantit : la clé de signature n'est jamais donnée à la CI des branches, et les

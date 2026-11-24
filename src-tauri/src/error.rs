@@ -67,6 +67,10 @@ pub enum AppError {
     NoExecutable,
     #[error("Ce jeu n'est pas disponible pour votre système.")]
     NotAvailable,
+    /// « Installer la version de test » : elle est plus ancienne que le launcher en service
+    /// (le joueur a reçu entre-temps une version plus récente). Refusée (faille SL7).
+    #[error("Cette version de test est plus ancienne que votre launcher : elle n'est plus utile, la correction est sans doute déjà dans votre version.")]
+    TestVersionTooOld,
     #[error("Une installation de ce jeu est déjà en cours.")]
     Busy,
     #[error("Ce jeu n'est pas installé.")]
@@ -126,6 +130,7 @@ impl AppError {
             AppError::Decrypt => "decrypt",
             AppError::NoExecutable => "no_executable",
             AppError::NotAvailable => "not_available",
+            AppError::TestVersionTooOld => "test_version_too_old",
             AppError::Busy => "busy",
             AppError::NotInstalled => "not_installed",
             AppError::Cancelled => "cancelled",

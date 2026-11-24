@@ -2,7 +2,7 @@ import { KeyboardEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useS
 import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { backend, errorMessage, formatSize, MyReport, UPDATE_PROGRESS_EVENT, UpdateProgress } from "../api/backend";
+import { backend, errorMessage, formatSize, isAppError, MyReport, UPDATE_PROGRESS_EVENT, UpdateProgress } from "../api/backend";
 import { logToFile } from "./ErrorBoundary";
 import { launcherNotes, NoteLine } from "../notes";
 import { Dialog } from "./Dialog";
@@ -95,6 +95,10 @@ function Bubble({ me, at, children }: { me: boolean; at?: number | null; childre
 function TestVersion({ tag, ready }: { tag: string; ready: boolean }) {
   const [state, setState] = useState<"idle" | "busy" | "error">("idle");
   const [done, setDone] = useState(0);
+  // Texte de l'erreur : générique, sauf version de test plus ancienne que le launcher
+  // (« test_version_too_old », refusée par commands/update.rs) où le message du launcher
+  // explique pourquoi.
+  const [errorText, setErrorText] = useState("L'installation a échoué. Réessayez dans un moment.");
 
   async function install() {
     setState("busy");
@@ -107,6 +111,11 @@ function TestVersion({ tag, ready }: { tag: string; ready: boolean }) {
       await relaunch();
     } catch (e) {
       logToFile("error", `version de test ${tag}: ${JSON.stringify(e)}`);
+      setErrorText(
+        isAppError(e) && e.code === "test_version_too_old"
+          ? e.message
+          : "L'installation a échoué. Réessayez dans un moment.",
+      );
       setState("error");
     } finally {
       stop();
@@ -121,7 +130,7 @@ function TestVersion({ tag, ready }: { tag: string; ready: boolean }) {
           <button className="n-btn n-btn--sm" onClick={install} disabled={state === "busy"}>
             {state === "busy" ? (done > 0 ? `Téléchargement… ${formatSize(done)}` : "Installation…") : "Installer la version de test"}
           </button>
-          {state === "error" && <p className="n-alert">L'installation a échoué. Réessayez dans un moment.</p>}
+          {state === "error" && <p className="n-alert">{errorText}</p>}
         </>
       ) : (
         <p className="n-hint">
