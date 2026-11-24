@@ -55,7 +55,7 @@ const MIGRATED: &str = ".farfa-migre";
 /// plus sur rien. Un dossier qui existait avant le lien (repère `.farfa-migre`) est remis à
 /// son chemin d'origine, par la même copie sûre. Erreur : la remise a échoué, le lien est
 /// reposé et la désinstallation doit s'arrêter (sinon ces fichiers partiraient avec le jeu).
-pub fn remove_into(links: &[Link], game_dir: &Path) -> Result<(), String> {
+pub fn remove_into(links: &[Link], game_dir: &Path) -> Result<(), crate::error::AppError> {
     let Ok(game) = fs::canonicalize(game_dir) else { return Ok(()) };
     for link in links.iter().filter(|l| l.system.as_deref().is_none_or(|s| s == crate::language::current_system())) {
         if let Some(path) = crate::language::expand(&link.path, game_dir) {
@@ -72,13 +72,37 @@ pub fn used_by_others(pages: &[i64], rom_id: i64) -> bool {
     pages.iter().any(|id| *id != rom_id)
 }
 
-fn remove_if_inside(path: &Path, game: &Path) -> Result<bool, String> {
+/// Un seul lien (jeu PC : `%LOCALAPPDATA%\boiii`), avec le même traitement que `remove_into`.
+pub fn remove_link_into(path: &Path, game_dir: &Path) -> Result<bool, crate::error::AppError> {
+    match fs::canonicalize(game_dir) {
+        Ok(game) => remove_if_inside(path, &game),
+        Err(_) => Ok(false),
+    }
+}
+
+/// Erreur de remise en place : disque plein, sinon l'erreur dédiée (avec le chemin).
+fn not_restored(path: &Path, e: &std::io::Error) -> crate::error::AppError {
+    tracing::error!("{} non remis à son chemin d'origine : {e}", path.display());
+    let full = matches!(e.raw_os_error(), Some(112) | Some(28)) || e.kind() == std::io::ErrorKind::StorageFull;
+    if full {
+        crate::error::AppError::DiskFull
+    } else {
+        crate::error::AppError::FolderNotRestored { path: path.display().to_string() }
+    }
+}
+
+fn remove_if_inside(path: &Path, game: &Path) -> Result<bool, crate::error::AppError> {
     let target = match fs::canonicalize(path) {
         Ok(t) if is_link(path) && t.starts_with(game) => t,
         _ => return Ok(false),
     };
     let migrated = target.join(MIGRATED).is_file();
     if let Err(e) = remove_link(path) {
+        // Lien impossible à retirer : sans importance s'il ne mène qu'à des fichiers du jeu ;
+        // mais un dossier d'avant (repère) partirait avec le jeu : on arrête.
+        if migrated {
+            return Err(not_restored(path, &e));
+        }
         tracing::warn!("lien {} non retiré: {e}", path.display());
         return Ok(false);
     }
@@ -86,7 +110,7 @@ fn remove_if_inside(path: &Path, game: &Path) -> Result<bool, String> {
     if migrated {
         if let Err(e) = move_into(&target, path) {
             let _ = make_link(&target, path);
-            return Err(format!("{} non remis à son chemin d'origine : {e}", path.display()));
+            return Err(not_restored(path, &e));
         }
         let _ = fs::remove_file(path.join(MIGRATED));
         tracing::info!("{} remis à son chemin d'origine", path.display());
@@ -307,6 +331,10 @@ fn same_content(a: &Path, b: &Path) -> bool {
 }
 
 fn remove_link(path: &Path) -> std::io::Result<()> {
+    #[cfg(test)]
+    if tests::FAIL_UNLINK.with(|f| f.replace(false)) {
+        return Err(std::io::Error::other("lien verrouillé (test)"));
+    }
     // Jonction ou lien vers un dossier : `remove_dir` ; lien symbolique Unix : `remove_file`.
     fs::remove_dir(path).or_else(|_| fs::remove_file(path))
 }
@@ -354,6 +382,29 @@ mod tests {
     thread_local! {
         /// Appels à `make_link` à faire échouer, dans l'ordre (`true` : échec).
         pub(super) static FAIL_LINKS: std::cell::RefCell<std::collections::VecDeque<bool>> = Default::default();
+        /// Le prochain `remove_link` échoue (lien verrouillé).
+        pub(super) static FAIL_UNLINK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+
+    // Relecture 3 : lien impossible à retirer alors que le dossier d'avant est derrière (repère)
+    // → erreur dédiée, avec le chemin ; sans repère, simple avertissement. Disque plein → DiskFull.
+    #[test]
+    fn locked_link_over_a_migrated_folder_stops_the_uninstall() {
+        let root = std::env::temp_dir().join(format!("farfa-links-lock-{}", uuid::Uuid::new_v4()));
+        let (before, game) = (root.join("appdata").join("boiii"), root.join("jeu"));
+        fs::create_dir_all(&before).unwrap();
+        fs::write(before.join("profil.json"), "p").unwrap();
+        assert!(place(&before, &game.join("boiii")).unwrap());
+        FAIL_UNLINK.with(|f| f.set(true));
+        let err = remove_link_into(&before, &game).unwrap_err();
+        assert_eq!(err.code(), "folder_not_restored");
+        assert!(err.to_string().contains(&before.display().to_string()) && err.to_string().contains("rien n'a été effacé"));
+        assert!(is_link(&before) && game.join("boiii").join("profil.json").exists());
+        // Ensuite : remis à sa place, lien retiré.
+        assert!(remove_link_into(&before, &game).unwrap());
+        assert!(!is_link(&before) && before.join("profil.json").exists());
+        assert_eq!(not_restored(&before, &std::io::Error::from_raw_os_error(if cfg!(windows) { 112 } else { 28 })).code(), "disk_full");
+        fs::remove_dir_all(root).unwrap();
     }
 
     // Relecture 2 (B) : dossier créé par le launcher (pas de repère) : seul le lien part ;

@@ -340,10 +340,12 @@ pub async fn uninstall_game(app: AppHandle, state: State<'_, AppState>, rom_id: 
         if !crate::links::used_by_others(&state::pages_in(&state.config_dir, &st.game_dir), st.rom_id) {
             // Un dossier d'avant le lien (repère .farfa-migre) retourne à son chemin d'origine ;
             // si c'est impossible, la désinstallation s'arrête plutôt que de l'effacer.
-            crate::links::remove_into(&state.catalog().links_for_install(&st), &st.game_dir).map_err(|e| {
-                tracing::error!("désinstallation arrêtée : {e}");
-                AppError::Disk
-            })?;
+            crate::links::remove_into(&state.catalog().links_for_install(&st), &st.game_dir)?;
+        }
+        // Black Ops III : jonction %LOCALAPPDATA%\boiii retirée, et un dossier boiii d'avant le
+        // launcher (repère .farfa-migre) remis à sa place.
+        if let Some(pc) = &st.pc {
+            crate::pc::install::unlink_boiii(pc, &st.game_dir)?;
         }
         install::uninstall(&state.config_dir, st, keep_saves).await?;
     }
