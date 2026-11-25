@@ -5,7 +5,7 @@ Les points sont numérotés **SL1, SL2…** (« sécurité launcher »).
 
 Résumé : **1 critique, 5 élevées, 4 moyennes, 8 faibles.**
 
-**État au 2026-11-24 (launcher 1.2.3)** :
+**État au 2026-11-26 (launcher 1.2.5)** :
 
 | Point | État |
 |---|---|
@@ -16,7 +16,8 @@ Résumé : **1 critique, 5 élevées, 4 moyennes, 8 faibles.**
 | SL6 | corrigé : clé de signature seulement dans l'environment `signature`, approbation obligatoire |
 | SL7 | corrigé (1.2.3) : version de test jamais plus ancienne, jamais hors de sa release |
 | SL8 | en partie : le moteur du Deck se compile en lecture seule |
-| SL3, SL9 à SL18 | ouverts (gravité moyenne ou faible), à traiter plus tard |
+| SL3 | **risque accepté** par le propriétaire le 2026-11-26 (voir SL3) |
+| SL9 à SL18 | corrigés (1.2.5) ; limites notées sous SL10 et SL11 |
 
 Comment lire ce rapport :
 - **Où** : le fichier et la ligne à regarder.
@@ -109,6 +110,15 @@ Outils passés :
 - Correction proposée : un jeton propre au gestionnaire. Le launcher l'obtient une fois
   (échange signé par RomM), puis n'envoie plus le jeton RomM qu'à RomM.
   - Effort : moyen (launcher + gestionnaire). Risque : une reconnexion pour chaque joueur.
+- **Décision du propriétaire (2026-11-26) : risque accepté.** Deux corrections étudiées :
+  - Un jeton du gestionnaire obtenu en échange du jeton RomM : protège mal. Un gestionnaire
+    compromis peut refuser ces jetons et forcer un nouvel échange, donc recevoir quand même
+    les jetons RomM.
+  - Un second jeton RomM limité à `me.read` (« FaRFa gestionnaire »), seul envoyé au
+    gestionnaire et aux assets : vraie correction, mais deux approbations dans le navigateur
+    à chaque connexion et une reconnexion de tous les joueurs. Créer ce jeton sans le
+    navigateur demande `me.write` (`POST /api/client-tokens`, RomM 5.4), trop large.
+  - Point d'entrée unique si on y revient : `RommClient::with_base` (`romm/client.rs`).
 
 ### SL4 — Les chemins `{appdata}`, `{documents}`… peuvent sortir de leur dossier sous Windows
 
