@@ -264,6 +264,10 @@ pub struct Emulator {
     /// Remarques par console (`remarque: console | texte`) : une information, pas un conseil.
     #[serde(default)]
     pub note: Vec<ConsoleAdvice>,
+    /// Seuls jeux RomM pour lesquels il est proposé (`seulement:`), jamais choisi d'office ;
+    /// vide : tous les jeux de ses consoles.
+    #[serde(default)]
+    pub only_roms: Vec<i64>,
     /// ROM à préparer avant de la donner à l'émulateur (`decompresser:`, `dechiffrer:`).
     #[serde(default)]
     pub rom_prep: Option<RomPrep>,
@@ -556,6 +560,11 @@ impl Emulator {
         program.parent().map(std::path::Path::to_path_buf).unwrap_or_else(|| game_dir.to_path_buf())
     }
 
+    /// Peut-il être proposé pour ce jeu RomM (`seulement:` vide, ou ce jeu dedans) ?
+    pub fn serves(&self, rom_id: i64) -> bool {
+        self.only_roms.is_empty() || self.only_roms.contains(&rom_id)
+    }
+
     /// Build pour ce système, par ordre de préférence.
     pub fn file_for(&self, target: Target) -> Option<&ManagerFile> {
         target.candidates().iter().find_map(|t| self.files.iter().find(|f| f.system.as_deref() == Some(t.suffix())))
@@ -565,9 +574,11 @@ impl Emulator {
 impl Catalog {
     /// Émulateur d'une console : celui qui a une build pour ce système d'abord.
     /// Émulateur proposé d'abord : le conseillé pour la console s'il a une build pour ce système,
-    /// sinon le premier qui en a une, sinon le premier.
+    /// sinon le premier qui en a une, sinon le premier. Un émulateur réservé à certains jeux
+    /// (`seulement:`) n'est jamais proposé d'office : le joueur le choisit sur la page du jeu.
     pub fn emulator_for_console(&self, console: &str, target: Target) -> Option<&Emulator> {
-        let mut pour_la_console = self.emulators.iter().filter(|e| e.consoles.iter().any(|c| c == console));
+        let mut pour_la_console =
+            self.emulators.iter().filter(|e| e.only_roms.is_empty() && e.consoles.iter().any(|c| c == console));
         let premier = pour_la_console.clone().next();
         let conseille = pour_la_console.clone().find(|e| e.advice_for(console).is_some() && e.file_for(target).is_some());
         conseille.or_else(|| pour_la_console.find(|e| e.file_for(target).is_some())).or(premier)
@@ -578,11 +589,12 @@ impl Catalog {
         Some(EmulatorOffer { advice: e.advice_for(console), note: e.note_for(console), ..Self::offer_of(e, target) })
     }
 
-    /// Tous les émulateurs d'une console, dans l'ordre du catalogue (le premier est proposé d'abord).
-    pub fn offers(&self, console: &str, target: Target) -> Vec<EmulatorOffer> {
+    /// Émulateurs d'une console pour ce jeu RomM, dans l'ordre du catalogue (le premier est proposé
+    /// d'abord). Ceux réservés à d'autres jeux (`seulement:`) n'y sont pas.
+    pub fn offers(&self, console: &str, rom_id: i64, target: Target) -> Vec<EmulatorOffer> {
         self.emulators
             .iter()
-            .filter(|e| e.consoles.iter().any(|c| c == console))
+            .filter(|e| e.consoles.iter().any(|c| c == console) && e.serves(rom_id))
             .map(|e| EmulatorOffer { advice: e.advice_for(console), note: e.note_for(console), ..Self::offer_of(e, target) })
             .collect()
     }
@@ -1088,9 +1100,22 @@ mod tests {
         let c = Catalog { emulators: vec![a, b], ..Default::default() };
         let o = c.offer("switch-2", Target::Windows).unwrap();
         assert_eq!((o.id.as_str(), o.advice.as_deref()), ("b", Some("Le plus rapide")));
-        assert_eq!(c.offers("switch-2", Target::Windows).iter().map(|o| o.advice.is_some()).collect::<Vec<_>>(), vec![false, true]);
+        assert_eq!(c.offers("switch-2", 1, Target::Windows).iter().map(|o| o.advice.is_some()).collect::<Vec<_>>(), vec![false, true]);
         // Conseillé sans build pour ce système : le premier qui en a une.
         assert_eq!(c.offer("switch-2", Target::MacArm).unwrap().id, "a");
+    }
+
+    #[test]
+    fn emulator_reserved_to_some_games() {
+        // `seulement: 192` : proposé sur la page de ce jeu seulement, et jamais choisi d'office.
+        let mut ssbu = emu("eden-ssbu", &["switch"], &["Windows"]);
+        ssbu.only_roms = vec![192];
+        let c = Catalog { emulators: vec![ssbu, emu("citron", &["switch"], &["Windows"])], ..Default::default() };
+        let ids = |rom| c.offers("switch", rom, Target::Windows).into_iter().map(|o| o.id).collect::<Vec<_>>();
+        assert_eq!(ids(192), vec!["eden-ssbu", "citron"]);
+        assert_eq!(ids(7), vec!["citron"]);
+        assert_eq!(c.offer("switch", Target::Windows).unwrap().id, "citron");
+        assert!(c.emulator("eden-ssbu").unwrap().serves(192) && !c.emulator("eden-ssbu").unwrap().serves(7));
     }
 
     pub(super) fn emu(id: &str, consoles: &[&str], systems: &[&str]) -> Emulator {
@@ -1114,6 +1139,7 @@ mod tests {
             packs: vec![],
             advice: vec![],
             note: vec![],
+            only_roms: vec![],
             rom_prep: None,
             external_content: None,
             shaders: None,

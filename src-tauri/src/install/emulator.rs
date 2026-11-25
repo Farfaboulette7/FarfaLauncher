@@ -418,7 +418,7 @@ impl InstallJob {
         let installs = state::all_installs(&self.config_dir, rom_id);
         let on_emulator = |p: &&InstalledGame| p.shared.as_ref().is_some_and(|s| s.is_emulator());
         let active = installs.first().filter(on_emulator).cloned();
-        let emulator = self.pick_emulator(&game.console, active.as_ref().or(installs.iter().find(on_emulator))).ok_or(AppError::NotAvailable)?;
+        let emulator = self.pick_emulator(&game.console, rom_id, active.as_ref().or(installs.iter().find(on_emulator))).ok_or(AppError::NotAvailable)?;
         // Cet émulateur-là d'abord (mise à jour), sinon un autre : même dossier des ROM.
         let previous = installs
             .iter()
@@ -573,8 +573,10 @@ impl InstallJob {
     }
 
     /// Émulateur à utiliser : celui choisi, sinon celui du jeu déjà installé, sinon le premier de la console.
-    fn pick_emulator(&self, console: &str, previous: Option<&InstalledGame>) -> Option<Emulator> {
-        let of_console = |id: &str| self.catalog.emulator(id).filter(|e| e.consoles.iter().any(|c| c == console));
+    /// Un émulateur réservé à d'autres jeux (`seulement:`) n'est jamais pris.
+    fn pick_emulator(&self, console: &str, rom_id: i64, previous: Option<&InstalledGame>) -> Option<Emulator> {
+        let of_console =
+            |id: &str| self.catalog.emulator(id).filter(|e| e.consoles.iter().any(|c| c == console) && e.serves(rom_id));
         self.emulator_id
             .as_deref()
             .and_then(of_console)

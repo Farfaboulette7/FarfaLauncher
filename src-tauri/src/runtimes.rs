@@ -294,7 +294,7 @@ pub fn annotate(game: &mut Game, catalog: &Catalog, recomps: &HashSet<i64>, me: 
     let console = (game.pc.is_none() && !game.console.is_empty()).then(|| game.console.clone());
     let id = game.id;
     game.emulator = console.as_deref().and_then(|c| catalog.offer(c, me)).map(|o| Catalog::for_game(o, catalog, id));
-    game.emulators = console.as_deref().map(|c| catalog.offers(c, me)).unwrap_or_default().into_iter().map(|o| Catalog::for_game(o, catalog, id)).collect();
+    game.emulators = console.as_deref().map(|c| catalog.offers(c, id, me)).unwrap_or_default().into_iter().map(|o| Catalog::for_game(o, catalog, id)).collect();
     game.recomps = catalog.recomp_offers(id, me);
     game.recomp_id = catalog.recomp_for_rom(id).map(|r| r.id.clone());
     // Une seule recomp : proposée elle aussi (version, systèmes, dépôt), avec son conseil.
