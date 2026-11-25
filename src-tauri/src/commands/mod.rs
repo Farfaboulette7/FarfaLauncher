@@ -43,8 +43,47 @@ pub fn open_url(app: tauri::AppHandle, state: State<'_, AppState>, url: String) 
     let server = state.server_url()?;
     // … ou le dépôt GitHub d'une recomp ou d'un émulateur connus.
     let known_repo = state.catalog().knows_repo(&url) || state.manifest().runtimes.iter().any(|r| r.repo == url);
-    if !url.starts_with(&format!("{server}/")) && !known_repo {
+    if !url_allowed(&url, &server, known_repo) {
+        tracing::warn!("adresse refusée à l'ouverture : {url}");
         return Err(AppError::Internal);
     }
     crate::external::open_url(&app, &url)
+}
+
+/// Adresse que `open_url` accepte de passer au système (faille SL12) :
+/// - une page du serveur RomM configuré (`<serveur>/…`, en http seulement sur le réseau
+///   local, voir `normalize_server_url`) ;
+/// - le dépôt d'une recomp ou d'un émulateur du catalogue, seulement en `https://` : un
+///   `repo:` en `file://`, `ms-settings:`… n'est jamais ouvert.
+/// Jamais d'espace ni de caractère de contrôle (l'adresse est donnée telle quelle au système).
+fn url_allowed(url: &str, server: &str, known_repo: bool) -> bool {
+    if url.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return false;
+    }
+    let server_page = !server.is_empty() && url.starts_with(&format!("{server}/"));
+    let https_repo = known_repo && url.starts_with("https://") && url.len() > "https://".len();
+    server_page || https_repo
+}
+
+#[cfg(test)]
+mod tests {
+    use super::url_allowed;
+
+    #[test]
+    fn open_url_only_server_pages_and_https_repos() {
+        let server = "https://romm.exemple.fr";
+        assert!(url_allowed("https://romm.exemple.fr/rom/12", server, false));
+        assert!(url_allowed("https://github.com/a/b", server, true));
+        // Dépôt connu mais pas en https : refusé.
+        for bad in ["http://github.com/a/b", "file:///C:/Windows/System32/calc.exe", "ms-settings:privacy", "https://", "javascript:alert(1)"] {
+            assert!(!url_allowed(bad, server, true), "{bad}");
+        }
+        // Adresse inconnue, même en https.
+        assert!(!url_allowed("https://ailleurs.fr/x", server, false));
+        // Domaine qui commence comme le serveur : refusé (il faut le « / »).
+        assert!(!url_allowed("https://romm.exemple.fr.pirate.com/x", server, false));
+        assert!(!url_allowed("https://github.com/a/b c", server, true));
+        // Serveur local en http : ses pages restent ouvertes (page d'approbation).
+        assert!(url_allowed("http://192.168.1.10:8080/pair", "http://192.168.1.10:8080", false));
+    }
 }
