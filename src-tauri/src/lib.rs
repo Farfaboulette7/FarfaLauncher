@@ -67,6 +67,7 @@ pub fn run() {
             let log_dir = paths.app_log_dir()?;
             // Sous-dossier dédié : le dossier de cache de l'application contient
             // aussi les logs et les données du WebView (Windows), à ne pas vider.
+            // C'est aussi le seul dossier que l'interface lit par `asset:` (tauri.conf.json, SL16).
             let app_cache = paths.app_cache_dir()?;
             let cache_dir = app_cache.join("cache");
             cache::remove_legacy_entries(&app_cache);

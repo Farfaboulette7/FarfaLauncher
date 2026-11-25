@@ -214,6 +214,17 @@ pub async fn cached_download_checked(
 mod tests {
     use super::*;
 
+    /// SL16 : l'interface ne lit par `asset:` (`convertFileSrc`) que des fichiers de ce cache,
+    /// tous sous `<cache de l'application>/cache` (`lib.rs` : `app_cache.join("cache")`). La
+    /// portée de `tauri.conf.json` doit s'y limiter : le reste du dossier contient aussi les
+    /// journaux et les données du WebView (Windows).
+    #[test]
+    fn asset_protocol_sees_only_the_cache_subfolder() {
+        let conf: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let scope = &conf["app"]["security"]["assetProtocol"]["scope"];
+        assert_eq!(scope, &serde_json::json!(["$APPCACHE/cache/**"]));
+    }
+
     #[test]
     fn prune_removes_the_oldest_until_under_the_limit() {
         let dir = std::env::temp_dir().join(format!("farfa-prune-{}", uuid::Uuid::new_v4()));

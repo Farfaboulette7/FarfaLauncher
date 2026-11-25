@@ -311,6 +311,9 @@ Outils passés :
 - Problème : sous Windows, ce dossier contient aussi les journaux et les données du WebView.
   Ce n'est utile qu'en cas de faille dans l'interface (aucune trouvée).
 - Correction : `$APPCACHE/cache/**`. Effort : petit.
+- Corrigé le 2026-11-25 (phase2-moyens-b) : portée `$APPCACHE/cache/**`. Tous les fichiers lus
+  par `asset:` (images, avatars, livrets, musiques, sons) sont sous `cache_dir` ; un test
+  (`cache.rs`) vérifie la portée.
 
 ### SL17 — Le vrai domaine et l'IP du NAS sont dans le dépôt public
 
