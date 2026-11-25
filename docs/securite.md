@@ -285,9 +285,12 @@ Outils passés :
 - Correction : vérifier le `.sha512sum` de GE ; épingler une version d'umu. Effort : petit.
 - Corrigé le 2026-11-25 (phase2-moyens-b) : l'archive de GE-Proton est vérifiée par son
   `.sha512sum` avant l'extraction (refusée et effacée sinon, téléchargement refusé sans
-  `.sha512sum`) ; umu épinglé en 1.4.4 avec le SHA-256 de son zipapp (`pc/proton.rs`). Clients
-  CoD : risque documenté et accepté dans `pc/cod.rs` (manifeste et fichiers dans le même dépôt,
-  épingler un commit figerait les clients).
+  `.sha512sum`) (`pc/proton.rs`). umu reste en dernière version (décision du propriétaire,
+  risque SL2 accepté, pas d'épinglage) ; son zipapp est vérifié par le SHA-256 du champ `digest`
+  de l'API GitHub (fichier abîmé ou remplacé en route), mais un compte umu compromis publierait
+  l'empreinte avec. Sans `digest`, umu est installé sans vérification (avertissement au journal).
+  Clients CoD : risque documenté et accepté dans `pc/cod.rs` (manifeste et fichiers dans le
+  même dépôt, épingler un commit figerait les clients).
 
 ### SL14 — Les archives du gestionnaire ne sont pas vérifiées par leur SHA-1
 

@@ -6,9 +6,9 @@
 //!   releases de GE-Proton. La plus récente de GE-Proton est recommandée.
 //!   L'archive téléchargée est vérifiée par le `.sha512sum` publié avec elle (SL13).
 //! - umu-launcher : celui du système s'il existe, sinon son « zipapp »
-//!   (quelques centaines de Ko, demande python3), version épinglée et vérifiée
-//!   par son SHA-256 (SL13). Sans python3, Proton est lancé directement
-//!   (`proton waitforexitandrun`).
+//!   (quelques centaines de Ko, demande python3), toujours la dernière version, vérifiée
+//!   par l'empreinte SHA-256 que GitHub donne pour le fichier (SL13). Sans python3, Proton
+//!   est lancé directement (`proton waitforexitandrun`).
 //! - Un préfixe Wine par jeu, dans le dossier de config du launcher (il survit
 //!   à une désinstallation, comme chez Heroic).
 
@@ -23,12 +23,9 @@ use super::net;
 use crate::error::{log_err, AppError, AppResult};
 
 const GE_RELEASES: &str = "https://api.github.com/repos/GloriousEggroll/proton-ge-custom/releases?per_page=8";
-/// umu-launcher épinglé (SL13) : une version précise et l'empreinte SHA-256 de son zipapp,
-/// relevée sur sa release GitHub (champ `digest` de l'API, release 1.4.4 du 2026-07-25).
-/// Pour passer à une version plus récente : changer l'adresse et l'empreinte ensemble.
-/// Seul un umu pas encore installé est concerné : celui du système ou déjà téléchargé est gardé.
-const UMU_ZIPAPP: &str = "https://github.com/Open-Wine-Components/umu-launcher/releases/download/1.4.4/umu-launcher-1.4.4-zipapp.tar";
-const UMU_SHA256: &str = "eb590691841f7fad3fc3ad8fd5db4ccb87849fe7948e62b28ece7a4ee48cc851";
+/// Dernière release d'umu-launcher : toujours la dernière version (règle du propriétaire,
+/// risque SL2 accepté). Son zipapp est vérifié par le champ `digest` de l'API (SL13).
+const UMU_LATEST: &str = "https://api.github.com/repos/Open-Wine-Components/umu-launcher/releases/latest";
 
 /// Une version de Proton, installée ou téléchargeable.
 #[derive(Debug, Clone, Serialize)]
@@ -144,6 +141,17 @@ struct Asset {
     name: String,
     browser_download_url: String,
     size: u64,
+    /// Empreinte calculée par GitHub à la mise en ligne (`sha256:<hex>`), absente des
+    /// fichiers publiés avant 2025.
+    #[serde(default)]
+    digest: Option<String>,
+}
+
+/// Empreinte SHA-256 du champ `digest` de GitHub (`sha256:<64 caractères hexadécimaux>`).
+/// `None` : champ absent, autre algorithme ou valeur malformée.
+fn github_sha256(digest: Option<&str>) -> Option<String> {
+    let hex = digest?.strip_prefix("sha256:")?;
+    (hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit())).then(|| hex.to_ascii_lowercase())
 }
 
 async fn releases() -> AppResult<Vec<Release>> {
@@ -320,12 +328,21 @@ pub async fn ensure_umu(tools: &Path, cancel: &CancellationToken) -> Option<Path
     }
     let result: AppResult<PathBuf> = async {
         let http = net::client();
+        let rel: Release = serde_json::from_str(&net::get_text(&http, UMU_LATEST).await?).map_err(|e| log_err(AppError::Download, "release d'umu", e))?;
+        let asset = rel.assets.iter().find(|a| a.name.ends_with("-zipapp.tar")).ok_or(AppError::Download)?;
+        // SL13 : empreinte donnée par GitHub pour ce fichier. Elle protège d'un fichier abîmé
+        // ou remplacé en route, pas d'un compte umu compromis (il publierait l'empreinte avec).
+        let expected = github_sha256(asset.digest.as_deref());
+        if expected.is_none() {
+            tracing::warn!("{} : pas d'empreinte GitHub, umu non vérifié", asset.name);
+        }
         let archive = tools.join("umu-zipapp.tar");
-        net::download(&http, UMU_ZIPAPP, &archive, cancel, |_, _| {}).await?;
+        net::download(&http, &asset.browser_download_url, &archive, cancel, |_, _| {}).await?;
         let (a, d) = (archive.clone(), tools.to_path_buf());
         tokio::task::spawn_blocking(move || -> AppResult<()> {
-            // Version épinglée : l'archive doit avoir exactement l'empreinte notée (SL13).
-            check_digest::<Sha256>(&a, UMU_SHA256, "zipapp d'umu")?;
+            if let Some(expected) = expected {
+                check_digest::<Sha256>(&a, &expected, "zipapp d'umu")?;
+            }
             let f = std::fs::File::open(&a).map_err(|e| log_err(AppError::Extract, "archive d'umu", e))?;
             let mut tar = tar::Archive::new(f);
             tar.set_preserve_permissions(true);
@@ -563,7 +580,7 @@ mod tests {
 
     #[test]
     fn checksum_asset_matches_the_tarball() {
-        let asset = |name: &str| Asset { name: name.into(), browser_download_url: format!("https://x/{name}"), size: 1 };
+        let asset = |name: &str| Asset { name: name.into(), browser_download_url: format!("https://x/{name}"), size: 1, digest: None };
         let r = Release {
             tag_name: "GE-Proton10-25".into(),
             assets: vec![asset("GE-Proton10-25.sha512sum"), asset("GE-Proton10-25.tar.gz"), asset("GE-Proton10-25-aarch64.tar.gz")],
@@ -588,10 +605,26 @@ mod tests {
         assert!(matches!(check_digest::<Sha256>(&path, &"0".repeat(64), "essai"), Err(AppError::Integrity)));
         // Archive refusée : effacée, jamais extraite.
         assert!(!path.exists());
-        // L'empreinte épinglée d'umu a la bonne forme.
-        assert!(UMU_SHA256.len() == 64 && UMU_SHA256.bytes().all(|b| b.is_ascii_hexdigit()));
-        assert!(UMU_ZIPAPP.starts_with("https://github.com/Open-Wine-Components/umu-launcher/releases/download/"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn github_digest_of_umu() {
+        let h = "eb590691841f7fad3fc3ad8fd5db4ccb87849fe7948e62b28ece7a4ee48cc851";
+        assert_eq!(github_sha256(Some(&format!("sha256:{h}"))), Some(h.to_string()));
+        assert_eq!(github_sha256(Some(&format!("sha256:{}", h.to_ascii_uppercase()))), Some(h.to_string()));
+        // Absent, autre algorithme, longueur fausse, caractères non hexadécimaux : rien.
+        assert_eq!(github_sha256(None), None);
+        assert_eq!(github_sha256(Some(&format!("sha512:{h}"))), None);
+        assert_eq!(github_sha256(Some("sha256:abc")), None);
+        assert_eq!(github_sha256(Some(&format!("sha256:{}", "z".repeat(64)))), None);
+        // Le champ est lu dans la réponse de l'API ; absent, la release reste lisible.
+        let rel: Release = serde_json::from_str(&format!(
+            r#"{{"tag_name":"1.4.4","assets":[{{"name":"umu-launcher-1.4.4-zipapp.tar","browser_download_url":"https://x","size":1,"digest":"sha256:{h}"}},{{"name":"b","browser_download_url":"https://y","size":2}}]}}"#
+        ))
+        .unwrap();
+        assert_eq!(github_sha256(rel.assets[0].digest.as_deref()), Some(h.to_string()));
+        assert_eq!(rel.assets[1].digest, None);
     }
 
     #[cfg(unix)]
