@@ -9,8 +9,8 @@ const SUBDOMAIN: &str = "assets";
 
 /// Adresse déduite de celle du serveur RomM, sans jamais sortir de son domaine
 /// (le token y est envoyé) :
-/// - `https://romm.poupounas.synology.me` → `https://assets.poupounas.synology.me` ;
-/// - `https://poupounas.synology.me` → `https://assets.poupounas.synology.me`
+/// - `https://romm.exemple.synology.me` → `https://assets.exemple.synology.me` ;
+/// - `https://exemple.synology.me` → `https://assets.exemple.synology.me`
 ///   (et non `assets.synology.me`, qui appartiendrait à quelqu'un d'autre).
 ///
 /// Rien pour une IP ou `localhost` : l'adresse doit alors être saisie.
@@ -52,8 +52,8 @@ mod tests {
     #[test]
     fn replaces_the_subdomain() {
         assert_eq!(
-            derive_url("https://romm.poupounas.synology.me").as_deref(),
-            Some("https://assets.poupounas.synology.me")
+            derive_url("https://romm.exemple.synology.me").as_deref(),
+            Some("https://assets.exemple.synology.me")
         );
         assert_eq!(derive_url("https://romm.example.org:8443").as_deref(), Some("https://assets.example.org:8443"));
     }
@@ -61,8 +61,8 @@ mod tests {
     #[test]
     fn never_leaves_the_owner_domain() {
         assert_eq!(
-            derive_url("https://poupounas.synology.me").as_deref(),
-            Some("https://assets.poupounas.synology.me")
+            derive_url("https://exemple.synology.me").as_deref(),
+            Some("https://assets.exemple.synology.me")
         );
         assert_eq!(derive_url("https://example.org").as_deref(), Some("https://assets.example.org"));
         assert_eq!(derive_url("https://romm.farfa.duckdns.org").as_deref(), Some("https://assets.farfa.duckdns.org"));
@@ -70,7 +70,7 @@ mod tests {
 
     #[test]
     fn nothing_for_ip_or_localhost() {
-        assert_eq!(derive_url("http://192.168.1.20:8080"), None);
+        assert_eq!(derive_url("http://192.0.2.20:8080"), None);
         assert_eq!(derive_url("http://localhost:3000"), None);
     }
 

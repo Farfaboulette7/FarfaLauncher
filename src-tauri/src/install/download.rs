@@ -220,22 +220,16 @@ pub fn disk_error(context: &str, e: std::io::Error) -> AppError {
     log_err(if full { AppError::DiskFull } else { AppError::Disk }, context, e)
 }
 
-/// Vérifie la taille, puis le SHA-1 (ou à défaut le MD5) fourni par RomM.
+/// Vérifie la taille, puis le SHA-1 (ou à défaut le MD5) fourni par RomM ou le gestionnaire.
 async fn verify(path: &Path, file: &RemoteFile) -> AppResult<()> {
     let len = tokio::fs::metadata(path).await.map(|m| m.len()).unwrap_or(0);
     if len != file.size {
         return Err(log_err(AppError::Integrity, "vérification", format!("taille {len} au lieu de {}", file.size)));
     }
-    // Pour les fichiers compressés, RomM hache le contenu décompressé, pas le
-    // fichier : la comparaison est impossible. On s'en tient à la taille ; les
-    // CRC internes du zip sont contrôlés à l'extraction.
-    if is_compressed_container(path, &file.file_name).await {
+    // Un fichier du gestionnaire n'est jamais « compressé » à ses yeux : inutile de lire son en-tête.
+    let compressed = !file.from_manager && is_compressed_container(path, &file.file_name).await;
+    let Some((expected, algo)) = expected_hash(file, compressed) else {
         return Ok(());
-    }
-    let (expected, algo) = match (&file.sha1, &file.md5) {
-        (Some(h), _) => (h.to_ascii_lowercase(), "sha1"),
-        (None, Some(h)) => (h.to_ascii_lowercase(), "md5"),
-        (None, None) => return Ok(()),
     };
     let mut f = tokio::fs::File::open(path).await.map_err(|e| log_err(AppError::Disk, "lecture pour vérification", e))?;
     let mut buf = vec![0u8; 1 << 20];
@@ -258,6 +252,30 @@ async fn verify(path: &Path, file: &RemoteFile) -> AppResult<()> {
         return Err(log_err(AppError::Integrity, "vérification", format!("{algo} {actual} ≠ {expected} pour {}", file.file_name)));
     }
     Ok(())
+}
+
+/// Empreinte à comparer au fichier téléchargé, et son algorithme (`sha1` ou `md5`).
+/// `None` : seule la taille est vérifiée.
+///
+/// - Fichier de FarfaRomManager (`files/<sha1>`) : le SHA-1 est celui du fichier lui-même
+///   (`sha1_fichier` du gestionnaire), zip compris. Il est donc toujours vérifié (SL14).
+/// - Fichier de RomM compressé (`compressed`) : RomM hache le contenu décompressé, pas le
+///   fichier, la comparaison est impossible. On s'en tient à la taille ; les CRC internes du
+///   zip sont contrôlés à l'extraction.
+/// - Autre fichier de RomM : SHA-1, ou à défaut MD5, s'il en donne un.
+fn expected_hash(file: &RemoteFile, compressed: bool) -> Option<(String, &'static str)> {
+    if file.from_manager {
+        // Sans SHA-1, le gestionnaire ne saurait même pas servir le fichier.
+        return file.sha1.as_ref().map(|h| (h.to_ascii_lowercase(), "sha1"));
+    }
+    if compressed {
+        return None;
+    }
+    match (&file.sha1, &file.md5) {
+        (Some(h), _) => Some((h.to_ascii_lowercase(), "sha1")),
+        (None, Some(h)) => Some((h.to_ascii_lowercase(), "md5")),
+        (None, None) => None,
+    }
 }
 
 /// Fichier que RomM hache après décompression (cf. `_calculate_rom_hashes`) :
@@ -296,5 +314,45 @@ mod throttle_tests {
         assert_eq!(throttle_wait(10 * mb, Duration::from_secs(1), 5 * mb), Some(Duration::from_secs(1)));
         // Déjà en retard sur la limite : pas d'attente.
         assert_eq!(throttle_wait(mb, Duration::from_secs(2), 5 * mb), None);
+    }
+}
+
+#[cfg(test)]
+mod verify_tests {
+    use super::*;
+
+    fn file(name: &str, size: u64, sha1: Option<&str>, from_manager: bool) -> RemoteFile {
+        RemoteFile { id: 1, file_name: name.into(), rel_path: name.into(), size, sha1: sha1.map(Into::into), md5: None, from_manager }
+    }
+
+    #[test]
+    fn manager_files_are_always_checked_by_sha1() {
+        // Zip du gestionnaire : SHA-1 du fichier, vérifié (SL14).
+        let f = file("a_Windows.zip", 3, Some("ABC"), true);
+        assert_eq!(expected_hash(&f, true), Some(("abc".into(), "sha1")));
+        // Zip de RomM : son SHA-1 porte sur le contenu décompressé, pas vérifié.
+        let f = file("jeu.zip", 3, Some("abc"), false);
+        assert_eq!(expected_hash(&f, true), None);
+        // Fichier de RomM non compressé : vérifié.
+        assert_eq!(expected_hash(&f, false), Some(("abc".into(), "sha1")));
+        let mut f = file("jeu.iso", 3, None, false);
+        f.md5 = Some("DEF".into());
+        assert_eq!(expected_hash(&f, false), Some(("def".into(), "md5")));
+    }
+
+    #[tokio::test]
+    async fn a_tampered_manager_zip_is_refused() {
+        let dir = std::env::temp_dir().join(format!("farfa-sl14-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("a_Windows.zip.part");
+        // Contenu qui commence comme un zip : avant SL14, seule la taille était contrôlée.
+        std::fs::write(&path, b"PK\x03\x04abc").unwrap();
+        let good = hex(&Sha1::digest(b"PK\x03\x04abc"));
+        assert!(verify(&path, &file("a_Windows.zip", 7, Some(&good), true)).await.is_ok());
+        let bad = "0000000000000000000000000000000000000000";
+        assert!(matches!(verify(&path, &file("a_Windows.zip", 7, Some(bad), true)).await, Err(AppError::Integrity)));
+        // Un fichier refusé est effacé : il sera téléchargé de nouveau.
+        assert!(!path.exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

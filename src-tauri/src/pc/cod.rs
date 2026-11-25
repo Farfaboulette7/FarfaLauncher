@@ -30,6 +30,17 @@ use tokio_util::sync::CancellationToken;
 use super::net;
 use crate::error::{log_err, AppError, AppResult};
 
+/// Dépôt de CB Servers, branche `main` : manifestes et fichiers des clients.
+///
+/// Risque connu et accepté (SL13) : chaque fichier est vérifié par le SHA-1 de son manifeste,
+/// mais le manifeste vient du même dépôt que les fichiers. Quelqu'un qui prendrait la main sur
+/// le compte GitHub de CB Servers changerait les deux ensemble : seul HTTPS protège alors les
+/// clients. Rien de simple n'y remédie :
+/// - épingler un commit figerait les clients, alors qu'ils doivent suivre les serveurs (règle
+///   « toujours la dernière version », risque SL2 accepté) ;
+/// - CB Servers ne publie ni signature ni empreinte ailleurs que dans ce manifeste.
+///
+/// Plutonium et AlterWare se mettent ensuite à jour seuls, hors du launcher.
 const UPDATER: &str = "https://github.com/CBServers/updater/raw/main/updater";
 const PLUTONIUM_PROD: &str = "https://cdn.plutonium.pw/updater/prod.json";
 /// Gros fichiers optionnels des manifestes (rapporteur de plantage d'IW4x).

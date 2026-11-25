@@ -287,6 +287,14 @@ Outils passés :
 - Problème : seul HTTPS protège ces fichiers. GE publie un `.sha512sum` qui n'est pas vérifié.
 - Qui : un compte GitHub tiers compromis.
 - Correction : vérifier le `.sha512sum` de GE ; épingler une version d'umu. Effort : petit.
+- Corrigé le 2026-11-25 (phase2-moyens-b) : l'archive de GE-Proton est vérifiée par son
+  `.sha512sum` avant l'extraction (refusée et effacée sinon, téléchargement refusé sans
+  `.sha512sum`) (`pc/proton.rs`). umu reste en dernière version (décision du propriétaire,
+  risque SL2 accepté, pas d'épinglage) ; son zipapp est vérifié par le SHA-256 du champ `digest`
+  de l'API GitHub (fichier abîmé ou remplacé en route), mais un compte umu compromis publierait
+  l'empreinte avec. Sans `digest`, umu est installé sans vérification (avertissement au journal).
+  Clients CoD : risque documenté et accepté dans `pc/cod.rs` (manifeste et fichiers dans le
+  même dépôt, épingler un commit figerait les clients).
 
 ### SL14 — Les archives du gestionnaire ne sont pas vérifiées par leur SHA-1
 
@@ -294,6 +302,9 @@ Outils passés :
 - Problème : pour un zip, seule la taille est contrôlée (RomM hache le contenu décompressé).
   Mais le gestionnaire sert `files/<sha1>` du fichier lui-même : la vérification serait possible.
 - Correction : vérifier le SHA-1 pour les fichiers du gestionnaire. Effort : petit.
+- Corrigé le 2026-11-25 (phase2-moyens-b) : un fichier du gestionnaire est toujours vérifié
+  par son SHA-1, zip compris (le gestionnaire hache le fichier lui-même, `sha1_fichier`) ; calcul
+  en flux ; les zip de RomM restent vérifiés par la taille (`install/download.rs`, `expected_hash`).
 
 ### SL15 — HTTP en clair accepté sur le réseau local
 
@@ -308,6 +319,9 @@ Outils passés :
 - Problème : sous Windows, ce dossier contient aussi les journaux et les données du WebView.
   Ce n'est utile qu'en cas de faille dans l'interface (aucune trouvée).
 - Correction : `$APPCACHE/cache/**`. Effort : petit.
+- Corrigé le 2026-11-25 (phase2-moyens-b) : portée `$APPCACHE/cache/**`. Tous les fichiers lus
+  par `asset:` (images, avatars, livrets, musiques, sons) sont sous `cache_dir` ; un test
+  (`cache.rs`) vérifie la portée.
 
 ### SL17 — Le vrai domaine et l'IP du NAS sont dans le dépôt public
 
@@ -316,6 +330,10 @@ Outils passés :
   où attaquer RomM et le gestionnaire.
 - Correction : `romm.exemple.synology.me` et `192.0.2.x` dans les tests. Le domaine reste dans
   l'historique : c'est peu grave, il est déjà public par le DNS. Effort : petit.
+- Corrigé le 2026-11-25 (phase2-moyens-b) : `romm.exemple.synology.me` et `192.0.2.x` dans
+  `assets.rs`, `romm/client.rs` (test `same_site`) et `manager.rs`. Le domaine ne servait à
+  rien en dur. Reste `192.168.1.20` (adresse privée fictive) dans le test de
+  `normalize_server_url`, qui a besoin d'une IP privée.
 
 ### SL18 — Droits du jeton GitHub trop larges dans les workflows
 
@@ -324,6 +342,10 @@ Outils passés :
 - Correction : `permissions: contents: read` en tête ; `contents: write` seulement sur les jobs
   qui créent et publient la release. Vérifier dans GitHub : Settings → Actions → « Read
   repository contents permission » par défaut. Effort : petit.
+- Corrigé le 2026-11-25 (phase2-moyens-b) : déjà fait pour `ci.yml`, `release.yml` et
+  `test.yml` (lecture seule en tête, `contents: write` seulement pour `create-release`, `build`,
+  `deck-release` et `publish-release`) ; ajouté en tête de `tests.yml`. Reste à vérifier le
+  réglage par défaut du dépôt sur GitHub.
 
 ---
 
