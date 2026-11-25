@@ -232,6 +232,7 @@ Outils passés :
 - Correction proposée : lancer d'abord sans élévation, avec `/CURRENTUSER` (Inno Setup) dans
   le dossier « Jeux » ; ne demander l'UAC qu'en cas d'échec, avec un message clair.
   - Effort : petit.
+- Corrigé le 2026-11-25 (phase2-moyens-a) : premier essai sans droits administrateur (`/CURRENTUSER`, dossier « Jeux », `gog::run_installer` sans `runas`) ; l'UAC n'est demandée qu'en repli, si Inno Setup échoue (codes 1 à 8) ou si le jeu n'est pas posé (`user_install_succeeded`). Un installateur dont le manifeste exige l'administrateur affiche toujours l'UAC. Linux (Proton) inchangé. À vérifier par l'utilisateur sur un vrai jeu GOG.
 
 ### SL10 — Le rapport de bug peut joindre des fichiers personnels, et l'anonymisation est partielle
 
@@ -251,6 +252,7 @@ Outils passés :
   connus de l'émulateur ; refuser tout fichier du dossier de réglages du launcher ;
   anonymiser aussi `COMPUTERNAME` / `hostname`.
   - Effort : petit.
+- Corrigé le 2026-11-25 (phase2-moyens-a) : `journaux:` limité au dossier du jeu ou de l'émulateur, ou après un joker au premier dossier connu de la fiche (identifiant, `lien:`, `dossier-mods:`, sauvegardes) ; jamais un dossier du launcher, et chaque fichier trouvé dans les dossiers de réglages ou de journaux du launcher est refusé (`report::pattern_allowed`, `is_inside`). Le nom du PC devient `<pc>`. Restent : « OneDrive - Prénom Nom » et autres disques.
 
 ---
 
@@ -268,6 +270,7 @@ Outils passés :
   collé un jeton admin).
 - Correction proposée : à la connexion par jeton collé, refuser ou signaler un jeton qui a
   des scopes d'écriture admin. Effort : petit.
+- Corrigé le 2026-11-25 (phase2-moyens-a) : jeton collé, code d'appairage et `--jeton` du Deck refusés (`token_too_powerful`) si le compte est `admin` et que le jeton lit la liste des comptes (`GET /api/users`, `users.read`) ; message dans l'emplacement d'erreur de l'écran de connexion. Limite : RomM ne donne pas les scopes d'un jeton, un jeton admin avec `users.write` sans `users.read`, ou les droits d'un `editor` (`roms.write`), passent.
 
 ### SL12 — `open_url` ouvre toute adresse « dépôt » du catalogue, sans exiger https
 
@@ -275,6 +278,7 @@ Outils passés :
 - Problème : un `repo:` de fiche en `file://…` ou `ms-…:` serait passé au système au clic.
 - Qui : le gestionnaire compromis (il faut un clic du joueur).
 - Correction : n'ouvrir que `https://`. Effort : petit.
+- Corrigé le 2026-11-25 (phase2-moyens-a) : `open_url` n'ouvre que les pages du serveur RomM configuré et les dépôts connus en `https://`, sans espace ni caractère de contrôle (`commands::url_allowed`).
 
 ### SL13 — Proton GE, umu et les clients CoD sont pris sans empreinte fixée
 
@@ -296,6 +300,7 @@ Outils passés :
 - Où : `src-tauri/src/romm/client.rs:36-58` (`normalize_server_url`, `is_local_host`).
 - Problème : sur un Wi-Fi partagé ou une LAN, le jeton circule en clair.
 - Correction : afficher un avertissement quand l'adresse est en `http://`. Effort : petit.
+- Corrigé le 2026-11-25 (phase2-moyens-a) : avertissement au journal dans `normalize_server_url` pour une adresse en `http://` (réseau local), sans changement à l'écran.
 
 ### SL16 — Le protocole `asset:` voit tout le dossier de cache de l'application
 

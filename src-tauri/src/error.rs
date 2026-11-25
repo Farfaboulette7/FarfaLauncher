@@ -31,6 +31,10 @@ pub enum AppError {
     TokenFormat,
     #[error("Le serveur a refusé ce token. Il a peut-être été révoqué ou a expiré.")]
     TokenRejected,
+    /// Jeton collé (ou code d'appairage) d'un compte administrateur qui a les droits
+    /// d'administration : refusé, un jeu piégé pourrait le lire (faille SL11).
+    #[error("Ce token a les droits d'administration de RomM (gestion des comptes). Un jeu lancé par le launcher pourrait les utiliser : utilisez plutôt « Se connecter avec le navigateur », ou créez dans RomM un token avec seulement les droits du launcher.")]
+    TokenTooPowerful,
     #[error("Impossible d'accéder au trousseau sécurisé du système.")]
     Keychain,
     #[error("Aucune plateforme avec des jeux n'a été trouvée sur ce serveur RomM.")]
@@ -113,6 +117,7 @@ impl AppError {
             AppError::RateLimited => "rate_limited",
             AppError::TokenFormat => "token_format",
             AppError::TokenRejected => "token_rejected",
+            AppError::TokenTooPowerful => "token_too_powerful",
             AppError::Keychain => "keychain",
             AppError::PlatformMissing => "platform_missing",
             AppError::ScopeMissing => "scope_missing",

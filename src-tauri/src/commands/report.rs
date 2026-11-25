@@ -12,7 +12,7 @@ use crate::state::AppState;
 pub fn report_files(state: State<'_, AppState>, rom_id: i64) -> AppResult<Vec<String>> {
     let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
     let mut names = vec!["rapport.json (PC, versions, jeu, réglages)".to_string(), "installation.json".to_string()];
-    names.extend(crate::report::attachments(&state.catalog(), &state.log_dir, &st).into_iter().map(|a| a.name));
+    names.extend(crate::report::attachments(&state.catalog(), &state.config_dir, &state.log_dir, &st).into_iter().map(|a| a.name));
     Ok(names)
 }
 
@@ -36,7 +36,7 @@ pub async fn send_report(state: State<'_, AppState>, rom_id: i64, description: S
     let hw = crate::hardware::get();
     let title = crate::switch_saves::title_id(&catalog, &state.config_dir, &st);
     let game = crate::optimize::GameRef { rom_id, title: title.as_deref() };
-    let attachments = crate::report::attachments(&catalog, &state.log_dir, &st);
+    let attachments = crate::report::attachments(&catalog, &state.config_dir, &state.log_dir, &st);
     let info = crate::report::ReportInfo {
         launcher: env!("CARGO_PKG_VERSION"),
         created_at: state::now(),

@@ -394,8 +394,13 @@ async fn config(state: &AppState, args: &[String]) -> AppResult<Value> {
         let token = token.trim();
         let url = state.server_url()?;
         let client = RommClient::new(&url, Some(token.to_string()))?;
-        // Vérifié avant d'être gardé.
-        crate::romm::auth::me(&client).await?;
+        // Vérifié avant d'être gardé ; refusé s'il a les droits d'administration de RomM,
+        // comme dans le launcher (faille SL11).
+        let me = crate::romm::auth::me(&client).await?;
+        if crate::romm::auth::has_admin_rights(&client, &me).await {
+            tracing::warn!("jeton refusé : droits d'administration de RomM");
+            return Err(AppError::TokenTooPowerful);
+        }
         store_token(&state.config_dir, token)?;
         state.set_client(Some(client));
     } else if let (Some(url), Some(token)) = (server, load_token(&state.config_dir)) {

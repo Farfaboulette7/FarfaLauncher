@@ -157,7 +157,7 @@ pub async fn poll_device_auth(state: State<'_, AppState>) -> AppResult<DeviceAut
             if !missing.is_empty() {
                 tracing::warn!("scopes non accordés: {missing:?}");
             }
-            DeviceAuthPoll::Approved { session: finish_login(&state, &server_url, token).await? }
+            DeviceAuthPoll::Approved { session: finish_login(&state, &server_url, token, false).await? }
         }
     })
 }
@@ -171,23 +171,34 @@ pub fn cancel_device_auth(state: State<'_, AppState>) {
 pub async fn login_with_pair_code(state: State<'_, AppState>, code: String) -> AppResult<SessionInfo> {
     let server_url = state.server_url()?;
     let token = auth::exchange_pair_code(&RommClient::new(&server_url, None)?, &code).await?;
-    finish_login(&state, &server_url, token).await
+    // Jeton créé à la main dans RomM, scopes choisis par le joueur : vérifiés (SL11).
+    finish_login(&state, &server_url, token, true).await
 }
 
 #[tauri::command]
 pub async fn login_with_token(state: State<'_, AppState>, token: String) -> AppResult<SessionInfo> {
     let server_url = state.server_url()?;
     let token = auth::validate_token_format(&token)?;
-    finish_login(&state, &server_url, token).await
+    // Jeton collé : il peut avoir plus de droits que le launcher n'en demande (SL11).
+    finish_login(&state, &server_url, token, true).await
 }
 
 /// Valide le token auprès du serveur puis le range dans le trousseau.
-async fn finish_login(state: &AppState, server_url: &str, token: String) -> AppResult<SessionInfo> {
+///
+/// `check_admin` : jeton collé ou code d'appairage. Un jeton avec les droits d'administration
+/// de RomM est refusé avant d'être rangé (faille SL11) : les jeux et émulateurs tournent avec
+/// le compte du joueur et peuvent lire le trousseau. Le message s'affiche à la place habituelle
+/// des erreurs de l'écran de connexion.
+async fn finish_login(state: &AppState, server_url: &str, token: String, check_admin: bool) -> AppResult<SessionInfo> {
     let client = RommClient::new(server_url, Some(token.clone()))?;
     let me = auth::me(&client).await.map_err(|e| match e {
         AppError::AuthInvalid => AppError::TokenRejected,
         other => other,
     })?;
+    if check_admin && auth::has_admin_rights(&client, &me).await {
+        tracing::warn!("jeton collé refusé : droits d'administration de RomM (compte {})", me.username);
+        return Err(AppError::TokenTooPowerful);
+    }
     secrets::store_token(&state.config_dir, server_url, &token)?;
     state.set_client(Some(client));
     state.set_offline(false);

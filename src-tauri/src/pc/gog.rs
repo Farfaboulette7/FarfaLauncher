@@ -25,6 +25,33 @@ pub fn installer_args(dir: &str) -> Vec<String> {
         .collect()
 }
 
+/// Arguments du premier essai sous Windows, sans droits administrateur (faille SL9) :
+/// ceux d'`installer_args` plus `/CURRENTUSER`, qui demande à Inno Setup 6 d'installer pour
+/// ce compte seulement (pas d'écriture dans Program Files ni dans HKLM). Inno Setup 5 ignore
+/// ce paramètre inconnu.
+#[cfg_attr(not(windows), allow(dead_code))] // seulement sous Windows (Proton sinon)
+pub fn installer_args_current_user(dir: &str) -> Vec<String> {
+    let mut args = installer_args(dir);
+    args.insert(0, "/CURRENTUSER".to_string());
+    args
+}
+
+/// Codes de sortie d'Inno Setup qui disent que l'installation n'a pas eu lieu (1 : démarrage
+/// impossible, 2 et 5 : annulée, 3 et 4 : erreur grave, 6 : tué, 7 : préparation refusée,
+/// 8 : redémarrage nécessaire avant de continuer).
+#[cfg_attr(not(windows), allow(dead_code))]
+const INNO_FAILED: std::ops::RangeInclusive<u32> = 1..=8;
+
+/// Après le premier essai sans droits administrateur : le jeu est-il bien installé ?
+/// - code 0 : oui ;
+/// - code d'échec d'Inno (1 à 8) : non, il faut réessayer en administrateur ;
+/// - autre code (plantage à la fermeture, 0xC000041D chez certains installateurs GOG) : oui
+///   seulement si le jeu décrit son lancement (`goggame-*.info`), comme avant.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn user_install_succeeded(code: u32, game_described: bool) -> bool {
+    code == 0 || (!INNO_FAILED.contains(&code) && game_described)
+}
+
 /// Numéro de build GOG : le dernier `(nombre)` du nom.
 fn build_id(stem: &str) -> Option<u64> {
     let end = stem.rfind(')')?;
@@ -191,10 +218,13 @@ pub fn split_args(line: &str) -> Vec<String> {
     out
 }
 
-/// Lance un installateur et attend sa fin. Sous Windows il demande les droits
-/// d'administrateur (fenêtre UAC), comme un double-clic.
+/// Lance un installateur Windows et attend sa fin ; rend son code de sortie.
+/// - `elevate = false` : lancé comme un double-clic, avec les droits du joueur. Si le
+///   programme exige l'administrateur (son manifeste), Windows affiche quand même l'UAC.
+/// - `elevate = true` : verbe `runas`, droits administrateur demandés (fenêtre UAC). Utilisé
+///   seulement en repli, quand le premier essai a échoué (faille SL9).
 #[cfg(windows)]
-pub fn run_elevated(exe: &Path, args: &[String]) -> std::io::Result<u32> {
+pub fn run_installer(exe: &Path, args: &[String], elevate: bool) -> std::io::Result<u32> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Foundation::CloseHandle;
     use windows_sys::Win32::System::Threading::{GetExitCodeProcess, WaitForSingleObject, INFINITE};
@@ -214,7 +244,8 @@ pub fn run_elevated(exe: &Path, args: &[String]) -> std::io::Result<u32> {
     let file = wide(exe.as_os_str());
     let params = wide(std::ffi::OsStr::new(&params));
     let dir = wide(exe.parent().unwrap_or(Path::new(".")).as_os_str());
-    let verb = wide(std::ffi::OsStr::new("runas"));
+    // « open » : comme un double-clic ; « runas » : en administrateur.
+    let verb = wide(std::ffi::OsStr::new(if elevate { "runas" } else { "open" }));
     let mut info: SHELLEXECUTEINFOW = unsafe { std::mem::zeroed() };
     info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
     info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC;
@@ -309,5 +340,27 @@ mod tests {
         assert_eq!(split_args(r#"-conf "..\dosbox.conf" -c "mount C ..""#), ["-conf", r"..\dosbox.conf", "-c", "mount C .."]);
         assert!(split_args("  ").is_empty());
         assert_eq!(installer_args(r"C:\Jeux\X").last().unwrap(), r"/DIR=C:\Jeux\X");
+    }
+
+    #[test]
+    fn first_try_without_admin() {
+        let args = installer_args_current_user(r"C:\Jeux\X");
+        assert_eq!(args[0], "/CURRENTUSER");
+        assert_eq!(args.last().unwrap(), r"/DIR=C:\Jeux\X");
+        // Le chemin Proton (Linux) garde les arguments d'avant.
+        assert!(!installer_args("C:/x").iter().any(|a| a == "/CURRENTUSER"));
+    }
+
+    #[test]
+    fn when_to_retry_as_admin() {
+        // Réussi : pas d'UAC.
+        assert!(user_install_succeeded(0, false));
+        // Échec d'Inno Setup : réessai en administrateur, même si un ancien jeu est décrit.
+        for code in 1..=8 {
+            assert!(!user_install_succeeded(code, true), "code {code}");
+        }
+        // Plantage à la fermeture (0xC000041D) : la description du jeu fait foi.
+        assert!(user_install_succeeded(0xC000_041D, true));
+        assert!(!user_install_succeeded(0xC000_041D, false));
     }
 }
