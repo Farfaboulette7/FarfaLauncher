@@ -295,6 +295,9 @@ Outils passés :
 - Problème : pour un zip, seule la taille est contrôlée (RomM hache le contenu décompressé).
   Mais le gestionnaire sert `files/<sha1>` du fichier lui-même : la vérification serait possible.
 - Correction : vérifier le SHA-1 pour les fichiers du gestionnaire. Effort : petit.
+- Corrigé le 2026-11-25 (phase2-moyens-b) : un fichier du gestionnaire est toujours vérifié
+  par son SHA-1, zip compris (le gestionnaire hache le fichier lui-même, `sha1_fichier`) ; calcul
+  en flux ; les zip de RomM restent vérifiés par la taille (`install/download.rs`, `expected_hash`).
 
 ### SL15 — HTTP en clair accepté sur le réseau local
 
