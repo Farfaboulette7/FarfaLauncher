@@ -34,7 +34,12 @@ pub fn normalize_server_url(input: &str) -> AppResult<String> {
     let host = url.host_str().ok_or(AppError::InvalidServerUrl)?.to_string();
     match url.scheme() {
         "https" => {}
-        "http" if is_local_host(&host) => {}
+        // Réseau local seulement. Le jeton y circule en clair : visible par les autres
+        // appareils d'un Wi-Fi partagé (faille SL15). Noté au journal, sans rien changer à
+        // l'écran.
+        "http" if is_local_host(&host) => {
+            tracing::warn!("adresse en http:// ({host}) : le jeton circule en clair sur le réseau local, https:// est conseillé");
+        }
         "http" => return Err(AppError::InsecureServerUrl),
         _ => return Err(AppError::InvalidServerUrl),
     }
