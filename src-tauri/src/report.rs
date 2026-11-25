@@ -5,7 +5,10 @@
 //! - en plus, les fichiers décrits par la fiche du gestionnaire (`journaux:`) : journaux et
 //!   réglages de l'émulateur ou de la recomp.
 //!
-//! Le dossier personnel devient `~` et le nom du compte disparaît. Le zip part sur
+//! `journaux:` ne joint que des fichiers du dossier du jeu ou de dossiers connus de
+//! l'émulateur, jamais ceux du launcher (faille SL10, `pattern_allowed`).
+//!
+//! Le dossier personnel devient `~`, le nom du compte et celui du PC disparaissent. Le zip part sur
 //! FarfaRomManager (`PUT /api/reports`), où une tâche Claude l'analyse.
 
 use std::io::Write;
@@ -32,7 +35,10 @@ pub struct Attachment {
 }
 
 /// Fichiers joints au rapport de ce jeu, dans l'ordre.
-pub fn attachments(catalog: &Catalog, log_dir: &Path, st: &InstalledGame) -> Vec<Attachment> {
+///
+/// `config_dir` : dossier de réglages du launcher (jeton `token.json` sous Linux sans
+/// trousseau, `settings.json`…). Aucun fichier de `journaux:` n'y est jamais pris (faille SL10).
+pub fn attachments(catalog: &Catalog, config_dir: &Path, log_dir: &Path, st: &InstalledGame) -> Vec<Attachment> {
     let mut out = Vec::new();
     // Journaux du launcher : les deux plus récents (aujourd'hui, hier).
     if let Ok(rd) = std::fs::read_dir(log_dir) {
@@ -53,8 +59,18 @@ pub fn attachments(catalog: &Catalog, log_dir: &Path, st: &InstalledGame) -> Vec
     }
     // Journaux et réglages propres à l'émulateur ou à la recomp.
     let exe_dir = exe_dir(catalog, st);
+    let roots = known_roots(catalog, st);
     for pattern in catalog.logs_for_install(st).iter().filter(|p| p.system.as_deref().is_none_or(|s| s == crate::language::current_system())) {
+        if !pattern_allowed(&pattern.pattern, &roots) {
+            tracing::warn!("rapport : motif « {} » refusé (hors du dossier du jeu et de l'émulateur)", pattern.pattern);
+            continue;
+        }
         for path in find(pattern, &exe_dir) {
+            // Seconde barrière, sur le fichier trouvé : jamais dans les dossiers du launcher.
+            if is_inside(&path, config_dir) || is_inside(&path, log_dir) {
+                tracing::warn!("rapport : {} refusé (dossier du launcher)", path.display());
+                continue;
+            }
             let rel = path.strip_prefix(&exe_dir).map(|r| r.to_string_lossy().replace('\\', "/")).unwrap_or_else(|_| file_name(&path));
             if !out.iter().any(|a| a.path == path) {
                 out.push(Attachment { name: format!("jeu/{rel}"), path });
@@ -62,6 +78,75 @@ pub fn attachments(catalog: &Catalog, log_dir: &Path, st: &InstalledGame) -> Vec
         }
     }
     out
+}
+
+/// Noms de dossier du launcher lui-même (réglages, jeton, journaux) : jamais joints par une
+/// fiche, quel que soit le joker (`{config}`, `{appdata}`, `{localappdata}`…).
+const LAUNCHER_DIRS: &[&str] = &["fr.farfaboulette.farfalauncher", "farfalauncher", "farfalauncherdeck"];
+
+/// Dossiers « connus » de l'émulateur ou de la recomp de ce jeu, hors de son dossier : le
+/// premier dossier après le joker de ses `lien:`, `dossier-mods:` et dossiers de sauvegarde
+/// (`{appdata}/lichii/…` → `lichii`), plus son identifiant. En minuscules.
+fn known_roots(catalog: &Catalog, st: &InstalledGame) -> Vec<String> {
+    let mut paths: Vec<&str> = Vec::new();
+    let mut roots: Vec<String> = Vec::new();
+    if let Some(e) = catalog.emulator_for_install(st) {
+        roots.push(e.id.to_lowercase());
+        paths.extend(e.links.iter().map(|l| l.path.as_str()));
+        paths.extend(e.mods_dirs.iter().map(|m| m.path.as_str()));
+        paths.extend(e.saves.by_system.values().map(String::as_str));
+    }
+    if let Some(r) = catalog.recomp_for_install(st) {
+        roots.push(r.id.to_lowercase());
+        paths.extend(r.links.iter().map(|l| l.path.as_str()));
+        paths.extend(r.mods_dirs.iter().map(|m| m.path.as_str()));
+    }
+    roots.extend(paths.into_iter().filter_map(joker_root));
+    roots.retain(|r| !r.is_empty());
+    roots
+}
+
+/// Premier dossier après un joker autre que `{exedir}` (`{appdata}/lichii/x` → `lichii`).
+fn joker_root(path: &str) -> Option<String> {
+    let (var, rest) = path.strip_prefix('{')?.split_once('}')?;
+    if var == "exedir" {
+        return None;
+    }
+    let first = rest.strip_prefix('/')?.split('/').next()?;
+    Some(first.to_lowercase())
+}
+
+/// Motif de `journaux:` accepté (faille SL10) :
+/// - relatif, ou `{exedir}/…` : dans le dossier du jeu ou de l'émulateur (`expand` empêche
+///   d'en sortir) ;
+/// - `{appdata}/x/…`, `{localappdata}/x/…`, `{config}/x/…`, `{documents}/x/…` : seulement si
+///   `x` est un dossier connu de l'émulateur ou de la recomp (`known_roots`), jamais un dossier
+///   du launcher, et jamais un fichier posé directement dans le dossier du joker ;
+/// - tout le reste est refusé.
+fn pattern_allowed(pattern: &str, known_roots: &[String]) -> bool {
+    let Some(after) = pattern.strip_prefix('{') else { return true };
+    let Some((var, rest)) = after.split_once('}') else { return false };
+    if var == "exedir" {
+        return true;
+    }
+    if !["appdata", "localappdata", "config", "documents"].contains(&var) {
+        return false;
+    }
+    // `/dossier/…/fichier` : au moins un dossier avant le nom du fichier.
+    let Some(rest) = rest.strip_prefix('/') else { return false };
+    let Some((first, _)) = rest.split_once('/') else { return false };
+    let first = first.to_lowercase();
+    !LAUNCHER_DIRS.contains(&first.as_str()) && known_roots.iter().any(|r| *r == first)
+}
+
+/// `path` est dans `dir` (ou est `dir`) ? Chemins réels comparés quand ils existent (liens
+/// résolus), sinon tels quels.
+fn is_inside(path: &Path, dir: &Path) -> bool {
+    if dir.as_os_str().is_empty() {
+        return false;
+    }
+    let real = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    real(path).starts_with(real(dir)) || path.starts_with(dir)
 }
 
 fn file_name(p: &Path) -> String {
@@ -115,18 +200,30 @@ pub(crate) fn wildcard(pattern: &str, name: &str) -> bool {
     true
 }
 
-/// Remplace le dossier personnel par `~` et le nom du compte par `<compte>`.
+/// Remplace le dossier personnel par `~`, le nom du compte par `<compte>` et le nom du PC
+/// par `<pc>` (faille SL10).
 pub fn anonymize(text: &str) -> String {
-    let mut out = text.to_string();
     let home = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).unwrap_or_default();
+    let user = std::env::var("USERNAME").or_else(|_| std::env::var("USER")).unwrap_or_default();
+    // Même nom que celui de l'historique des sauvegardes (COMPUTERNAME, HOSTNAME, /etc/hostname).
+    let host = crate::save_store::device_name();
+    anonymize_with(text, &home, &user, &host)
+}
+
+/// `anonymize` avec les valeurs données (testable).
+fn anonymize_with(text: &str, home: &str, user: &str, host: &str) -> String {
+    let mut out = text.to_string();
     if home.len() > 3 {
-        for form in [home.clone(), home.replace('\\', "/"), home.replace('\\', "\\\\")] {
+        for form in [home.to_string(), home.replace('\\', "/"), home.replace('\\', "\\\\")] {
             out = out.replace(&form, "~");
         }
     }
-    let user = std::env::var("USERNAME").or_else(|_| std::env::var("USER")).unwrap_or_default();
     if user.len() >= 3 {
-        out = replace_word(&out, &user, "<compte>");
+        out = replace_word(&out, user, "<compte>");
+    }
+    // Le nom du PC : en entier, comme le compte (« DESKTOP-AB12CD », « steamdeck »).
+    if host.len() >= 3 && host != "Ordinateur" {
+        out = replace_word(&out, host, "<pc>");
     }
     out
 }
@@ -254,6 +351,59 @@ mod tests {
         assert!(out.contains("~\\Jeux") && out.contains("compte <compte>"), "{out}");
         // Collé à un mot : laissé tel quel (évite d'abîmer d'autres textes).
         assert!(out.contains(&format!("mot{user}")), "{out}");
+    }
+
+    #[test]
+    fn anonymizes_computer_name() {
+        let out = anonymize_with(r"C:\Users\Jean\x ; PC DESKTOP-AB12CD ; jean", r"C:\Users\Jean", "Jean", "DESKTOP-AB12CD");
+        assert_eq!(out, r"~\x ; PC <pc> ; <compte>");
+        // Casse ignorée, nom collé à un mot laissé tel quel.
+        assert_eq!(anonymize_with("hote steamdeck / SteamDeck / steamdeckX", "", "", "steamdeck"), "hote <pc> / <pc> / steamdeckX");
+        // Nom de repli ou trop court : rien n'est remplacé.
+        assert_eq!(anonymize_with("Ordinateur pc", "", "", "Ordinateur"), "Ordinateur pc");
+        assert_eq!(anonymize_with("pc", "", "", "pc"), "pc");
+    }
+
+    #[test]
+    fn journaux_patterns_limited_to_game_and_emulator() {
+        let roots = vec!["lichii".to_string(), "bbport".to_string()];
+        // Dossier du jeu ou de l'émulateur : toujours.
+        assert!(pattern_allowed("user/log/*.txt", &roots));
+        assert!(pattern_allowed("{exedir}/user/config/qt-config.ini", &roots));
+        // Dossier connu de l'émulateur (identifiant, `lien:`, `dossier-mods:`…), casse ignorée.
+        assert!(pattern_allowed("{appdata}/lichii/nx2_switches.txt", &roots));
+        assert!(pattern_allowed("{localappdata}/BBPort/logs/*.log", &roots));
+        // Autre dossier : refusé.
+        assert!(!pattern_allowed("{documents}/*.docx", &roots));
+        assert!(!pattern_allowed("{appdata}/autre/x.txt", &roots));
+        assert!(!pattern_allowed("{config}/lichii", &roots), "fichier directement dans le joker");
+        // Dossiers du launcher : jamais, même déclarés « connus ».
+        let bad = vec!["fr.farfaboulette.farfalauncher".to_string(), "farfalauncherdeck".to_string()];
+        assert!(!pattern_allowed("{config}/fr.farfaboulette.farfalauncher/token.json", &bad));
+        assert!(!pattern_allowed("{config}/farfalauncherdeck/token", &bad));
+        // Joker inconnu ou mal formé.
+        assert!(!pattern_allowed("{home}/lichii/x.txt", &roots));
+        assert!(!pattern_allowed("{appdata", &roots));
+    }
+
+    #[test]
+    fn known_roots_from_joker_paths() {
+        assert_eq!(joker_root("{appdata}/Lichii/x").as_deref(), Some("lichii"));
+        assert_eq!(joker_root("{localappdata}/boiii").as_deref(), Some("boiii"));
+        assert_eq!(joker_root("{exedir}/user"), None);
+        assert_eq!(joker_root("user/load"), None);
+    }
+
+    #[test]
+    fn never_inside_launcher_dirs() {
+        let base = std::env::temp_dir().join(format!("farfa-report-in-{}", std::process::id()));
+        let config = base.join("fr.farfaboulette.farfalauncher");
+        std::fs::create_dir_all(&config).unwrap();
+        std::fs::write(config.join("token.json"), "{}").unwrap();
+        assert!(is_inside(&config.join("token.json"), &config));
+        assert!(!is_inside(&base.join("jeu.log"), &config));
+        assert!(!is_inside(&config.join("x"), Path::new("")));
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
