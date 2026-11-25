@@ -278,9 +278,29 @@ async fn run_installer(setup: &Path, game_dir: &Path, runner: Option<&Runner>) -
         None => {
             #[cfg(windows)]
             {
-                let args = gog::installer_args(&game_dir.to_string_lossy());
-                let exe = setup.to_path_buf();
-                let code = blocking(move || gog::run_elevated(&exe, &args).map_err(|e| log_err(AppError::InstallerFailed, "lancement de l'installateur", e))).await?;
+                // Faille SL9 : d'abord sans droits administrateur, pour ce compte seulement,
+                // dans le dossier « Jeux ». L'UAC n'est demandée qu'en cas d'échec.
+                let dir = game_dir.to_string_lossy().into_owned();
+                let (exe, args) = (setup.to_path_buf(), gog::installer_args_current_user(&dir));
+                match blocking(move || Ok(gog::run_installer(&exe, &args, false))).await? {
+                    Ok(code) if gog::user_install_succeeded(code, gog::play_task(game_dir).is_some()) => {
+                        if code != 0 {
+                            tracing::warn!("{name} terminé avec le code {code:#x}, mais le jeu est installé");
+                        }
+                        tracing::info!("{name} installé sans droits administrateur");
+                        return Ok(());
+                    }
+                    // UAC refusée par le joueur (installateur qui exige l'administrateur) :
+                    // pas de seconde demande.
+                    Err(e) if e.raw_os_error() == Some(1223) => {
+                        return Err(log_err(AppError::InstallerFailed, "installateur refusé (UAC)", e));
+                    }
+                    Ok(code) => tracing::warn!("{name} sans droits administrateur : code {code}, nouvel essai en administrateur"),
+                    Err(e) => tracing::warn!("{name} sans droits administrateur : {e}, nouvel essai en administrateur"),
+                }
+                // Repli : comme avant la correction, en administrateur (fenêtre UAC).
+                let (exe, args) = (setup.to_path_buf(), gog::installer_args(&dir));
+                let code = blocking(move || gog::run_installer(&exe, &args, true).map_err(|e| log_err(AppError::InstallerFailed, "lancement de l'installateur", e))).await?;
                 // Certains installateurs GOG plantent en se fermant (0xC000041D) alors
                 // que le jeu est bien posé : c'est sa description qui fait foi.
                 if code != 0 && gog::play_task(game_dir).is_none() {
