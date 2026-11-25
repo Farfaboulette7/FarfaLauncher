@@ -360,10 +360,183 @@
 .gd-install-dest { overflow-wrap: anywhere; }
 
 /* ---------- Contrôles ---------- */
-.gd-controls { display: flex; flex-direction: column; gap: 28px; }
-.gd-controls > section { display: flex; flex-direction: column; gap: 10px; }
-.ctl-tester { display: flex; flex-direction: column; gap: 16px; }
-.ctl-label { display: block; margin-bottom: 6px; font-size: var(--fs-sm); color: var(--nier-mid); }
+/* Plateau de blocs fixes, en pourcentage de la zone de l'onglet (marges comprises). */
+.gd-content:has(> .ctl-board) { padding: 0; -webkit-mask: none; mask: none; }
+.ctl-board {
+  position: relative;
+  display: grid;
+  height: 100%;
+  min-height: 640px;
+  grid-template-columns: 2fr 62fr 2fr 32fr 2fr;
+  grid-template-rows: 3fr 40fr 3fr 24fr 3fr 24fr 3fr;
+  grid-template-areas:
+    ". .        . .        ."
+    ". players  . pads     ."
+    ". .        . .        ."
+    ". buttons  . rate     ."
+    ". buttons  . .        ."
+    ". buttons  . profile  ."
+    ". .        . .        .";
+}
+.ctl-block--players { grid-area: players; }
+.ctl-block--pads { grid-area: pads; }
+.ctl-block--buttons { grid-area: buttons; }
+.ctl-block--rate { grid-area: rate; }
+.ctl-block--profile { grid-area: profile; }
+.ctl-block { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.ctl-block > .n-section-title { flex: none; margin-bottom: 8px; }
+/* En-tête avec outils (bloc « Boutons ») : même filet que les titres de section. */
+.ctl-block-head { flex: none; display: flex; align-items: center; gap: 10px; margin-bottom: 8px; padding-right: 4px; border: solid var(--nier-low); border-width: var(--nier-line) 0; }
+.ctl-block-head > .n-section-title { flex: 1; margin: 0; border: none; }
+.ctl-head-tools { display: flex; align-items: center; gap: 10px; }
+.n-btn--sm.ctl-mini { min-height: 28px; padding: 2px 10px; font-size: var(--fs-xs); }
+.n-btn--sm.ctl-mini::before { width: 6px; height: 6px; }
+/* Le contour de focus (4 px, décalé de 4 px) reste visible dans la zone qui défile. */
+.ctl-block-body { flex: 1; min-height: 0; overflow: hidden auto; scrollbar-width: none; padding: 4px 8px; display: flex; flex-direction: column; gap: 10px; }
+.ctl-block--rate .ctl-block-body { overflow: visible; }
+.ctl-block-body > * { margin: 0; }
+/* Fenêtre étroite : les blocs les uns sous les autres, dans l'ordre. */
+@media (max-width: 900px), (max-height: 560px) {
+  .gd-content:has(> .ctl-board) { padding: 16px; }
+  .ctl-board { display: flex; flex-direction: column; gap: 24px; height: auto; min-height: 0; }
+  .ctl-block-body { overflow: visible; }
+}
+
+.ctl-label { display: block; font-size: var(--fs-sm); color: var(--nier-mid); }
+.ctl-off { opacity: 0.6; }
+
+/* Joueurs : quatre cartes. */
+.ctl-cards { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: minmax(92px, 1fr); gap: 12px; flex: 1; }
+.ctl-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto 1fr;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 10px 14px;
+  border: var(--nier-line) solid var(--nier-low);
+  background: var(--nier-surface);
+  box-shadow: var(--nier-drop) var(--nier-drop) 0 var(--nier-shadow);
+  cursor: grab;
+  user-select: none;
+  transition: background var(--nier-fast) var(--nier-ease);
+}
+.ctl-card--empty { border-style: dashed; background: transparent; box-shadow: none; cursor: pointer; }
+.ctl-card:hover, .ctl-card:focus-visible { background: var(--nier-high-mid); outline: none; }
+.ctl-card.is-picked { background: var(--nier-low); color: var(--nier-high); }
+.ctl-card.is-target { border-style: dashed; }
+.ctl-card.is-over { outline: 2px dashed var(--nier-low); outline-offset: 3px; }
+.ctl-card-num { grid-row: 1 / 3; font-size: var(--fs-xl); line-height: 1; letter-spacing: var(--nier-tracking-wide); }
+.ctl-card-pad { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ctl-card-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctl-card .ctl-hz { grid-column: 2; justify-self: start; }
+.ctl-card-join { grid-column: 2 / 4; grid-row: 1 / 3; font-size: var(--fs-sm); color: var(--nier-mid); }
+.ctl-card-x {
+  grid-column: 3;
+  grid-row: 1;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font: inherit;
+  font-size: var(--fs-md);
+  line-height: 1;
+  color: inherit;
+  background: none;
+  border: var(--nier-line) solid transparent;
+  cursor: pointer;
+}
+.ctl-card-x:hover, .ctl-card-x:focus-visible { border-color: currentColor; outline: none; }
+/* Logo de la manette : s'illumine quand elle appuie (qui est qui). */
+.ctl-card-icon { display: inline-flex; flex: none; font-size: 1.3em; transition: color var(--nier-fast) var(--nier-ease), transform var(--nier-fast) var(--nier-ease); }
+.ctl-card-icon.is-lit { color: var(--nier-ok); transform: scale(1.15); }
+.ctl-card.is-picked .ctl-card-icon.is-lit { color: var(--nier-high); }
+
+/* Manettes détectées. */
+.ctl-devices { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.ctl-device {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  font-size: var(--fs-sm);
+  border-bottom: var(--nier-line) solid var(--nier-high-mid);
+  user-select: none;
+}
+.ctl-device[role="button"] { cursor: grab; }
+.ctl-device[role="button"]:hover, .ctl-device[role="button"]:focus-visible { background: var(--nier-high-mid); outline: none; }
+.ctl-device.is-picked { background: var(--nier-low); color: var(--nier-high); }
+.ctl-device--off { opacity: 0.55; grid-template-columns: 1fr; }
+.ctl-device-name .n-icon { font-size: 1.3em; }
+.ctl-device-name { display: flex; align-items: center; gap: 8px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctl-device-meta { font-size: var(--fs-xs); color: var(--nier-mid); }
+.ctl-device.is-picked .ctl-device-meta { color: inherit; }
+.ctl-device-why { font-size: var(--fs-xs); }
+.ctl-tag { font-size: var(--fs-xs); padding: 1px 8px; color: var(--nier-high); background: var(--nier-low); }
+.ctl-tag--free { color: var(--nier-mid); background: none; border: var(--nier-line) dashed var(--nier-mid); }
+.ctl-ghost {
+  position: fixed;
+  z-index: 200;
+  pointer-events: none;
+  transform: translate(12px, 12px);
+  padding: 4px 12px;
+  font-size: var(--fs-sm);
+  color: var(--nier-high);
+  background: var(--nier-low);
+  box-shadow: var(--nier-drop) var(--nier-drop) 0 var(--nier-shadow);
+}
+
+/* Boutons : tableau de correspondance, qui sert aussi de test. */
+.ctl-buttons { display: flex; flex-direction: column; gap: 10px; }
+.ctl-buttons > * { margin: 0; }
+.ctl-buttons-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.ctl-select { display: flex; gap: 6px; flex-wrap: wrap; }
+.ctl-table-cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 24px; align-items: start; }
+.ctl-table { width: 100%; border-collapse: collapse; font-size: var(--fs-xs); line-height: 1.3; table-layout: fixed; }
+.ctl-table th { text-align: left; font-weight: var(--nier-weight); color: var(--nier-mid); padding: 1px 6px; border-bottom: var(--nier-line) solid var(--nier-low); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctl-table td { padding: 2px 6px; border-bottom: var(--nier-line) solid var(--nier-high-mid); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: background var(--nier-fast) var(--nier-ease); }
+.ctl-table tr.is-waiting td { background: var(--nier-high-mid); }
+.ctl-table tr.is-on td { color: var(--nier-high); background: var(--nier-low); }
+.ctl-table tr.is-on .n-link { color: inherit; }
+.ctl-table th:first-child, .ctl-table-console { width: 32%; letter-spacing: var(--nier-tracking-wide); }
+.ctl-table th:last-child:not(:first-child), .ctl-table-action { width: 6.5em; text-align: right; text-overflow: clip; }
+.ctl-waiting { font-style: italic; color: var(--nier-mid); }
+
+/* Réactivité. */
+.ctl-rate { display: flex; flex-direction: column; gap: 6px; }
+.ctl-rate > * { margin: 0; }
+.ctl-rate-value { font-size: var(--fs-xl); line-height: 1.1; font-variant-numeric: tabular-nums; }
+.ctl-rate-line { font-size: var(--fs-sm); color: var(--nier-mid); }
+.ctl-rate { position: relative; }
+.ctl-rate .n-link { align-self: flex-start; }
+/* « Comment débrider ? » : l'explication s'ouvre par-dessus, le bloc ne grandit pas. */
+.ctl-rate > .ctl-explain {
+  position: absolute;
+  z-index: 20;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 6px;
+  padding: 10px 14px;
+  color: var(--nier-text);
+  background: var(--nier-surface);
+  border: var(--nier-line) solid var(--nier-low);
+  box-shadow: var(--nier-drop) var(--nier-drop) 0 var(--nier-shadow);
+}
+.ctl-gauge { display: block; height: 8px; border: var(--nier-line) solid var(--nier-low); }
+.ctl-gauge > span { display: block; height: 100%; background: var(--nier-low); }
+
+/* Profil. */
+.ctl-profile { display: flex; flex-direction: column; gap: 8px; }
+.ctl-profile > * { margin: 0; }
+.ctl-scopes { display: flex; gap: 6px; flex-wrap: wrap; }
+.ctl-scopes .n-btn { min-height: 32px; padding: 4px 10px; font-size: var(--fs-xs); }
+.ctl-profile-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.ctl-saved { font-size: var(--fs-xs); color: var(--nier-mid); opacity: 0; transition: opacity var(--nier-normal) var(--nier-ease); }
+.ctl-saved.is-on { opacity: 1; }
+
+/* Touches d'un jeu DOS (DOSBox). */
 .ctl-keys { display: flex; flex-wrap: wrap; gap: 6px; min-height: 30px; align-items: center; }
 .ctl-key {
   display: inline-block;
@@ -376,58 +549,13 @@
   background: var(--nier-high-mid);
   box-shadow: var(--nier-drop) var(--nier-drop) 0 var(--nier-shadow);
 }
-.ctl-key--on { color: var(--nier-high); background: var(--nier-low); }
-.ctl-code { opacity: 0.7; }
-.ctl-lock { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.ctl-lock p { margin: 0; }
-/* Start maintenu : la barre se remplit en 2 s (UNLOCK_HOLD_MS), puis le test se termine. */
-.ctl-lock { position: relative; overflow: hidden; }
-.ctl-hold { position: absolute; left: 0; bottom: 0; height: 4px; width: 100%; background: var(--nier-low); transform-origin: left; animation: ctl-hold 2s linear forwards; }
-@keyframes ctl-hold { from { transform: scaleX(0); } to { transform: scaleX(1); } }
-.ctl-pad-body { display: flex; flex-wrap: wrap; gap: 14px 28px; }
-.ctl-group { display: flex; flex-direction: column; gap: 6px; }
-.ctl-group-title { font-size: var(--fs-xs); color: var(--nier-mid); }
-.ctl-key[data-face] { color: var(--ctl-face); font-weight: 700; }
-.ctl-key--on[data-face] { color: var(--nier-high); background: var(--ctl-face); }
-.ctl-stick {
-  position: relative;
-  display: inline-block;
-  width: 46px;
-  height: 46px;
-  background: var(--nier-high-mid);
-  box-shadow: var(--nier-drop) var(--nier-drop) 0 var(--nier-shadow);
-}
-.ctl-stick--on { background: var(--nier-low); }
-.ctl-stick span {
-  position: absolute;
-  width: 10px;
-  height: 10px;
-  margin: -5px 0 0 -5px;
-  background: var(--nier-low);
-}
-.ctl-stick--on span { background: var(--nier-high); }
-.ctl-stick em {
-  position: absolute;
-  right: 3px;
-  bottom: 1px;
-  font-size: 9px;
-  font-style: normal;
-  color: var(--nier-mid);
-}
 .ctl-map { display: flex; flex-direction: column; gap: 12px; }
-.ctl-players { display: flex; flex-direction: column; gap: 12px; }
-.ctl-player-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
-.ctl-player { display: grid; grid-template-columns: 90px minmax(140px, 220px) 1fr; align-items: center; gap: 12px; }
-.ctl-player-num { font-weight: 600; }
-.ctl-player-pad { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ctl-player-pad--off { opacity: 0.6; }
-.ctl-player .ctl-capture { padding: 6px 10px; }
-.ctl-player-test { grid-column: 1 / -1; padding: 14px 16px; border-left: var(--nier-line, 2px) solid var(--nier-low); }
-@media (max-width: 720px) { .ctl-player { grid-template-columns: 1fr; gap: 6px; } }
 .ctl-binds { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .ctl-binds li { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .ctl-arrow { color: var(--nier-mid); }
 .ctl-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.ctl-hz { align-self: center; font-size: var(--fs-sm); font-variant-numeric: tabular-nums; color: var(--nier-mid); }
+.ctl-hz--slow { color: var(--nier-alert); }
 .ctl-capture { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .ctl-capture p { margin: 0; }
 

@@ -22,3 +22,10 @@ pub fn set_fullscreen(window: WebviewWindow, state: State<'_, AppState>, on: boo
 pub fn gamepads() -> Vec<crate::gamepad::PadInfo> {
     crate::gamepad::connected()
 }
+
+/// Fréquence des manettes bougées ces 5 dernières secondes ; démarre la mesure au besoin
+/// (appelée toutes les 5 s par la page « Contrôles »). `None` : mesure impossible ici.
+#[tauri::command]
+pub fn pad_rates() -> Option<Vec<crate::pad_rate::PadRate>> {
+    crate::pad_rate::recent()
+}

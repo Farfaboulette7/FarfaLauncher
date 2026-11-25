@@ -167,7 +167,12 @@ pub async fn start(state: &AppState, rom_id: i64, save_choice: SaveChoice, cod: 
         }
         // Manette de chaque joueur, posée avant que le jeu ne prenne les manettes.
         if let Some(format) = state.catalog().controllers_for_install(&st) {
-            if let Err(e) = crate::controllers::apply(&format, &st.players, pads, &exe_dir) {
+            // Boutons réassignés dans la page « Contrôles » (formats qui les savent recevoir).
+            let binds = match (crate::controls::layout_of(&format), state.catalog().emulator_for_install(&st)) {
+                (Some(layout), Some(e)) => crate::controls::current(&state.config_dir, &crate::controls::Target { rom_id: st.rom_id, emulator: &e.id, layout }).1,
+                _ => Vec::new(),
+            };
+            if let Err(e) = crate::controllers::apply(&format, &st.players, pads, &exe_dir, &binds) {
                 tracing::warn!("manettes non attribuées: {e}");
             }
         }

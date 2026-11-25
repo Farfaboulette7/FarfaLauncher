@@ -152,6 +152,50 @@ export interface PadInfo {
   xinput: number | null;
 }
 
+/** Fréquence mesurée d'une manette (page « Contrôles », Windows). */
+export interface PadRate {
+  vendor: number;
+  product: number;
+  /** États reçus par seconde. */
+  hz: number;
+  /** Reliée en Bluetooth. */
+  bluetooth: boolean;
+}
+
+/** Bouton de la console émulée (page « Contrôles »), avec ses sources par défaut. */
+export interface ConsoleButton {
+  id: string;
+  label: string;
+  /** Source par défaut à la manette (`south`, `lx-`…). */
+  pad: string;
+  /** Source par défaut au clavier et à la souris (`key:KeyW`, `mouse:left`…). */
+  keys: string;
+}
+
+/** Boutons réassignés d'un joueur : bouton de la console → source. */
+export interface PlayerBinds {
+  pad: Record<string, string>;
+  keys: Record<string, string>;
+}
+
+export type ControlsScope = "jeu" | "emulateur" | "tous";
+
+export interface ControlsInfo {
+  /** Joueurs dont le launcher pose la manette (0 : le jeu choisit lui-même). */
+  ports: number;
+  /** Famille de boutons réglables dans le launcher (`gc`), sinon `null`. */
+  layout: string | null;
+  buttons: ConsoleButton[];
+  /** Clavier et souris possibles comme joueur. */
+  keyboard: boolean;
+  scope: ControlsScope;
+  binds: (PlayerBinds | null)[];
+  emulator: string | null;
+}
+
+/** Clé de « Clavier et souris » à la place d'une manette. */
+export const KEYBOARD_PLAYER = "clavier-souris";
+
 /** Manette choisie pour un joueur. */
 export interface PlayerPad {
   key: string;
@@ -862,9 +906,14 @@ export const backend = {
   setKeyBinds: (romId: number, keys: KeyBind[]) => invoke<InstalledGame>("set_key_binds", { romId, keys }),
   controllerPorts: (romId: number) => invoke<number>("controller_ports", { romId }),
   setPlayers: (romId: number, players: (PlayerPad | null)[]) => invoke<InstalledGame>("set_players", { romId, players }),
+  controlsInfo: (romId: number) => invoke<ControlsInfo>("controls_info", { romId }),
+  setControls: (romId: number, binds: (PlayerBinds | null)[]) => invoke<ControlsInfo>("set_controls", { romId, binds }),
+  setControlsScope: (romId: number, scope: ControlsScope) => invoke<ControlsInfo>("set_controls_scope", { romId, scope }),
   isFullscreen: () => invoke<boolean>("is_fullscreen"),
   setFullscreen: (on: boolean) => invoke<void>("set_fullscreen", { on }),
   gamepads: () => invoke<PadInfo[]>("gamepads"),
+  /** Manettes bougées ces 5 dernières secondes ; `null` : mesure impossible sur ce système. */
+  padRates: () => invoke<PadRate[] | null>("pad_rates"),
   saveCheck: (romId: number) => invoke<SaveCheck>("save_check", { romId }),
   shaderInfo: (romId: number) => invoke<Record<string, SharedShaders>>("shader_info", { romId }),
   setSaveLocation: (romId: number, dir: string | null, off: boolean) =>

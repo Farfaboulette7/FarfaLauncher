@@ -6,6 +6,7 @@ mod cache;
 #[cfg(feature = "gui")]
 mod commands;
 mod controllers;
+mod controls;
 pub mod deck;
 mod dialogs;
 mod error;
@@ -22,6 +23,7 @@ mod logging;
 mod manager;
 mod n3ds;
 mod optimize;
+mod pad_rate;
 mod pc;
 mod play;
 mod report;
@@ -102,6 +104,10 @@ pub fn run() {
             // Fenêtre principale fermée : les amis voient tout de suite le joueur hors ligne.
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
                 commands::presence::leave(window.app_handle());
+                // La colonne cachée du menu en jeu (créée au premier lancement d'un jeu) est une
+                // fenêtre : sans cet arrêt, le launcher restait ouvert, invisible, et bloquait
+                // tout nouveau lancement (une seule instance).
+                window.app_handle().exit(0);
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -147,6 +153,7 @@ pub fn run() {
             commands::window::is_fullscreen,
             commands::window::set_fullscreen,
             commands::window::gamepads,
+            commands::window::pad_rates,
             commands::session::session_status,
             commands::session::check_connection,
             commands::saves::flush_pending_saves,
@@ -214,6 +221,9 @@ pub fn run() {
             commands::install::set_game_language,
             commands::install::set_key_binds,
             commands::install::controller_ports,
+            commands::install::controls_info,
+            commands::install::set_controls,
+            commands::install::set_controls_scope,
             commands::install::set_players,
             commands::launch::running_games,
             commands::launch::play_game,

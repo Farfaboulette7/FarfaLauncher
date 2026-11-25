@@ -36,6 +36,9 @@ const RUN_LOG: &str = "dernier-lancement.log";
 const CLOSE_GRACE: Duration = Duration::from_secs(5);
 /// Pas de la surveillance : une demande de fermeture est prise en compte aussi vite.
 const STEP: Duration = Duration::from_millis(200);
+/// Fenêtre du jeu fermée mais programme encore là (Eden reste en arrière-plan) : passé ce
+/// délai sans aucune fenêtre, le jeu est considéré comme fermé et ses processus arrêtés.
+const WINDOW_GONE: Duration = Duration::from_secs(10);
 
 /// Jeu lancé, à surveiller jusqu'à sa fermeture.
 pub struct RunningGame {
@@ -252,6 +255,10 @@ impl RunningGame {
         let mut window_seen = !cfg!(windows);
         let mut close_asked: Option<Instant> = None;
         let mut killed = false;
+        // Depuis quand la partie n'a plus de fenêtre (après en avoir eu une).
+        let mut window_lost: Option<Instant> = None;
+        // Arrêtée par le launcher parce que sa fenêtre était fermée : pas un plantage.
+        let mut closed_without_window = false;
         loop {
             if self.stop.load(Ordering::Relaxed) {
                 match close_asked {
@@ -283,6 +290,22 @@ impl RunningGame {
             if !main_alive && !self.descendants_alive() {
                 break;
             }
+            // Programme lancé toujours là, mais plus aucune fenêtre (fermée par le joueur) :
+            // certains émulateurs ne se terminent jamais. Pas pendant la pause du menu en jeu,
+            // ni quand le programme lancé est déjà fini (un launcher qui passe la main au jeu).
+            if cfg!(windows) && window_seen && main_alive && close_asked.is_none() && !killed && !self.paused.load(Ordering::Relaxed) {
+                if self.has_window() {
+                    window_lost = None;
+                } else {
+                    let since = *window_lost.get_or_insert_with(Instant::now);
+                    if since.elapsed() >= WINDOW_GONE {
+                        tracing::info!("plus aucune fenêtre du jeu depuis {} s : jeu fermé, processus arrêtés", WINDOW_GONE.as_secs());
+                        self.kill();
+                        killed = true;
+                        closed_without_window = true;
+                    }
+                }
+            }
             // Attente découpée : une demande de fermeture n'attend pas la fin de l'intervalle.
             let wait = if close_asked.is_some() { STEP } else if window_seen { POLL } else { WINDOW_POLL };
             let until = Instant::now() + wait;
@@ -299,7 +322,7 @@ impl RunningGame {
         }
         let fatal = status.and_then(fatal_error);
         // Fermé à la demande du launcher : pas un plantage.
-        let crash = (close_asked.is_none() && (quick || fatal.is_some())).then(|| Crash {
+        let crash = (close_asked.is_none() && !closed_without_window && (quick || fatal.is_some())).then(|| Crash {
             seconds: elapsed.as_secs(),
             error: fatal.or_else(|| status.and_then(exit_code_error)),
         });

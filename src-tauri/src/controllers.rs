@@ -85,14 +85,33 @@ pub fn resolve(players: &[Option<PlayerPad>], pads: &[PadInfo], ports: usize) ->
     out
 }
 
-/// Pose l'attribution pour ce format. `exe_dir` : dossier de l'exécutable.
-pub fn apply(format: &str, players: &[Option<PlayerPad>], pads: &[PadInfo], exe_dir: &Path) -> Result<(), String> {
-    let ports = resolve(players, pads, ports(format));
-    if ports.iter().all(Option::is_none) {
+/// Joueurs au clavier et à la souris : ceux qui l'ont choisi, sinon (aucun choix enregistré)
+/// le joueur 1 quand aucune manette n'est branchée.
+pub fn keyboard_ports(players: &[Option<PlayerPad>], pads: &[PadInfo], ports: usize) -> Vec<bool> {
+    let mut out = vec![false; ports];
+    if players.iter().all(Option::is_none) {
+        if pads.is_empty() && ports > 0 {
+            out[0] = true;
+        }
+        return out;
+    }
+    for (i, p) in players.iter().take(ports).enumerate() {
+        out[i] = p.as_ref().is_some_and(|p| p.key == crate::controls::KEYBOARD);
+    }
+    out
+}
+
+/// Pose l'attribution pour ce format. `exe_dir` : dossier de l'exécutable. `binds` : boutons
+/// réassignés de chaque joueur (page « Contrôles », formats qui les savent recevoir).
+pub fn apply(format: &str, players: &[Option<PlayerPad>], pads: &[PadInfo], exe_dir: &Path, binds: &[Option<crate::controls::PlayerBinds>]) -> Result<(), String> {
+    let n = ports(format);
+    let ports = resolve(players, pads, n);
+    let keyboard = if crate::controls::layout_of(format).is_some() && crate::controls::keyboard_here() { keyboard_ports(players, pads, n) } else { Vec::new() };
+    if ports.iter().all(Option::is_none) && !keyboard.contains(&true) {
         return Ok(()); // aucune manette : la configuration du joueur reste telle quelle
     }
     match format_name(format) {
-        "dolphin" => dolphin::apply(&ports, pads, exe_dir),
+        "dolphin" => dolphin::apply(&ports, &keyboard, binds, pads, exe_dir),
         "eden" => eden::apply(&ports, pads, exe_dir),
         "punes" => punes::apply(&ports, pads, exe_dir),
         "aurora" => aurora::apply(&ports, &params(format), exe_dir),
@@ -265,7 +284,36 @@ mod dolphin {
         .collect()
     }
 
-    pub fn apply(ports: &[Option<PadInfo>], all: &[PadInfo], exe_dir: &Path) -> Result<(), String> {
+    /// Boutons réglés dans le launcher, posés un à un (les autres réglages de la section, faits
+    /// dans Dolphin, restent). `keys` : au clavier et à la souris.
+    fn set_binds(text: &str, section: &str, binds: Option<&crate::controls::PlayerBinds>, keys: bool) -> String {
+        let mut text = text.to_string();
+        for b in crate::controls::gc_buttons() {
+            let chosen = binds.and_then(|p| if keys { p.keys.get(b.id) } else { p.pad.get(b.id) });
+            let source = chosen.map(String::as_str).unwrap_or(if keys { b.keys } else { b.pad });
+            let value = if keys { crate::controls::dolphin_keys(source) } else { crate::controls::dolphin_pad(source).map(str::to_string) };
+            let Some(value) = value else { continue };
+            for k in b.dolphin {
+                if ini_value(&text, section, k) != Some(value.as_str()) {
+                    text = set_ini(&text, &format!("{section}.{k}"), &value);
+                }
+            }
+        }
+        text
+    }
+
+    /// Manette GameCube au clavier et à la souris (stick C à la souris).
+    fn gc_keyboard() -> Vec<String> {
+        let mut lines = vec![format!("Device = {}", crate::controls::dolphin_keyboard_device())];
+        for b in crate::controls::gc_buttons() {
+            if let Some(v) = crate::controls::dolphin_keys(b.keys) {
+                lines.extend(b.dolphin.iter().map(|k| format!("{k} = {v}")));
+            }
+        }
+        lines
+    }
+
+    pub fn apply(ports: &[Option<PadInfo>], keyboard: &[bool], binds: &[Option<crate::controls::PlayerBinds>], all: &[PadInfo], exe_dir: &Path) -> Result<(), String> {
         // Dolphin portable (portable.txt, aussi dans le .app sur Mac) : User/ à côté.
         let dir = if exe_dir.join("portable.txt").is_file() {
             exe_dir.join("User").join("Config")
@@ -277,12 +325,30 @@ mod dolphin {
         let (mut gc_text, mut wii_text, mut main_text) = (gc_before.clone(), wii_before.clone(), main_before.clone());
         for i in 0..4 {
             let (gc_section, wii_section) = (format!("GCPad{}", i + 1), format!("Wiimote{}", i + 1));
+            let mine = binds.get(i).cloned().flatten();
+            if keyboard.get(i) == Some(&true) {
+                let dev = crate::controls::dolphin_keyboard_device();
+                if ini_value(&gc_text, &gc_section, "Device") != Some(dev) {
+                    gc_text = replace_section(&gc_text, &gc_section, &gc_keyboard());
+                }
+                // Toujours les touches du launcher (préréglage, ou celles choisies).
+                gc_text = set_binds(&gc_text, &gc_section, mine.as_ref(), true);
+                main_text = set_ini(&main_text, &format!("Core.SIDevice{i}"), "6");
+                if i > 0 && wii_text.contains(&format!("[{wii_section}]")) {
+                    wii_text = set_ini(&wii_text, &format!("{wii_section}.Source"), "0");
+                }
+                continue;
+            }
             match ports.get(i).cloned().flatten() {
                 Some(pad) => {
                     let dev = device(&pad, all);
-                    // Même manette qu'avant : les réglages faits dans Dolphin sont gardés.
+                    // Même manette qu'avant : les réglages faits dans Dolphin sont gardés,
+                    // sauf les boutons réglés dans le launcher.
                     if ini_value(&gc_text, &gc_section, "Device") != Some(dev.as_str()) {
                         gc_text = replace_section(&gc_text, &gc_section, &gc(&dev));
+                    }
+                    if mine.is_some() {
+                        gc_text = set_binds(&gc_text, &gc_section, mine.as_ref(), false);
                     }
                     if ini_value(&wii_text, &wii_section, "Device") != Some(dev.as_str()) {
                         wii_text = replace_section(&wii_text, &wii_section, &wiimote(&dev));
@@ -1326,7 +1392,7 @@ mod tests {
         let other = pad(1, "Autre", "o", "o0", Some(0));
         let mut x = pad(2, "Xbox", "g", "x1", Some(1));
         x.bindings = xbox_bindings();
-        apply("melonds", &[Some(PlayerPad { key: x.key.clone(), name: x.name.clone() })], &[other, x], &dir).unwrap();
+        apply("melonds", &[Some(PlayerPad { key: x.key.clone(), name: x.name.clone() })], &[other, x], &dir, &[]).unwrap();
         let toml = read(&dir.join("portable").join("melonDS.toml"));
         assert_eq!(ini_value(&toml, "Instance0", "JoystickID"), Some("1"));
         assert_eq!(ini_value(&toml, "Instance0.Joystick", "A"), Some("1"));
@@ -1366,7 +1432,7 @@ mod tests {
         )
         .unwrap();
         let x = pad(0, "Xbox", "g", "x0", Some(0));
-        apply("azahar", &[None], &[x.clone()], &dir).unwrap();
+        apply("azahar", &[None], &[x.clone()], &dir, &[]).unwrap();
         let ini = read(&cfg.join("qt-config.ini"));
         assert_eq!(ini_value(&ini, "Controls", "profiles\\1\\button_a"), Some("\"engine:sdl,api:controller,maptype:all,button:1\""));
         assert_eq!(ini_value(&ini, "Controls", "profiles\\1\\button_a\\default"), Some("false"));
@@ -1378,7 +1444,7 @@ mod tests {
         // Réglé ensuite dans Azahar : laissé tel quel.
         let tweaked = set_ini(&ini, "Controls.profiles\\1\\button_a", "\"engine:sdl,api:controller,maptype:all,button:0\"");
         std::fs::write(cfg.join("qt-config.ini"), &tweaked).unwrap();
-        apply("azahar", &[None], &[x], &dir).unwrap();
+        apply("azahar", &[None], &[x], &dir, &[]).unwrap();
         assert_eq!(read(&cfg.join("qt-config.ini")), tweaked);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1400,7 +1466,7 @@ mod tests {
             let dir = std::env::temp_dir().join(format!("farfa-snes9x-{}", std::process::id()));
             std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(dir.join("snes9x.conf"), "[Controls\\Win]\n     Joypad1:Enabled              = TRUE\n     Joypad1:A                    = V\n").unwrap();
-            apply("snes9x", &[], &[x], &dir).unwrap();
+            apply("snes9x", &[], &[x], &dir, &[]).unwrap();
             let conf = read(&dir.join("snes9x.conf"));
             assert_eq!(ini_value(&conf, "Controls\\Win", "Joypad1:A"), Some("(J0)Button 1"));
             assert_eq!(ini_value(&conf, "Controls\\Win", "Joypad1:Up"), Some("(J0)POV Up"));
@@ -1416,7 +1482,7 @@ mod tests {
         std::fs::write(dir.join("portable.ini"), "").unwrap();
         std::fs::write(dir.join("config.ini"), "[gba.input.SDLB]\nkeyA=-1\nhat0Up=6\n\n[gba.input-profile.Xbox One Controller]\nkeyA=-1\nkeyB=-1\n\n[ports.qt]\nfullscreen=0\n").unwrap();
         let x = pad(1, "Xbox One Controller", "g", "x0", Some(0));
-        apply("mgba", &[], &[x], &dir).unwrap();
+        apply("mgba", &[], &[x], &dir, &[]).unwrap();
         let ini = read(&dir.join("config.ini"));
         assert_eq!(ini_value(&ini, "gba.input-profile.Xbox One Controller", "keyA"), Some("1"));
         assert_eq!(ini_value(&ini, "gba.input-profile.Xbox One Controller", "keyStart"), Some("7"));
@@ -1426,7 +1492,7 @@ mod tests {
         let tuned = ini.replace("[gba.input.SDLB]\nkeyA=1", "[gba.input.SDLB]\nkeyA=3");
         std::fs::write(dir.join("config.ini"), &tuned).unwrap();
         let x = pad(1, "Xbox One Controller", "g", "x0", Some(0));
-        apply("mgba", &[], &[x], &dir).unwrap();
+        apply("mgba", &[], &[x], &dir, &[]).unwrap();
         assert_eq!(ini_value(&read(&dir.join("config.ini")), "gba.input.SDLB", "keyA"), Some("3"));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1439,7 +1505,7 @@ mod tests {
         let a = pad(4, "Xbox", "g1", "x0", Some(0));
         let b = pad(9, "PS5", "g2", "s", None);
         let players = vec![Some(PlayerPad { key: b.key.clone(), name: String::new() }), Some(PlayerPad { key: a.key.clone(), name: String::new() })];
-        apply("recharged", &players, &[a, b], &dir).unwrap();
+        apply("recharged", &players, &[a, b], &dir, &[]).unwrap();
         let ini = read(&dir.join("recharged.ini"));
         assert_eq!(ini_value(&ini, "controls", "player1"), Some("gamepad2"));
         assert_eq!(ini_value(&ini, "controls", "player2"), Some("gamepad1"));
@@ -1521,7 +1587,7 @@ mod tests {
         let a = pad(1, "Xbox 360 Controller", "g1", "xinput0", Some(0));
         let b = pad(2, "PS5 Controller", "g2", "s", None);
         let players = vec![Some(PlayerPad { key: b.key.clone(), name: String::new() }), None, Some(PlayerPad { key: a.key.clone(), name: String::new() })];
-        apply("dolphin", &players, &[a, b], &dir).unwrap();
+        apply("dolphin", &players, &[a, b], &dir, &[]).unwrap();
         let gc = read(&cfg.join("GCPadNew.ini"));
         assert_eq!(ini_value(&gc, "GCPad1", "Device"), Some("SDL/0/PS5 Controller"));
         assert_eq!(ini_value(&gc, "GCPad1", "Buttons/A"), Some("`Button A`"));
@@ -1542,8 +1608,44 @@ mod tests {
         std::fs::write(cfg.join("GCPadNew.ini"), &tuned).unwrap();
         let a = pad(1, "Xbox 360 Controller", "g1", "xinput0", Some(0));
         let b = pad(2, "PS5 Controller", "g2", "s", None);
-        apply("dolphin", &players, &[a, b], &dir).unwrap();
+        apply("dolphin", &players, &[a, b], &dir, &[]).unwrap();
         assert_eq!(read(&cfg.join("GCPadNew.ini")), tuned);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn dolphin_keyboard_and_binds() {
+        let dir = std::env::temp_dir().join(format!("farfa-pads-kb-{}", std::process::id()));
+        let cfg = if cfg!(windows) { dir.join("User/Config") } else { return };
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&cfg).unwrap();
+        std::fs::write(cfg.join("GCPadNew.ini"), "[GCPad2]\r\nDevice = XInput/0/Gamepad\r\nButtons/Z = `Shoulder L`\r\nMain Stick/Dead Zone = 12.0\r\n").unwrap();
+        let a = pad(1, "Xbox 360 Controller", "g1", "xinput0", Some(0));
+        let kb = Some(PlayerPad { key: crate::controls::KEYBOARD.into(), name: String::new() });
+        let players = vec![kb, Some(PlayerPad { key: a.key.clone(), name: String::new() })];
+        let mut keys = crate::controls::PlayerBinds::default();
+        keys.keys.insert("a".into(), "key:KeyJ".into());
+        let mut pad_binds = crate::controls::PlayerBinds::default();
+        pad_binds.pad.insert("a".into(), "east".into());
+        apply("dolphin", &players, &[a], &dir, &[Some(keys), Some(pad_binds)]).unwrap();
+        let gc = read(&cfg.join("GCPadNew.ini"));
+        assert_eq!(ini_value(&gc, "GCPad1", "Device"), Some("DInput/0/Keyboard Mouse"));
+        assert_eq!(ini_value(&gc, "GCPad1", "Buttons/A"), Some("J"));
+        assert_eq!(ini_value(&gc, "GCPad1", "Buttons/B"), Some("LSHIFT"));
+        assert_eq!(ini_value(&gc, "GCPad1", "C-Stick/Up"), Some("`Cursor Y-`"));
+        // Même manette : bouton réglé dans le launcher posé, les autres réglages de Dolphin gardés…
+        assert_eq!(ini_value(&gc, "GCPad2", "Buttons/A"), Some("`Button B`"));
+        assert_eq!(ini_value(&gc, "GCPad2", "Main Stick/Dead Zone"), Some("12.0"));
+        // …mais un joueur réglé dans le launcher a tous ses boutons (Z remis à sa place).
+        assert_eq!(ini_value(&gc, "GCPad2", "Buttons/Z"), Some("`Shoulder R`"));
+        let main = read(&cfg.join("Dolphin.ini"));
+        assert_eq!(ini_value(&main, "Core", "SIDevice0"), Some("6"));
+        // Aucun choix et aucune manette : joueur 1 au clavier, avec le préréglage.
+        std::fs::remove_file(cfg.join("GCPadNew.ini")).unwrap();
+        apply("dolphin", &[], &[], &dir, &[]).unwrap();
+        let gc = read(&cfg.join("GCPadNew.ini"));
+        assert_eq!(ini_value(&gc, "GCPad1", "Buttons/A"), Some("SPACE"));
+        assert_eq!(ini_value(&gc, "GCPad1", "Triggers/R"), Some("`Click 0`"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1564,14 +1666,14 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("settings.ini"), "[Main]\nLanguage = fr\n\n[Pad1]\nType = AnalogController\nUp = Keyboard/Up\n").unwrap();
-        apply("duckstation", &[], &[x1.clone(), generic.clone()], &dir).unwrap();
+        apply("duckstation", &[], &[x1.clone(), generic.clone()], &dir, &[]).unwrap();
         let text = std::fs::read_to_string(dir.join("settings.ini")).unwrap();
         assert!(text.contains("Language = fr") && !text.contains("Keyboard/Up"));
         assert!(text.contains("[Pad1]\nType = AnalogController\nUp = SDL-1/DPadUp") && text.contains("Cross = SDL-1/A"));
         assert!(text.contains("[Pad2]\nType = AnalogController") && text.contains("L2 = SDL-0/+LeftTrigger"));
         // Changement fait dans DuckStation, même manette : gardé. Joueur 2 parti : port vide.
         std::fs::write(dir.join("settings.ini"), text.replace("Square = SDL-1/X", "Square = SDL-1/Y")).unwrap();
-        apply("duckstation", &[], &[x1], &dir).unwrap();
+        apply("duckstation", &[], &[x1], &dir, &[]).unwrap();
         let text = std::fs::read_to_string(dir.join("settings.ini")).unwrap();
         assert!(text.contains("Square = SDL-1/Y") && text.contains("[Pad2]\nType=None"));
         let _ = std::fs::remove_dir_all(&dir);
@@ -1582,7 +1684,7 @@ mod tests {
         let x0 = pad(1, "Xbox Controller", "0300", "xinput0", Some(0));
         let dir = std::env::temp_dir().join(format!("farfa-pcsx2-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        apply("pcsx2", &[], &[x0], &dir).unwrap();
+        apply("pcsx2", &[], &[x0], &dir, &[]).unwrap();
         let text = std::fs::read_to_string(dir.join("PCSX2/inis/PCSX2.ini")).unwrap();
         assert!(text.contains("[Pad1]
 Type = DualShock2
@@ -1611,12 +1713,12 @@ Up = SDL-0/DPadUp") && text.contains("Cross = SDL-0/FaceSouth") && text.contains
 
         let dir = std::env::temp_dir().join(format!("farfa-eden-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        apply("eden", &[], &[x.clone()], &dir).unwrap();
+        apply("eden", &[], &[x.clone()], &dir, &[]).unwrap();
         let text = std::fs::read_to_string(dir.join("user/config/qt-config.ini")).unwrap();
         assert!(text.contains("[Controls]\n") && text.contains("player_0_connected=true") && text.contains(r"player_0_button_b\default=false"));
         // Réglage changé dans Eden avec la même manette : gardé.
         std::fs::write(dir.join("user/config/qt-config.ini"), text.replace(&format!("{g},button:1"), &format!("{g},button:0"))).unwrap();
-        apply("eden", &[], &[x], &dir).unwrap();
+        apply("eden", &[], &[x], &dir, &[]).unwrap();
         assert!(std::fs::read_to_string(dir.join("user/config/qt-config.ini")).unwrap().contains(&format!("player_0_button_a=\"engine:sdl,{g},button:0\"")));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1630,7 +1732,7 @@ Up = SDL-0/DPadUp") && text.contains("Cross = SDL-0/FaceSouth") && text.contains
         assert!(eden::is_gc_adapter(&gc) && !eden::is_gc_adapter(&pro));
         let dir = std::env::temp_dir().join(format!("farfa-eden-gc-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        apply("eden", &[], &[gc.clone()], &dir).unwrap();
+        apply("eden", &[], &[gc.clone()], &dir, &[]).unwrap();
         let ini = dir.join("user/config/qt-config.ini");
         let text = std::fs::read_to_string(&ini).unwrap();
         assert!(text.contains("player_0_type=5") && text.contains("player_0_connected=true"));
@@ -1639,10 +1741,10 @@ Up = SDL-0/DPadUp") && text.contains("Cross = SDL-0/FaceSouth") && text.contains
         assert!(text.contains("player_0_button_minus=[empty]"));
         // Réglage retouché dans Citron, même adaptateur : gardé.
         std::fs::write(&ini, text.replace("port:0,button:16\"", "port:0,button:128\"")).unwrap();
-        apply("eden", &[], &[gc], &dir).unwrap();
+        apply("eden", &[], &[gc], &dir, &[]).unwrap();
         assert!(std::fs::read_to_string(&ini).unwrap().contains("player_0_button_r=\"engine:gcpad,port:0,button:128\""));
         // Passée en Pro Controller : SDL et type Pro.
-        apply("eden", &[], &[pro], &dir).unwrap();
+        apply("eden", &[], &[pro], &dir, &[]).unwrap();
         let text = std::fs::read_to_string(&ini).unwrap();
         assert!(text.contains("player_0_type=0") && text.contains("player_0_button_a=\"engine:sdl,port:0,guid:030000007e0500000920000010026803"));
         let _ = std::fs::remove_dir_all(&dir);

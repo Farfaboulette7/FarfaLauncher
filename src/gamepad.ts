@@ -7,7 +7,7 @@ import { listen } from "@tauri-apps/api/event";
 import { backend, GAMEPAD_EVENT, PadEvent, PadInfo, PadLayout } from "./api/backend";
 import { confirmButtons } from "./padLayouts";
 
-type Dir = "up" | "down" | "left" | "right";
+export type Dir = "up" | "down" | "left" | "right";
 type Listener = (e: PadEvent) => void;
 
 const listeners = new Set<Listener>();
@@ -110,6 +110,11 @@ function move(dir: Dir) {
     }
   }
   if (best) focus(best);
+}
+
+/** Focus vers l'élément le plus proche dans la direction (flèches du clavier, page « Contrôles »). */
+export function moveFocus(dir: Dir) {
+  move(dir);
 }
 
 function press(dir: Dir) {

@@ -45,6 +45,11 @@ pub fn game_started() {
     GAMES.fetch_add(1, Ordering::Relaxed);
 }
 
+/// Une partie est-elle en cours ?
+pub fn in_game() -> bool {
+    GAMES.load(Ordering::Relaxed) > 0
+}
+
 pub fn game_stopped() {
     if GAMES.load(Ordering::Relaxed) > 0 {
         GAMES.fetch_sub(1, Ordering::Relaxed);
