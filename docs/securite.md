@@ -283,6 +283,11 @@ Outils passés :
 - Problème : seul HTTPS protège ces fichiers. GE publie un `.sha512sum` qui n'est pas vérifié.
 - Qui : un compte GitHub tiers compromis.
 - Correction : vérifier le `.sha512sum` de GE ; épingler une version d'umu. Effort : petit.
+- Corrigé le 2026-11-25 (phase2-moyens-b) : l'archive de GE-Proton est vérifiée par son
+  `.sha512sum` avant l'extraction (refusée et effacée sinon, téléchargement refusé sans
+  `.sha512sum`) ; umu épinglé en 1.4.4 avec le SHA-256 de son zipapp (`pc/proton.rs`). Clients
+  CoD : risque documenté et accepté dans `pc/cod.rs` (manifeste et fichiers dans le même dépôt,
+  épingler un commit figerait les clients).
 
 ### SL14 — Les archives du gestionnaire ne sont pas vérifiées par leur SHA-1
 
