@@ -193,10 +193,67 @@ pub async fn exchange_pair_code(client: &RommClient, code: &str) -> AppResult<St
     }
 }
 
+// ---------- Jeton collé : droits d'administration (faille SL11) ----------
+
+/// Le jeton peut-il administrer RomM ? Vérifié pour un jeton collé ou un code d'appairage,
+/// dont les scopes sont cochés à la main dans RomM (le flux du navigateur, lui, ne demande que
+/// `REQUIRED_SCOPES`).
+///
+/// RomM ne dit pas les scopes d'un jeton. On regarde donc :
+/// - le rôle du compte (`GET /api/users/me`) : seul un `admin` a les droits sur les comptes ;
+/// - puis `GET /api/users` (liste des comptes, scope `users.read`, lecture seule) : si elle
+///   répond, le jeton a gardé les droits d'administration.
+/// Tout autre cas (403, erreur, réseau) : pas d'administration, la connexion continue.
+pub async fn has_admin_rights(client: &RommClient, me: &Me) -> bool {
+    if !is_admin_role(me.role.as_deref()) {
+        return false;
+    }
+    let Ok(resp) = client.get("api/users").send().await else { return false };
+    let status = resp.status();
+    let body = resp.json::<serde_json::Value>().await.unwrap_or_default();
+    lists_accounts(status, &body)
+}
+
+/// Rôle d'administrateur de RomM (`viewer`, `editor`, `admin`).
+fn is_admin_role(role: Option<&str>) -> bool {
+    role.is_some_and(|r| r.eq_ignore_ascii_case("admin"))
+}
+
+/// Réponse de `GET /api/users` qui montre la liste des comptes : 200 et un tableau JSON (une
+/// page d'erreur d'un proxy en 200 ne compte pas).
+fn lists_accounts(status: StatusCode, body: &serde_json::Value) -> bool {
+    status == StatusCode::OK && body.is_array()
+}
+
 pub fn validate_token_format(token: &str) -> AppResult<String> {
     let token = token.trim();
     if !token.starts_with(TOKEN_PREFIX) || token.len() < 12 || token.chars().any(char::is_whitespace) {
         return Err(AppError::TokenFormat);
     }
     Ok(token.to_string())
+}
+
+#[cfg(test)]
+mod admin_tests {
+    use super::*;
+
+    #[test]
+    fn admin_token_detected() {
+        assert!(is_admin_role(Some("admin")) && is_admin_role(Some("ADMIN")));
+        assert!(!is_admin_role(Some("editor")) && !is_admin_role(Some("viewer")) && !is_admin_role(None));
+        let list = serde_json::json!([{ "id": 1, "username": "a" }]);
+        assert!(lists_accounts(StatusCode::OK, &list));
+        // Scope `users.read` absent : 403, la connexion continue.
+        assert!(!lists_accounts(StatusCode::FORBIDDEN, &serde_json::json!({ "detail": "Forbidden" })));
+        // Page d'un proxy en 200 (pas un tableau) : ne compte pas.
+        assert!(!lists_accounts(StatusCode::OK, &serde_json::Value::Null));
+        assert!(!lists_accounts(StatusCode::OK, &serde_json::json!({ "users": [] })));
+    }
+
+    #[test]
+    fn admin_error_is_shown_as_text() {
+        let e = AppError::TokenTooPowerful;
+        assert_eq!(e.code(), "token_too_powerful");
+        assert!(e.to_string().contains("droits d'administration"));
+    }
 }
