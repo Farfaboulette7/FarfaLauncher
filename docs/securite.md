@@ -322,6 +322,10 @@ Outils passés :
   où attaquer RomM et le gestionnaire.
 - Correction : `romm.exemple.synology.me` et `192.0.2.x` dans les tests. Le domaine reste dans
   l'historique : c'est peu grave, il est déjà public par le DNS. Effort : petit.
+- Corrigé le 2026-11-25 (phase2-moyens-b) : `romm.exemple.synology.me` et `192.0.2.x` dans
+  `assets.rs`, `romm/client.rs` (test `same_site`) et `manager.rs`. Le domaine ne servait à
+  rien en dur. Reste `192.168.1.20` (adresse privée fictive) dans le test de
+  `normalize_server_url`, qui a besoin d'une IP privée.
 
 ### SL18 — Droits du jeton GitHub trop larges dans les workflows
 

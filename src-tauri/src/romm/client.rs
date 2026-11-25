@@ -385,14 +385,14 @@ mod tests {
     // L16 : le token ne part qu'au même domaine que RomM (ou à la même machine).
     #[test]
     fn token_only_goes_to_the_same_site() {
-        assert!(same_site("https://romm.poupounas.synology.me", "https://manager.poupounas.synology.me"));
+        assert!(same_site("https://romm.exemple.synology.me", "https://manager.exemple.synology.me"));
         assert!(same_site("https://romm.example.org", "https://assets.example.org"));
-        assert!(same_site("http://192.168.1.102:8080", "http://192.168.1.102:5000"));
-        assert!(!same_site("https://romm.poupounas.synology.me", "https://autre.synology.me"));
+        assert!(same_site("http://192.0.2.102:8080", "http://192.0.2.102:5000"));
+        assert!(!same_site("https://romm.exemple.synology.me", "https://autre.synology.me"));
         assert!(!same_site("https://romm.example.org", "https://example.com"));
-        assert!(!same_site("http://192.168.1.102:8080", "http://192.168.1.50"));
+        assert!(!same_site("http://192.0.2.102:8080", "http://192.0.2.50"));
         // Des IP différentes ne partagent jamais un « domaine » (pas de liste des suffixes).
-        assert!(!same_site("http://10.0.0.5", "http://192.168.0.5"));
+        assert!(!same_site("http://10.0.0.5", "http://192.0.2.5"));
         assert!(!same_site("http://[::1]:8080", "http://[::2]:8080"));
         assert!(same_site("http://[::1]:8080", "http://[::1]:5000"));
         assert!(!same_site("http://romm.example.org", "http://10.0.0.5"));

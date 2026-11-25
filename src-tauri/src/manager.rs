@@ -1335,7 +1335,7 @@ mod catalog_tests {
         s.manager_url = Some("https://gestion.example.org".into());
         assert_eq!(base_url(&s).as_deref(), Some("https://gestion.example.org"));
         // Serveur sur une IP locale : rien à déduire, il faut la saisir.
-        let lan = Settings { server_url: Some("http://192.168.1.20:8080".into()), ..Settings::default() };
+        let lan = Settings { server_url: Some("http://192.0.2.20:8080".into()), ..Settings::default() };
         assert_eq!(base_url(&lan), None);
         assert_eq!(base_url(&Settings::default()), None);
     }
