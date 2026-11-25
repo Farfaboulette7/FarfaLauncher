@@ -334,6 +334,10 @@ Outils passés :
 - Correction : `permissions: contents: read` en tête ; `contents: write` seulement sur les jobs
   qui créent et publient la release. Vérifier dans GitHub : Settings → Actions → « Read
   repository contents permission » par défaut. Effort : petit.
+- Corrigé le 2026-11-25 (phase2-moyens-b) : déjà fait pour `ci.yml`, `release.yml` et
+  `test.yml` (lecture seule en tête, `contents: write` seulement pour `create-release`, `build`,
+  `deck-release` et `publish-release`) ; ajouté en tête de `tests.yml`. Reste à vérifier le
+  réglage par défaut du dépôt sur GitHub.
 
 ---
 

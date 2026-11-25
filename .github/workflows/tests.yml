@@ -18,6 +18,10 @@ on:
         type: string
         default: '["windows-latest", "ubuntu-22.04"]'
 
+# Lecture seule pour tout le workflow (SL18) ; le job le redit plus bas.
+permissions:
+  contents: read
+
 jobs:
   tests:
     name: Tests (${{ matrix.platform }})
