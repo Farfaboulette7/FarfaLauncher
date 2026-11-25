@@ -252,7 +252,7 @@ Outils passés :
   connus de l'émulateur ; refuser tout fichier du dossier de réglages du launcher ;
   anonymiser aussi `COMPUTERNAME` / `hostname`.
   - Effort : petit.
-- Corrigé le 2026-11-25 (phase2-moyens-a) : `journaux:` limité au dossier du jeu ou de l'émulateur, ou après un joker au premier dossier connu de la fiche (identifiant, `lien:`, `dossier-mods:`, sauvegardes) ; jamais un dossier du launcher, et chaque fichier trouvé dans les dossiers de réglages ou de journaux du launcher est refusé (`report::pattern_allowed`, `is_inside`). Le nom du PC devient `<pc>`. Restent : « OneDrive - Prénom Nom » et autres disques.
+- Corrigé le 2026-11-25 (phase2-moyens-a) : `journaux:` limité au dossier du jeu ou de l'émulateur, ou après un joker au premier dossier connu de la fiche (identifiant, `lien:`, `dossier-mods:`, sauvegardes) ; jamais un dossier du launcher, et chaque fichier trouvé dans les dossiers de réglages ou de journaux du launcher est refusé (`report::pattern_allowed`, `is_inside`). Le nom du PC devient `<pc>` (sauf les noms génériques `steamdeck` et `localhost`). Restent : « OneDrive - Prénom Nom » et autres disques. Limite (relecture) : les « dossiers connus » viennent de la fiche elle-même ; un gestionnaire compromis peut déclarer `dossier-mods: {documents}/Perso` puis joindre `{documents}/Perso/*`. Le jeton et les dossiers du launcher restent protégés.
 
 ---
 

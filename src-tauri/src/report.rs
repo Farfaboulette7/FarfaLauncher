@@ -222,7 +222,10 @@ fn anonymize_with(text: &str, home: &str, user: &str, host: &str) -> String {
         out = replace_word(&out, user, "<compte>");
     }
     // Le nom du PC : en entier, comme le compte (« DESKTOP-AB12CD », « steamdeck »).
-    if host.len() >= 3 && host != "Ordinateur" {
+    // Les noms génériques (« steamdeck » de tous les Deck, « localhost ») ne disent rien du
+    // joueur et apparaissent dans les journaux (« SteamDeck=1 » d'umu) : on les garde.
+    let generic = ["ordinateur", "steamdeck", "localhost"].contains(&host.to_lowercase().as_str());
+    if host.len() >= 3 && !generic {
         out = replace_word(&out, host, "<pc>");
     }
     out
@@ -358,7 +361,9 @@ mod tests {
         let out = anonymize_with(r"C:\Users\Jean\x ; PC DESKTOP-AB12CD ; jean", r"C:\Users\Jean", "Jean", "DESKTOP-AB12CD");
         assert_eq!(out, r"~\x ; PC <pc> ; <compte>");
         // Casse ignorée, nom collé à un mot laissé tel quel.
-        assert_eq!(anonymize_with("hote steamdeck / SteamDeck / steamdeckX", "", "", "steamdeck"), "hote <pc> / <pc> / steamdeckX");
+        assert_eq!(anonymize_with("hote mon-pc / MON-PC / mon-pcX", "", "", "mon-pc"), "hote <pc> / <pc> / mon-pcX");
+        // Nom générique (tous les Steam Deck) : gardé, il ne dit rien du joueur.
+        assert_eq!(anonymize_with("SteamDeck=1 sur steamdeck", "", "", "steamdeck"), "SteamDeck=1 sur steamdeck");
         // Nom de repli ou trop court : rien n'est remplacé.
         assert_eq!(anonymize_with("Ordinateur pc", "", "", "Ordinateur"), "Ordinateur pc");
         assert_eq!(anonymize_with("pc", "", "", "pc"), "pc");
