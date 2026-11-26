@@ -245,6 +245,39 @@ pub async fn friends(state: &AppState, ra_id: i64) -> AppResult<Option<Value>> {
     }
 }
 
+/// Compte RetroAchievements du joueur, pour la partie « RetroAchievements » des paramètres.
+#[derive(Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RaAccount {
+    /// Pseudo RetroAchievements indiqué dans le profil RomM (`None` : aucun).
+    pub username: Option<String>,
+    /// Page du profil RomM du joueur (`<serveur>/user/<id>`), où il indique ce pseudo. Le
+    /// launcher ne peut pas l'écrire lui-même : la route demande le scope `me.write`.
+    pub profile_url: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawMeAccount {
+    #[serde(default)]
+    id: Option<i64>,
+    #[serde(default)]
+    ra_username: Option<String>,
+}
+
+fn ra_account(me: RawMeAccount, base: &str) -> RaAccount {
+    RaAccount {
+        username: me.ra_username.map(|u| u.trim().to_string()).filter(|u| !u.is_empty()),
+        profile_url: me.id.filter(|id| *id > 0).map(|id| format!("{}/user/{id}", base.trim_end_matches('/'))),
+    }
+}
+
+/// Lit le compte RetroAchievements du joueur dans RomM (`GET /api/users/me`, scope `me.read`).
+pub async fn account(state: &AppState) -> AppResult<RaAccount> {
+    let client = state.online_client()?;
+    let me = client.get_json::<RawMeAccount>("api/users/me").await?;
+    Ok(ra_account(me, client.base()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -317,5 +350,16 @@ mod tests {
     fn dates() {
         assert_eq!(rfc3339("2026-08-30 22:10:38"), "2026-08-30T22:10:38Z");
         assert_eq!(rfc3339("2026-09-17T22:30:23+00:00"), "2026-09-17T22:30:23+00:00");
+    }
+
+    #[test]
+    fn ra_account_gives_the_romm_profile_page() {
+        let me = super::RawMeAccount { id: Some(7), ra_username: Some("  ".into()) };
+        let a = super::ra_account(me, "https://romm.exemple.fr/");
+        assert_eq!(a.username, None);
+        assert_eq!(a.profile_url.as_deref(), Some("https://romm.exemple.fr/user/7"));
+        let me = super::RawMeAccount { id: None, ra_username: Some("Pseudo".into()) };
+        let a = super::ra_account(me, "https://romm.exemple.fr");
+        assert_eq!((a.username.as_deref(), a.profile_url), (Some("Pseudo"), None));
     }
 }

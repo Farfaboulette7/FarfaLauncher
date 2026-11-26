@@ -14,8 +14,8 @@
       {
         "label": "main",
         "title": "FaRFa project",
-        "width": 1280,
-        "height": 800,
+        "width": 1440,
+        "height": 880,
         "minWidth": 960,
         "minHeight": 600,
         "resizable": true,

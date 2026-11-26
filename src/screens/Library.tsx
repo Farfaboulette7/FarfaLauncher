@@ -190,7 +190,8 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
   /** Jeu à lancer dès l'ouverture de sa fiche (raccourci Steam). */
   const [autoPlayId, setAutoPlayId] = useState<number | null>(null);
   const [seen, setSeen] = useState(loadSeen);
-  const [showSettings, setShowSettings] = useState(false);
+  // Paramètres ouverts ; "retroachievements" : ouverts depuis l'onglet Succès, sur cette partie.
+  const [showSettings, setShowSettings] = useState<boolean | "retroachievements">(false);
   const [hack, setHack] = useState<Hack | null>(null);
   /** Filtre alphabétique (« # » : chiffres, signes, autres alphabets). */
   const [letter, setLetter] = useState<string | null>(null);
@@ -739,6 +740,7 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
         session={session}
         installs={installs}
         onBack={() => setShowSettings(false)}
+        focus={showSettings === "retroachievements" ? "retroachievements" : undefined}
         onLogout={onLogout}
         onCheckUpdates={onCheckUpdates}
         onCacheCleared={() => {
@@ -769,6 +771,7 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
         onAutoPlayed={() => setAutoPlayId(null)}
         actions={headerActions}
         refreshKey={refreshTick}
+        onLinkRetroAchievements={() => setShowSettings("retroachievements")}
       />,
       statsDialog,
     );

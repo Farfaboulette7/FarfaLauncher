@@ -740,6 +740,14 @@ export interface RankingRow {
   sessions?: number;
 }
 
+/** Compte RetroAchievements du joueur (`achievements.rs`, `RaAccount`). */
+export interface RaAccount {
+  /** Pseudo indiqué dans le profil RomM, `null` si aucun. */
+  username: string | null;
+  /** Page du profil RomM où le joueur indique son pseudo. */
+  profileUrl: string | null;
+}
+
 /** Un succès RetroAchievements d'un jeu (`achievements.rs`). */
 export interface Achievement {
   id: number | null;
@@ -966,6 +974,8 @@ export const backend = {
   gameAchievements: (romId: number) => invoke<GameAchievements | null>("game_achievements", { romId }),
   /** `null` : gestionnaire trop ancien. */
   achievementsFriends: (raId: number) => invoke<FriendAchievements[] | null>("achievements_friends", { raId }),
+  /** Compte RetroAchievements du joueur (paramètres). */
+  raAccount: () => invoke<RaAccount>("ra_account"),
   /** Avis des joueurs sur un jeu (notes RomM publiques) et l'ID du joueur. */
   gameReviews: (romId: number) => invoke<{ me: number; notes: RommNote[] }>("game_reviews", { romId }),
   saveGameReview: (romId: number, noteId: number | null, content: string, rating: number | null, difficulty: number | null, completion: number | null) =>

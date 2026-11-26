@@ -56,3 +56,9 @@ pub async fn game_achievements(state: State<'_, AppState>, rom_id: i64) -> AppRe
 pub async fn achievements_friends(state: State<'_, AppState>, ra_id: i64) -> AppResult<Option<Value>> {
     crate::achievements::friends(&state, ra_id).await
 }
+
+/// Compte RetroAchievements du joueur (paramètres) : pseudo indiqué dans RomM et page de son profil.
+#[tauri::command]
+pub async fn ra_account(state: State<'_, AppState>) -> AppResult<crate::achievements::RaAccount> {
+    crate::achievements::account(&state).await
+}

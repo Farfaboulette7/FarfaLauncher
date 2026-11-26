@@ -2,7 +2,7 @@ import { Choice } from "../components/Choice";
 import { useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { open } from "@tauri-apps/plugin-dialog";
-import { AssetsInfo, backend, errorMessage, ManagerInfo, SessionInfo } from "../api/backend";
+import { AssetsInfo, backend, errorMessage, ManagerInfo, RaAccount, SessionInfo } from "../api/backend";
 import { clearImageMemo } from "../hooks/useCachedImage";
 import { InstallsState } from "../hooks/useInstalls";
 import { Dialog } from "../components/Dialog";
@@ -25,9 +25,11 @@ interface Props {
   onCheckUpdates: () => Promise<string>;
   /** Vide l'affichage puis recharge la bibliothèque depuis le serveur. */
   onCacheCleared: () => void;
+  /** Partie à montrer à l'ouverture (lien « Lier mon compte » de l'onglet Succès d'un jeu). */
+  focus?: "retroachievements";
 }
 
-export function Settings({ session, installs, onBack, onLogout, onCacheCleared, onCheckUpdates }: Props) {
+export function Settings({ session, installs, onBack, onLogout, onCacheCleared, onCheckUpdates, focus }: Props) {
   const [version, setVersion] = useState("");
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const [confirmLogout, setConfirmLogout] = useState(false);
@@ -57,6 +59,40 @@ export function Settings({ session, installs, onBack, onLogout, onCacheCleared, 
   }, []);
   const root = useRef<HTMLDivElement>(null);
   useReveal(root, [], { screen: true });
+
+  // RetroAchievements : pseudo indiqué dans le profil RomM. Le launcher ne peut pas l'écrire
+  // (scope `me.write`) : il ouvre la page du profil RomM, où le joueur le remplit.
+  const [ra, setRa] = useState<RaAccount | null>(null);
+  const [raOpened, setRaOpened] = useState(false);
+  const [raChecked, setRaChecked] = useState(false);
+  const raSection = useRef<HTMLElement>(null);
+  function loadRa(): Promise<void> {
+    if (session.offline) return Promise.resolve();
+    return backend
+      .raAccount()
+      .then(setRa)
+      .catch(() => setRa(null));
+  }
+  useEffect(() => {
+    void loadRa();
+    // Ouvert depuis l'onglet Succès : on amène la partie RetroAchievements à l'écran.
+    if (focus === "retroachievements") raSection.current?.scrollIntoView({ block: "start" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  async function openRaProfile() {
+    if (!ra?.profileUrl) return;
+    try {
+      await backend.openUrl(ra.profileUrl);
+      setRaOpened(true);
+    } catch (e) {
+      setMessage({ kind: "error", text: errorMessage(e) });
+    }
+  }
+  async function checkRa() {
+    setRaChecked(false);
+    await loadRa();
+    setRaChecked(true);
+  }
 
   function updateSound(next: Partial<ReturnType<typeof soundSettings>>) {
     if (next.enabled) clearAudioNotice();
@@ -154,6 +190,30 @@ export function Settings({ session, installs, onBack, onLogout, onCacheCleared, 
               <div className="settings-actions">
                 <button className="n-btn" onClick={() => setConfirmLogout(true)}>
                   Se déconnecter
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <section className="n-panel" ref={raSection}>
+            <div className="n-panel-header">RetroAchievements</div>
+            <div className="n-panel-body settings-section">
+              <dl className="gd-facts">
+                <dt>Compte</dt>
+                <dd>{session.offline ? "hors ligne" : (ra?.username ?? "aucun compte lié")}</dd>
+              </dl>
+              <p className="n-hint">
+                Vos succès s'affichent dans l'onglet « Succès » de chaque jeu qui en a. Pour y voir ceux que vous avez
+                débloqués, indiquez votre pseudo RetroAchievements dans votre profil RomM (champ RetroAchievements), puis
+                enregistrez. RomM relit vos succès toutes les heures, ou tout de suite avec « Rafraîchir » dans ce même profil.
+                Pas encore de compte ? Il se crée gratuitement sur le site retroachievements.org.
+              </p>
+              <div className="settings-actions">
+                <button className="n-btn" disabled={!ra?.profileUrl} onClick={() => void openRaProfile()}>
+                  {raOpened ? "Profil RomM ouvert ✓" : ra?.username ? "Changer de compte" : "Lier mon compte"}
+                </button>
+                <button className="n-btn" disabled={session.offline} onClick={() => void checkRa()}>
+                  {raChecked ? "Vérifié ✓" : "Vérifier"}
                 </button>
               </div>
             </div>

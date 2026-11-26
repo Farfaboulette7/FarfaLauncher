@@ -324,6 +324,12 @@ onglet « Succès » de la page du jeu, commande `succes` du moteur du Deck.
     `0 * * * *`) ; elle n'apparaît jamais dans `GET /api/tasks`, même activée (absente de `VISIBLE_SCHEDULED_TASKS`, `endpoints/tasks.py`).
   - Pour l'avoir tout de suite : « Rafraîchir » dans la partie RetroAchievements du profil RomM
     (site web). L'onglet « Succès » le dit au joueur.
+  - Lier son compte : le pseudo RetroAchievements (`ra_username`) s'écrit par `PUT /api/users/<id>`,
+    qui demande `me.write` : le launcher ne le fait pas. La partie « RetroAchievements » des
+    paramètres lit le pseudo (`/api/users/me`) et ouvre la page du profil RomM,
+    `<serveur>/user/<id>` (route `user/:user` du site, `frontend/src/plugins/router.ts`), où le
+    joueur le remplit. Aucune clé API RetroAchievements n'est demandée au joueur : RomM utilise
+    la sienne.
   - Le gestionnaire relit `GET /api/users` toutes les 10 min : la progression d'un ami peut
     donc avoir jusqu'à environ 1 h 10 de retard.
 - **Les autres comptes** : `GET /api/users` (`users.read`, avec `ra_progression` de chacun)

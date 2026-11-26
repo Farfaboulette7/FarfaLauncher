@@ -47,7 +47,7 @@ fiches des recomps et des émulateurs) est décrit dans le dépôt du gestionnai
 
 | Module | Rôle |
 |---|---|
-| `lib.rs`, `main.rs` | Démarrage : dossiers, journaux, état partagé, liste des commandes. |
+| `lib.rs`, `main.rs` | Démarrage : dossiers, journaux, état partagé, liste des commandes. Fenêtre de 1440 × 880 par défaut (onglets d'un jeu sur une ligne), réduite à l'écran s'il est plus petit (`fit_to_screen`). |
 | `commands/` | Commandes appelées par l'interface : `session` (connexion), `library`, `install`, `launch`, `saves`, `mods`, `update`, `report`, `requests`, `fiches` (écran « Fiches » des administrateurs), `community`, `stats`, `presence`, `music`, `sounds`, `steam`, `system`, `window`. |
 | `romm/` | Client de l'API RomM : `auth` (connexion), `client` (HTTP, délais, règle du jeton), `library` (consoles, jeux), `saves`, `favorites`, `playtime`. Voir `docs/romm-api.md`. |
 | `manager.rs` | Catalogue de FarfaRomManager : recomps, émulateurs, choix de la recomp par jeu, et toutes les clés des fiches. |
@@ -79,7 +79,7 @@ fiches des recomps et des émulateurs) est décrit dans le dépôt du gestionnai
 | `screens/GameDetail.tsx` | Fiche d'un jeu, onglets Informations, Médias, Contrôles, Succès, Communauté. L'onglet Succès (`components/AchievementsTab.tsx`, succès RetroAchievements) n'apparaît que si le jeu en a : `GameDetail` les lit à l'ouverture, après chaque partie et à chaque « Rafraîchir ». |
 | `screens/InstallPanel.tsx` | Installer, Jouer, Mettre à jour, Désinstaller, dossier des sauvegardes. |
 | `screens/ControlsTab.tsx` | Une manette par joueur. |
-| `screens/Settings.tsx`, `PcPanel.tsx` | Paramètres : Compte, Installation, Affichage, Sons, Émulateurs, Cache et dépannage, À propos (mises à jour, canal bêta). Informations du PC. |
+| `screens/Settings.tsx`, `PcPanel.tsx` | Paramètres : Compte, RetroAchievements (pseudo lu dans RomM, bouton qui ouvre le profil RomM `<serveur>/user/<id>` où le joueur l'indique ; l'onglet Succès y mène par « Lier mon compte »), Installation, Affichage, Sons, Émulateurs, Cache et dépannage, À propos (mises à jour, canal bêta). Informations du PC. |
 | `components/` | Éléments communs : `Choice` (listes YoRHa, jamais de `<select>`), `MusicMenu`, `ReportsInbox` (Messages), `Fiches` (fiches du gestionnaire, administrateurs), `UpdateDialog`, `Downloads`, `BoxArt` (boîte 3D)… |
 | `api/backend.ts` | Toutes les commandes Rust, typées. |
 | `offline.ts`, `refresh.ts`, `music.ts`, `sounds.ts`, `audioGuard.ts` | Hors ligne, rafraîchissement, musique, bruitages, filet audio (Linux). |

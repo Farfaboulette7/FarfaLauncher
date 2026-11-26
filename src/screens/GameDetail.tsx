@@ -35,6 +35,8 @@ interface Props {
   /** Lancer le jeu dès qu'il est prêt (raccourci Steam). */
   autoPlay?: boolean;
   onAutoPlayed?: () => void;
+  /** Ouvre les paramètres sur la partie RetroAchievements (lien de l'onglet Succès). */
+  onLinkRetroAchievements?: () => void;
   /** Boutons en haut à droite de la bibliothèque (téléchargements, amis, messages, musique,
    * rafraîchir, plein écran, paramètres) : les mêmes ici. */
   actions?: ReactNode;
@@ -42,7 +44,7 @@ interface Props {
   refreshKey?: number;
 }
 
-export function GameDetail({ game, platform, target, installs, favorite, onToggleFavorite, favoriteError, onBack, onError, autoPlay, onAutoPlayed, actions, refreshKey = 0 }: Props) {
+export function GameDetail({ game, platform, target, installs, favorite, onToggleFavorite, favoriteError, onBack, onError, autoPlay, onAutoPlayed, actions, refreshKey = 0, onLinkRetroAchievements }: Props) {
   const [tab, setTab] = useState<Tab>("infos");
   /** Mode dans lequel le jeu se lance (étiquette à côté de la console). */
   const current = useCurrentMode(game, installs);
@@ -183,7 +185,7 @@ export function GameDetail({ game, platform, target, installs, favorite, onToggl
             {tab === "infos" && <InfoTab game={game} target={target} installs={installs} onError={onError} />}
             {tab === "medias" && <MediaTab game={game} onError={onError} />}
             {tab === "controles" && <ControlsTab game={game} installs={installs} onError={onError} />}
-            {tab === "succes" && achievements && <AchievementsTab data={achievements} />}
+            {tab === "succes" && achievements && <AchievementsTab data={achievements} onLink={onLinkRetroAchievements} />}
             {tab === "communautaire" && <CommunityTab romId={game.id} refreshKey={installs.lastSession.get(game.id)} />}
           </div>
         </section>

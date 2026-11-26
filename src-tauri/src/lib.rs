@@ -90,6 +90,7 @@ pub fn run() {
             let state = state::AppState::new(config_dir, log_dir, cache_dir, default_install_root);
             // Fenêtre créée cachée : affichée directement au bon format.
             if let Some(window) = app.get_webview_window("main") {
+                fit_to_screen(&window);
                 let _ = window.set_fullscreen(state.settings().fullscreen);
                 let _ = window.show();
             }
@@ -140,6 +141,7 @@ pub fn run() {
             commands::stats::game_ranking,
             commands::stats::game_achievements,
             commands::stats::achievements_friends,
+            commands::stats::ra_account,
             commands::stats::set_stats_hidden,
             commands::update::install_update,
             commands::update::install_test_version,
@@ -246,4 +248,25 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("erreur au lancement de FarfaLauncher");
+}
+
+/// Taille par défaut de la fenêtre (`tauri.conf.json`, 1440 × 880) : assez large pour que les
+/// onglets de la page d'un jeu tiennent sur une ligne. Sur un écran plus petit (Steam Deck en
+/// mode bureau, 1280 × 800 ; petit portable), on la réduit à la zone utile de l'écran, sans
+/// passer sous la taille minimale, puis on la recentre.
+#[cfg(feature = "gui")]
+fn fit_to_screen(window: &tauri::WebviewWindow) {
+    let Ok(Some(monitor)) = window.current_monitor() else { return };
+    let scale = monitor.scale_factor();
+    let area = monitor.work_area().size.to_logical::<f64>(scale);
+    let Ok(size) = window.outer_size() else { return };
+    let size = size.to_logical::<f64>(scale);
+    if size.width <= area.width && size.height <= area.height {
+        return;
+    }
+    // 960 × 600 : taille minimale de la fenêtre (`tauri.conf.json`).
+    let width = size.width.min(area.width).max(960.0);
+    let height = size.height.min(area.height).max(600.0);
+    let _ = window.set_size(tauri::LogicalSize::new(width, height));
+    let _ = window.center();
 }

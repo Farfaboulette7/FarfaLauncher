@@ -28,7 +28,8 @@ function percent(n: number, total: number): number {
   return total > 0 ? Math.round((n / total) * 100) : 0;
 }
 
-export function AchievementsTab({ data }: { data: GameAchievements }) {
+/** `onLink` : ouvre les paramètres sur la partie RetroAchievements (lier son compte). */
+export function AchievementsTab({ data, onLink }: { data: GameAchievements; onLink?: () => void }) {
   const [friends, setFriends] = useState<FriendAchievements[] | null>(null);
   const [all, setAll] = useState(false);
 
@@ -74,9 +75,12 @@ export function AchievementsTab({ data }: { data: GameAchievements }) {
         </div>
       ) : (
         <p className="n-hint ach-hint">
-          Pour voir vos succès débloqués, indiquez votre pseudo RetroAchievements dans RomM : sur le site web de RomM, ouvrez
-          votre profil (votre avatar en haut), remplissez le champ RetroAchievements et enregistrez. Vos succès arrivent dans
-          l'heure, ou tout de suite avec « Rafraîchir » dans votre profil RomM.
+          Pour voir vos succès débloqués, liez votre compte RetroAchievements à RomM.{" "}
+          {onLink && (
+            <button className="n-link" onClick={onLink}>
+              Lier mon compte dans les paramètres
+            </button>
+          )}
         </p>
       )}
 
