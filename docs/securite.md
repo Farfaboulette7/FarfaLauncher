@@ -291,15 +291,19 @@ Outils passés :
   (voir SL2). Le jeton RomM d'un administrateur, gardé par le launcher, permet maintenant d'en
   écrire une à distance.
 - Protections (dans le gestionnaire, le launcher ne décide rien) : compte `admin` revérifié
-  auprès de RomM toutes les 60 s ; écriture seulement depuis le réseau local de la maison (adresse
-  vue par le proxy, un seul élément dans `X-Forwarded-For` ; jamais par le VPN) ;
+  auprès de RomM toutes les 60 s ; écriture seulement depuis le réseau local de la maison,
+  depuis n'importe quel appareil de la maison (DNS local), pas par le VPN (adresse vue par le
+  proxy, un seul élément dans `X-Forwarded-For`) ;
   fiche validée avant d'être écrite (clé inconnue refusée) ; noms de fichiers
   contrôlés (des deux côtés) ; ancienne version gardée ; jamais de suppression (retirer =
   renommer, sans écraser) ; alerte Discord à chaque écriture (compte, adresse, fichier, nombre de
   lignes changées : jamais le contenu des fiches).
 - Ce qui reste : un jeu ou émulateur piégé lancé sur le PC de l'administrateur lit le jeton
-  (SL11) et, depuis la maison, peut écrire une fiche. L'alerte Discord et l'historique
-  permettent de le voir et de revenir en arrière (runbook du gestionnaire, §16).
+  (SL11) et, depuis la maison, peut écrire une fiche. Risque accepté par le propriétaire : un
+  appareil du VPN du propriétaire qui joint directement le port du gestionnaire peut forger une
+  adresse de la maison (il lui faut quand même un jeton admin ; détails dans le `docs/securite.md`
+  du gestionnaire, SG18). L'alerte Discord et l'historique permettent de le voir et de revenir en
+  arrière (runbook du gestionnaire, §16).
 - Aucun nouveau scope RomM : l'écran utilise le même jeton et `GET /api/me` du gestionnaire.
 - Tests : `commands::fiches::tests` (noms refusés et encodés, message du gestionnaire affiché).
 

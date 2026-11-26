@@ -109,10 +109,11 @@ gestionnaire (`recomps/<Nom>.txt`, `emulateurs/<id>.txt`), lues et modifiées sa
   refusée par le gestionnaire plutôt qu'écrasée.
 - Hors de la maison (`modification: false`), le message « Modification possible seulement
   depuis la maison » s'affiche, avec l'adresse vue par le gestionnaire, et les boutons d'écriture
-  sont désactivés. L'écriture ne marche **que depuis la maison**, et seulement si le PC joint le
-  gestionnaire directement sur le réseau local : une ligne dans le fichier `hosts` du PC qui mène
-  le nom du gestionnaire à l'adresse locale du NAS (sinon la box renvoie la connexion avec son
-  adresse publique). Pas par le VPN. Procédure exacte : `docs/ajouter-un-jeu.md` du gestionnaire.
+  sont désactivés. L'écriture ne marche **que depuis la maison**, mais depuis **n'importe quel
+  appareil de la maison** : le DNS local de la maison mène le nom du gestionnaire à l'adresse du
+  NAS sur le réseau local (sinon la box renvoie la connexion avec son adresse publique). Pas par
+  le VPN du propriétaire (choix du propriétaire). Réglage et vérification :
+  `docs/ajouter-un-jeu.md` du gestionnaire.
 
 #### Onglet « Ajouter un jeu »
 
@@ -127,7 +128,7 @@ gestionnaire (`recomps/<Nom>.txt`, `emulateurs/<id>.txt`), lues et modifiées sa
 - Recherche (sans accents ni majuscules, 200 lignes au plus), console choisie avec `Choice`
   (proposée d'après l'extension), sous-dossier facultatif (jeu PC : un dossier au nom du jeu),
   cible affichée (`roms/<console>/…`), rappels de `docs/ajouter-un-jeu.md` (jeu PC, R8…).
-- « Ajouter à RomM » (`POST /api/ajouts/demandes`, maison seulement, comme les fiches) dépose une
+- « Ajouter à RomM » (`POST /api/ajouts/demandes`, depuis n'importe quel appareil de la maison, pas par le VPN, comme les fiches) dépose une
   demande. Le PC la traite à son prochain passage (3 min) : lien physique par SSH, scan RomM de
   cette console, puis « fait » ou « échec » avec la raison. Le suivi (`GET /api/ajouts/demandes`)
   est relu toutes les 15 s tant qu'une demande attend. PC éteint (`pcEnLigne`, même signal que
