@@ -271,6 +271,15 @@ RomM 5.4.0 a des **sessions de jeu par utilisateur**
   date `updated_at` du serveur évite de retélécharger l'archive quand rien n'a changé.
 - Scopes : `assets.read` / `assets.write` ; un token plus ancien reçoit 403, traité comme
   pour les favoris (reconnexion proposée, sans déconnexion forcée).
+- **Historique** (phase 3) : aucune nouvelle route RomM. RomM 5.4.1 sait garder plusieurs
+  versions d'une sauvegarde (`POST /api/saves?…&slot=<nom>&autocleanup=true&autocleanup_limit=N`
+  : chaque envoi devient un fichier `nom [AAAA-MM-JJ_HH-MM-SS].zip`, les plus anciennes sont
+  effacées par RomM, plafond `MAX_SAVES_PER_SLOT` = 50), mais ce n'est **pas** utilisé :
+  l'appareil d'une version n'y est connu qu'avec `device_id` (scope `devices.write`, nouveau
+  scope = reconnexion de tous), et un launcher d'avant (qui cherche `farfa-save.zip` exactement)
+  ne verrait plus les nouvelles sauvegardes. L'historique est tenu par FarfaRomManager
+  (`docs/architecture.md` §5). Notes de lecture : `content_hash` d'un `SaveSchema` est un MD5
+  (du contenu du zip, entrée par entrée), pas comparable au SHA-1 du gestionnaire.
 
 ---
 

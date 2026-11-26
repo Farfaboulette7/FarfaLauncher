@@ -124,9 +124,24 @@ Pour revenir en arrière :
 
 - copie locale : recopier le contenu d'un dossier de `.farfalauncher\backups\` dans le dossier
   des sauvegardes du jeu, launcher fermé ;
-- copie du serveur : sur la fiche du jeu, *Historique des sauvegardes…* puis *Restaurer*
-  (seulement les jeux dont la sauvegarde est gardée par le gestionnaire ; RomM ne garde que la
-  dernière). La sauvegarde actuelle passe d'abord dans l'historique.
+- copie du serveur : sur la fiche du jeu, *Historique des sauvegardes…*, choisir une version
+  (date, appareil, taille), *Restaurer…* puis *Restaurer*. Sur le Steam Deck : onglet
+  Sauvegardes du jeu dans NieRDeck, appuyer deux fois sur la version. Marche pour les recomps
+  et, depuis la phase 3, pour les jeux d'émulateur et les jeux PC (10 versions gardées par jeu).
+  Rien n'est perdu : la sauvegarde actuelle du serveur passe d'abord dans l'historique, et
+  celle de l'appareil est copiée dans `.farfalauncher\backups\`.
+- « Pas d'historique pour ce jeu » sur un jeu d'émulateur : le gestionnaire n'est pas encore à
+  jour (il refuse `PUT /api/saves/jeux.romm/<id>`), ou aucun gestionnaire n'est configuré.
+  L'historique d'un jeu d'émulateur ne commence qu'avec ce launcher : les versions remplacées
+  avant n'existent plus (RomM ne garde que la dernière).
+- Restauration impossible sur un jeu d'émulateur (erreur) : le launcher n'a pas pu recopier la
+  sauvegarde actuelle de RomM dans l'historique (réseau, quota de 10 Go des copies RomM du compte, disque du
+  NAS) ; il s'arrête alors sans rien changer. Voir le journal (`copiée sur le gestionnaire`,
+  `non comparée à sa copie`).
+- À la main, sans launcher (administrateur) : les versions d'un jeu d'émulateur sont dans
+  `data/saves/<compte RomM>/jeux.romm/<id RomM>/historique/<date>.zip` du gestionnaire. Les
+  télécharger et dézipper dans le dossier des sauvegardes du jeu, launcher fermé. Ne rien
+  effacer dans `data/`.
 
 Le dossier des sauvegardes se change sur la fiche du jeu (*Dossier des sauvegardes…*). Sur
 le Steam Deck (NieRDeck), il n'y a pas de question : la plus récente gagne.

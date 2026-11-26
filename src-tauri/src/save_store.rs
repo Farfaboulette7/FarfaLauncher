@@ -1,13 +1,19 @@
 //! Où vit la sauvegarde d'un jeu : sur RomM, ou sur FarfaRomManager pour une recomp, dont la
 //! fiche RomM peut disparaître. La première fois, celle d'une recomp est reprise de RomM.
+//!
+//! Historique : FarfaRomManager garde les 10 versions précédentes de chaque sauvegarde. Pour un
+//! jeu gardé par RomM (émulateur, jeu PC), RomM reste la référence ; le launcher envoie en plus
+//! une copie de chaque sauvegarde au gestionnaire (`api/saves/jeux.romm/<id RomM>`), qui en tient
+//! l'historique comme pour une recomp (docs/architecture.md §5).
 
-use std::collections::BTreeSet;
-use std::path::Path;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use reqwest::header::HeaderValue;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
+use sha1::{Digest, Sha1};
 
 use crate::error::{log_err, AppError, AppResult};
 use crate::install::state::InstalledGame;
@@ -21,6 +27,14 @@ const UPLOAD_TIMEOUT: Duration = Duration::from_secs(600);
 const DEVICE_HEADER: &str = "X-Farfa-Device";
 /// Jeux déjà contrôlés pour la reprise depuis RomM.
 const IMPORTED_FILE: &str = "recomp-saves-imported.json";
+/// « Recomp » du gestionnaire sous laquelle il garde la copie des sauvegardes RomM (le point la
+/// rend impossible pour une vraie recomp).
+const ROMM_GAMES: &str = "jeux.romm";
+/// En-tête par lequel le gestionnaire dit qu'il tient l'historique des sauvegardes RomM.
+const ROMM_HISTORY_HEADER: &str = "X-Farfa-Historique-Romm";
+/// Par jeu, date RomM (`updated_at`) de la dernière sauvegarde dont la copie est à jour sur le
+/// gestionnaire : ouvrir l'historique ne retélécharge pas une sauvegarde déjà comparée.
+const COPIED_FILE: &str = "romm-saves-copied.json";
 
 /// Sauvegarde présente sur le serveur.
 pub struct RemoteSave {
@@ -33,6 +47,9 @@ pub struct RemoteSave {
 #[serde(rename_all = "camelCase")]
 struct ManagerSave {
     updated_at: String,
+    /// SHA-1 de l'archive.
+    #[serde(default)]
+    sha1: Option<String>,
 }
 
 /// Version précédente d'une sauvegarde, gardée par FarfaRomManager.
@@ -69,10 +86,13 @@ fn device_header() -> Option<HeaderValue> {
 }
 
 pub enum SaveStore {
-    Romm { client: RommClient, rom_id: i64 },
+    /// Sauvegarde gardée par RomM. `history` : sa copie sur le gestionnaire, qui en tient
+    /// l'historique (absente si aucun gestionnaire n'est configuré). `memo` : `COPIED_FILE`.
+    Romm { client: RommClient, rom_id: i64, history: Option<RecompSave>, memo: PathBuf },
     Recomp(RecompSave),
 }
 
+/// Sauvegarde gardée par FarfaRomManager : celle d'une recomp, ou la copie d'une sauvegarde RomM.
 pub struct RecompSave {
     romm: RommClient,
     manager: RommClient,
@@ -107,16 +127,21 @@ fn key_for_rom(catalog: &Catalog, rom_id: i64) -> Option<(String, String)> {
 }
 
 impl SaveStore {
-    pub fn of(catalog: &Catalog, settings: &Settings, client: RommClient, st: &InstalledGame) -> Self {
+    pub fn of(config_dir: &Path, catalog: &Catalog, settings: &Settings, client: RommClient, st: &InstalledGame) -> Self {
+        let memo = config_dir.join(COPIED_FILE);
         match (recomp_key(catalog, st), manager::base_url(settings)) {
             (Some((recomp, game)), Some(base)) => SaveStore::Recomp(RecompSave::new(client, &base, catalog.old_save_id(st.rom_id), &recomp, &game)),
-            _ => SaveStore::Romm { client, rom_id: st.rom_id },
+            (None, base) => {
+                let history = base.map(|b| RecompSave::romm_copy(client.clone(), &b, st.rom_id));
+                SaveStore::Romm { client, rom_id: st.rom_id, history, memo }
+            }
+            (Some(_), None) => SaveStore::Romm { client, rom_id: st.rom_id, history: None, memo },
         }
     }
 
     pub async fn find(&self) -> AppResult<Option<RemoteSave>> {
         match self {
-            SaveStore::Romm { client, rom_id } => Ok(romm::find(client, *rom_id).await?.map(|s| RemoteSave { updated_at: s.updated_at.clone(), romm: Some(s) })),
+            SaveStore::Romm { client, rom_id, .. } => Ok(romm::find(client, *rom_id).await?.map(|s| RemoteSave { updated_at: s.updated_at.clone(), romm: Some(s) })),
             SaveStore::Recomp(save) => match save.find().await? {
                 Some(found) => Ok(Some(found)),
                 None => save.import_from_romm().await,
@@ -135,15 +160,40 @@ impl SaveStore {
     /// Remplace la sauvegarde du serveur ; renvoie sa nouvelle date.
     pub async fn upload(&self, zip: Vec<u8>) -> AppResult<String> {
         match self {
-            SaveStore::Romm { client, rom_id } => Ok(romm::upload(client, *rom_id, zip).await?.updated_at),
+            SaveStore::Romm { client, rom_id, history, memo } => {
+                let copy = history.as_ref().map(|_| zip.clone());
+                let updated_at = romm::upload(client, *rom_id, zip).await?.updated_at;
+                // Copie pour l'historique : son échec n'empêche jamais l'envoi, RomM a déjà la
+                // sauvegarde (elle sera recopiée à la prochaine lecture de l'historique).
+                if let (Some(history), Some(copy)) = (history, copy) {
+                    match history.send_copy(copy, true).await {
+                        Ok(true) => remember_copy(memo, *rom_id, &updated_at),
+                        Ok(false) => tracing::info!("gestionnaire sans historique des sauvegardes RomM (pas encore à jour)"),
+                        Err(e) => tracing::warn!("sauvegarde du jeu {rom_id} non copiée pour l'historique ({})", e.code()),
+                    }
+                }
+                Ok(updated_at)
+            }
             SaveStore::Recomp(save) => save.upload(zip).await,
         }
     }
 
-    /// Versions précédentes ; `None` : pas d'historique (sauvegarde gardée par RomM, qui la remplace).
+    /// Versions précédentes ; `None` : pas d'historique (aucun gestionnaire, ou gestionnaire d'avant
+    /// l'historique des sauvegardes RomM).
     pub async fn history(&self) -> AppResult<Option<Vec<SaveVersion>>> {
         match self {
-            SaveStore::Romm { .. } => Ok(None),
+            SaveStore::Romm { history: None, .. } => Ok(None),
+            SaveStore::Romm { client, rom_id, history: Some(history), memo } => {
+                // Rapide : une sauvegarde RomM déjà comparée depuis cet appareil n'est pas retéléchargée.
+                match copy_romm_current(client, *rom_id, history, memo, true).await {
+                    Ok(true) => {}
+                    Ok(false) => return Ok(None),
+                    // Simple lecture : la liste reste utile. La restauration, elle, refait ce
+                    // contrôle en entier et s'arrête s'il échoue.
+                    Err(e) => tracing::warn!("sauvegarde RomM du jeu {rom_id} non comparée à sa copie ({})", e.code()),
+                }
+                history.romm_history().await
+            }
             SaveStore::Recomp(save) => save.history().await.map(Some),
         }
     }
@@ -151,10 +201,85 @@ impl SaveStore {
     /// Remet une version précédente en place sur le serveur (l'actuelle passe dans l'historique).
     pub async fn restore(&self, version: &str) -> AppResult<String> {
         match self {
-            SaveStore::Romm { .. } => Err(AppError::NotAvailable),
+            SaveStore::Romm { history: None, .. } => Err(AppError::NotAvailable),
+            SaveStore::Romm { client, rom_id, history: Some(history), memo } => {
+                // D'abord, la sauvegarde actuelle de RomM doit être dans la copie du gestionnaire :
+                // sinon elle serait écrasée sans passer dans l'historique. Au moindre doute
+                // (erreur, gestionnaire pas à jour), on s'arrête sans rien changer. Contrôle
+                // complet (téléchargement et SHA-1), sans se fier au mémo.
+                if !copy_romm_current(client, *rom_id, history, memo, false).await? {
+                    return Err(AppError::NotAvailable);
+                }
+                // Sur le gestionnaire : l'actuelle passe dans l'historique, la version choisie la remplace.
+                history.restore(version).await?;
+                // Puis sur RomM, qui reste la référence. En cas d'échec ici, RomM garde l'actuelle,
+                // qui est aussi dans l'historique : rien n'est perdu, on peut recommencer.
+                let zip = history.download().await?;
+                let updated_at = romm::upload(client, *rom_id, zip).await?.updated_at;
+                // La copie du gestionnaire est cette version : rien à recomparer.
+                remember_copy(memo, *rom_id, &updated_at);
+                Ok(updated_at)
+            }
             SaveStore::Recomp(save) => save.restore(version).await,
         }
     }
+}
+
+fn sha1_hex(bytes: &[u8]) -> String {
+    format!("{:x}", Sha1::digest(bytes))
+}
+
+/// Copie la sauvegarde actuelle de RomM sur le gestionnaire si sa copie diffère (sauvegarde
+/// envoyée par un ancien launcher, ou copie qui avait échoué) : l'ancienne copie passe dans
+/// l'historique. Rend `false` si le gestionnaire n'a pas l'historique des sauvegardes RomM.
+/// `quick` : rien n'est téléchargé si cette sauvegarde RomM (sa date) est déjà notée comme copiée.
+async fn copy_romm_current(client: &RommClient, rom_id: i64, history: &RecompSave, memo: &Path, quick: bool) -> AppResult<bool> {
+    let Some(current) = romm::find(client, rom_id).await? else { return Ok(true) };
+    if quick && copied_date(memo, rom_id).as_deref() == Some(current.updated_at.as_str()) {
+        return Ok(true);
+    }
+    let zip = romm::download(client, &current).await?;
+    let copied = history.info().await?.and_then(|s| s.sha1);
+    let up_to_date = if needs_copy(copied.as_deref(), &zip) {
+        tracing::info!("sauvegarde RomM du jeu {rom_id} copiée sur le gestionnaire pour l'historique");
+        // Sans nom d'appareil : elle ne vient pas forcément de celui-ci.
+        history.send_copy(zip, false).await?
+    } else {
+        true
+    };
+    if up_to_date {
+        remember_copy(memo, rom_id, &current.updated_at);
+    }
+    Ok(up_to_date)
+}
+
+/// Mémo `COPIED_FILE` ; illisible ou absent : vide (tout sera recomparé, rien n'est perdu).
+fn read_memo(memo: &Path) -> BTreeMap<String, String> {
+    std::fs::read_to_string(memo).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+}
+
+fn copied_date(memo: &Path, rom_id: i64) -> Option<String> {
+    read_memo(memo).remove(&rom_id.to_string())
+}
+
+/// Note que la copie du gestionnaire est la sauvegarde RomM de cette date. Un échec d'écriture
+/// coûte seulement un téléchargement de plus à la prochaine ouverture de l'historique.
+fn remember_copy(memo: &Path, rom_id: i64, updated_at: &str) {
+    let mut copied = read_memo(memo);
+    copied.insert(rom_id.to_string(), updated_at.to_string());
+    match serde_json::to_string(&copied) {
+        Ok(text) => {
+            if let Err(e) = std::fs::write(memo, text) {
+                tracing::warn!("copie de la sauvegarde non mémorisée: {e}");
+            }
+        }
+        Err(e) => tracing::warn!("copie de la sauvegarde non mémorisée: {e}"),
+    }
+}
+
+/// La copie du gestionnaire (son SHA-1) n'est pas cette sauvegarde.
+fn needs_copy(copied_sha1: Option<&str>, zip: &[u8]) -> bool {
+    copied_sha1 != Some(sha1_hex(zip).as_str())
 }
 
 impl RecompSave {
@@ -163,13 +288,36 @@ impl RecompSave {
         Self { romm, manager, rom_id, path: format!("api/saves/{recomp}/{game}") }
     }
 
+    /// Copie de la sauvegarde RomM d'un jeu, gardée par le gestionnaire pour l'historique.
+    fn romm_copy(romm: RommClient, manager_base: &str, rom_id: i64) -> Self {
+        Self::new(romm, manager_base, None, ROMM_GAMES, &rom_id.to_string())
+    }
+
     pub async fn find(&self) -> AppResult<Option<RemoteSave>> {
+        Ok(self.info().await?.map(|save| RemoteSave { updated_at: save.updated_at, romm: None }))
+    }
+
+    async fn info(&self) -> AppResult<Option<ManagerSave>> {
         let resp = self.manager.get(&self.path).send().await.map_err(|e| log_err(AppError::ServerUnreachable, "requête HTTP", error_chain(&e)))?;
         if resp.status() == StatusCode::NOT_FOUND {
             return Ok(None);
         }
-        let save: ManagerSave = parse_json(self.manager.check(resp).await?).await?;
-        Ok(Some(RemoteSave { updated_at: save.updated_at, romm: None }))
+        Ok(Some(parse_json(self.manager.check(resp).await?).await?))
+    }
+
+    /// Envoie la copie d'une sauvegarde RomM (`device` : avec le nom de cet appareil). `false` :
+    /// le gestionnaire refuse ce chemin (404), il n'a pas encore l'historique des sauvegardes RomM.
+    async fn send_copy(&self, zip: Vec<u8>, device: bool) -> AppResult<bool> {
+        let mut req = self.manager.put_bytes(&self.path, zip).timeout(UPLOAD_TIMEOUT);
+        if let Some(name) = device_header().filter(|_| device) {
+            req = req.header(DEVICE_HEADER, name);
+        }
+        let resp = req.send().await.map_err(|e| log_err(AppError::ServerUnreachable, "requête HTTP", error_chain(&e)))?;
+        if resp.status() == StatusCode::NOT_FOUND {
+            return Ok(false);
+        }
+        self.manager.check(resp).await?;
+        Ok(true)
     }
 
     pub async fn download(&self) -> AppResult<Vec<u8>> {
@@ -189,6 +337,16 @@ impl RecompSave {
 
     pub async fn history(&self) -> AppResult<Vec<SaveVersion>> {
         self.manager.get_json(&format!("{}/history", self.path)).await
+    }
+
+    /// Historique d'une copie de sauvegarde RomM ; `None` : gestionnaire d'avant, qui répond une
+    /// liste vide sans l'en-tête `ROMM_HISTORY_HEADER` (il ne garde pas ces copies).
+    async fn romm_history(&self) -> AppResult<Option<Vec<SaveVersion>>> {
+        let resp = self.manager.send(self.manager.get(&format!("{}/history", self.path))).await?;
+        if !resp.headers().contains_key(ROMM_HISTORY_HEADER) {
+            return Ok(None);
+        }
+        parse_json(resp).await.map(Some)
     }
 
     pub async fn restore(&self, version: &str) -> AppResult<String> {
@@ -289,6 +447,42 @@ mod tests {
             assert!(h.to_str().is_ok());
             assert!(h.len() <= 64);
         }
+    }
+
+    #[test]
+    fn romm_saves_are_copied_only_when_different() {
+        let zip = b"PK\x03\x04sauvegarde";
+        assert!(!needs_copy(Some(&sha1_hex(zip)), zip));
+        assert!(needs_copy(Some(&sha1_hex(b"PK\x03\x04autre")), zip));
+        // Pas encore de copie, ou gestionnaire sans SHA-1 : on copie (il dédoublonne lui-même).
+        assert!(needs_copy(None, zip));
+        assert_eq!(sha1_hex(b"abc"), "a9993e364706816aba3e25717850c26c9cd0d89d");
+    }
+
+    #[test]
+    fn remembers_the_copied_romm_saves() {
+        let dir = std::env::temp_dir().join(format!("farfa-memo-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let memo = dir.join(COPIED_FILE);
+        assert_eq!(copied_date(&memo, 7), None);
+        remember_copy(&memo, 7, "2026-11-26T10:00:00+00:00");
+        remember_copy(&memo, 8, "2026-11-26T11:00:00+00:00");
+        remember_copy(&memo, 7, "2026-11-26T12:00:00+00:00");
+        assert_eq!(copied_date(&memo, 7).as_deref(), Some("2026-11-26T12:00:00+00:00"));
+        assert_eq!(copied_date(&memo, 8).as_deref(), Some("2026-11-26T11:00:00+00:00"));
+        // Mémo abîmé : vide, donc tout est recomparé.
+        std::fs::write(&memo, "{pas du json").unwrap();
+        assert_eq!(copied_date(&memo, 7), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn romm_copies_have_their_own_path() {
+        let client = RommClient::new("https://romm.exemple.fr", None).unwrap();
+        let copy = RecompSave::romm_copy(client, "https://manager.exemple.fr", 42);
+        assert_eq!(copy.path, "api/saves/jeux.romm/42");
+        // Jamais de reprise depuis RomM pour une copie : c'est déjà la sauvegarde RomM.
+        assert_eq!(copy.rom_id, None);
     }
 
     #[test]

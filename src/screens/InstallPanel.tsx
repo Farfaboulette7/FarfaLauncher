@@ -2040,7 +2040,7 @@ function SaveHistoryDialog({
           <span className="n-spinner" /> Lecture de l'historique…
         </p>
       ) : versions === null ? (
-        <p>La sauvegarde de {name} est gardée par RomM, qui ne conserve que la dernière : pas d'historique pour ce jeu.</p>
+        <p>Pas d'historique pour {name} : le serveur ne garde pas encore les versions précédentes de cette sauvegarde.</p>
       ) : versions.length === 0 ? (
         !error && <p>Pas encore de version précédente : elles apparaissent quand une nouvelle sauvegarde remplace l'ancienne.</p>
       ) : (
