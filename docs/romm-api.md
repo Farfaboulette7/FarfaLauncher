@@ -108,6 +108,9 @@ dans RomM). Les scopes accordés = demandés ∩ droits du compte (l'ami peut en
 | `collections.read` / `collections.write` | favoris = collection « favoris » de l'ami (§5). Un token créé avant les favoris reçoit 403 : le launcher propose de se reconnecter | oui (favoris) |
 | `assets.read` / `assets.write` | sauvegardes du joueur (§7) | oui (sauvegardes) |
 
+Les succès RetroAchievements (§8) n'ajoutent aucun scope : `roms.read` et `me.read` suffisent.
+Seul leur rafraîchissement depuis le launcher demanderait `me.write` (non demandé).
+
 Les jaquettes, captures et livrets scrapés ne demandent pas `assets.read` : ce sont des fichiers
 statiques servis sans authentification (voir §4).
 
@@ -268,6 +271,53 @@ RomM 5.4.0 a des **sessions de jeu par utilisateur**
   date `updated_at` du serveur évite de retélécharger l'archive quand rien n'a changé.
 - Scopes : `assets.read` / `assets.write` ; un token plus ancien reçoit 403, traité comme
   pour les favoris (reconnexion proposée, sans déconnexion forcée).
+
+---
+
+## 8. Succès RetroAchievements (RomM 5.4.1)
+
+(`backend/handler/metadata/ra_handler.py`, `backend/endpoints/user.py`,
+`backend/endpoints/roms/__init__.py`, `backend/models/rom.py`,
+`backend/tasks/scheduled/sync_retroachievements_progress.py`.) Lu par `achievements.rs`,
+section « Succès » de l'onglet Informations, commande `succes` du moteur du Deck.
+
+- **Succès d'un jeu** : `GET /api/roms/{id}/simple` (`roms.read`, version légère de
+  `/api/roms/{id}`, sans sauvegardes ni fichiers ; ~0,2 s pour 242 succès). Champs :
+  - `ra_id` : identifiant RetroAchievements du jeu (`null` = pas de succès, la section est
+    cachée) ;
+  - `merged_ra_metadata.achievements[]` : `ra_id`, `title`, `description`, `points`,
+    `num_awarded`, `num_awarded_hardcore`, `badge_id` (nom du badge), `badge_url` /
+    `badge_url_lock` (site RetroAchievements), `badge_path` / `badge_path_lock` (copie sur
+    RomM, `/assets/romm/resources/roms/<plateforme>/<rom>/retroachievements/badges/<badge>.png`
+    et `<badge>_lock.png`, fichiers statiques sans authentification), `display_order`, `type`
+    (`progression`, `win_condition`, `missable` ou vide). Déjà triés par `display_order`.
+  - Le launcher prend les images de RomM (`badge_path`), en cache local par `image_path`
+    comme les jaquettes (`$APPCACHE/cache/images`) : jamais le site RetroAchievements.
+- **Progression du joueur** : `GET /api/users/me` (`me.read`) :
+  - `ra_username` : pseudo RetroAchievements saisi par le joueur dans son profil RomM (vide =
+    rien à montrer, la section l'explique) ;
+  - `ra_progression.results[]` : `rom_ra_id`, `max_possible`, `num_awarded`,
+    `num_awarded_hardcore`, `most_recent_awarded_date` (RFC 3339), `highest_award_kind`
+    (`mastered`, `completed`, `beaten-hardcore`, `beaten-softcore` ou `null`),
+    `earned_achievements[]` = `{id, date, date_hardcore?}`.
+  - **Piège** : `earned_achievements[].id` est le **nom du badge** (`badge_id`), pas
+    l'identifiant du succès. Les dates y sont au format RetroAchievements
+    (`2026-08-30 22:10:38`, UTC) ; le launcher les convertit en RFC 3339.
+- **Mise à jour de la progression** : RomM ne la relit pas tout seul.
+  - `POST /api/users/{id}/ra/refresh` (corps `{"incremental": true}`) demande **`me.write`**,
+    que le jeton du launcher n'a pas (§1.5) : le launcher ne l'appelle pas. Ajouter ce scope
+    forcerait tous les joueurs à se reconnecter.
+  - Le joueur clique « Rafraîchir » dans son profil RomM (site web), ou l'administrateur active
+    la tâche planifiée de RomM : variables `ENABLE_SCHEDULED_RETROACHIEVEMENTS_PROGRESS_SYNC=true`
+    et `SCHEDULED_RETROACHIEVEMENTS_PROGRESS_SYNC_CRON` (défaut `0 4 * * *`). Elle est
+    **désactivée** sur notre serveur au 2026-11-26 (absente de `GET /api/tasks`).
+- **Les autres comptes** : `GET /api/users` (`users.read`, avec `ra_progression` de chacun)
+  est réservé à l'administrateur. Le gestionnaire le lit déjà pour la liste des amis et
+  redonne le résumé par jeu : `GET /api/succes/jeux/<ra_id>` du gestionnaire →
+  `[{id, username, avatar, earned, earnedHardcore, total, award, last}]` (sans le joueur
+  lui-même ; 404 avec un gestionnaire plus ancien, et la section s'affiche sans les amis).
+- Autres routes RA de RomM, non utilisées : `GET /api/roms/by-metadata-provider?ra_id=` (une
+  ROM par identifiant RetroAchievements), `GET /api/roms/by-hash?ra_hash=`.
 
 ---
 
