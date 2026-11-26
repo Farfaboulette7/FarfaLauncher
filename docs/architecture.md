@@ -107,14 +107,12 @@ gestionnaire (`recomps/<Nom>.txt`, `emulateurs/<id>.txt`), lues et modifiées sa
   affiché a été vérifié valide), « Retirer » (en deux clics) / « Remettre en service ».
   L'enregistrement renvoie l'empreinte de la version ouverte : une fiche changée entre-temps est
   refusée par le gestionnaire plutôt qu'écrasée.
-- Hors de la maison et du VPN (`modification: false`), le message « Modification possible
-  seulement depuis la maison ou le VPN » s'affiche, avec l'adresse vue par le gestionnaire, et les
-  boutons d'écriture sont désactivés. L'écriture marche depuis **tout appareil du réseau local de
-  la maison ou du VPN du propriétaire** (choix du propriétaire), avec un compte RomM admin. Il faut
-  que l'appareil joigne le gestionnaire directement : le DNS de la maison et celui du VPN mènent
-  son nom à l'adresse du NAS sur ce réseau (sinon la box renvoie la connexion avec son adresse
-  publique), et le client VPN du NAS doit faire voir l'adresse VPN de l'appareil. Ces réglages du
-  réseau et leur vérification : `docs/ajouter-un-jeu.md` du gestionnaire.
+- Hors de la maison (`modification: false`), le message « Modification possible seulement
+  depuis la maison » s'affiche, avec l'adresse vue par le gestionnaire, et les boutons d'écriture
+  sont désactivés. L'écriture ne marche **que depuis la maison**, et seulement si le PC joint le
+  gestionnaire directement sur le réseau local : une ligne dans le fichier `hosts` du PC qui mène
+  le nom du gestionnaire à l'adresse locale du NAS (sinon la box renvoie la connexion avec son
+  adresse publique). Pas par le VPN. Procédure exacte : `docs/ajouter-un-jeu.md` du gestionnaire.
 
 #### Onglet « Ajouter un jeu »
 
@@ -129,7 +127,7 @@ gestionnaire (`recomps/<Nom>.txt`, `emulateurs/<id>.txt`), lues et modifiées sa
 - Recherche (sans accents ni majuscules, 200 lignes au plus), console choisie avec `Choice`
   (proposée d'après l'extension), sous-dossier facultatif (jeu PC : un dossier au nom du jeu),
   cible affichée (`roms/<console>/…`), rappels de `docs/ajouter-un-jeu.md` (jeu PC, R8…).
-- « Ajouter à RomM » (`POST /api/ajouts/demandes`, depuis la maison ou le VPN seulement, comme les fiches) dépose une
+- « Ajouter à RomM » (`POST /api/ajouts/demandes`, maison seulement, comme les fiches) dépose une
   demande. Le PC la traite à son prochain passage (3 min) : lien physique par SSH, scan RomM de
   cette console, puis « fait » ou « échec » avec la raison. Le suivi (`GET /api/ajouts/demandes`)
   est relu toutes les 15 s tant qu'une demande attend. PC éteint (`pcEnLigne`, même signal que
@@ -148,7 +146,7 @@ gestionnaire (`recomps/<Nom>.txt`, `emulateurs/<id>.txt`), lues et modifiées sa
 La fenêtre a des onglets (`ONGLETS` dans `Fiches.tsx`, style `inbox-tabs` de la fenêtre Messages) :
 « Fiches » (ci-dessus) et « Service ». Ajouter un onglet : une ligne dans `ONGLETS`, une ligne
 `{onglet === "…" && <Composant />}` dans le rendu, et le composant dans son propre fichier. Le
-bandeau « Modification possible seulement depuis la maison ou le VPN » ne concerne que l'onglet « Fiches ».
+bandeau « Modification possible seulement depuis la maison » ne concerne que l'onglet « Fiches ».
 
 #### Onglet « Service » (tableau de bord du gestionnaire)
 

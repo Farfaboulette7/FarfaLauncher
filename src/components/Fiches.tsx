@@ -5,7 +5,7 @@
 // - La liste : état de chaque fiche (valide, invalide, retirée).
 // - `NewRecompForm` : formulaire des clés principales, qui produit le texte d'une nouvelle recomp.
 // - `FicheEditor` : texte de la fiche, numéros de ligne, « Vérifier » (validateur du gestionnaire)
-//   et « Enregistrer » (seulement une fois vérifiée, et seulement depuis la maison ou le VPN).
+//   et « Enregistrer » (seulement une fois vérifiée, et seulement depuis la maison).
 // - Onglets (`ONGLETS`) : « Fiches » (ce fichier), « Service » (tableau de bord du gestionnaire,
 //   `ServicePanel.tsx`) et « Ajouter un jeu » (Download Station vers RomM, `AddGamePanel.tsx`). Un nouvel onglet : une ligne dans ONGLETS et une ligne dans le rendu.
 // Le gestionnaire refait tous les contrôles (docs/securite.md des deux dépôts).
@@ -18,8 +18,8 @@ import { ServicePanel } from "./ServicePanel";
 import "./ReportsInbox.css";
 import "./Fiches.css";
 
-/** Message du gestionnaire quand l'adresse n'est ni celle de la maison ni celle du VPN. */
-const HORS_MAISON = "Modification possible seulement depuis la maison ou le VPN";
+/** Message du gestionnaire quand l'adresse n'est pas celle de la maison (le VPN ne suffit pas). */
+const HORS_MAISON = "Modification possible seulement depuis la maison";
 const DOSSIERS: { value: FicheDossier; label: string }[] = [
   { value: "recomps", label: "Recomps" },
   { value: "emulateurs", label: "Émulateurs" },
