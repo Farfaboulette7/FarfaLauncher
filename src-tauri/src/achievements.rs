@@ -1,4 +1,4 @@
-//! Succès RetroAchievements d'un jeu (section « Succès » de la page du jeu, commande `succes`
+//! Succès RetroAchievements d'un jeu (onglet « Succès » de la page du jeu, commande `succes`
 //! du moteur du Deck). Voir docs/romm-api.md §« Succès RetroAchievements ».
 //!
 //! Tout vient de RomM, avec les scopes déjà demandés (`roms.read`, `me.read`) :
@@ -7,8 +7,8 @@
 //! - ce que le joueur a débloqué : `ra_progression` de `GET /api/users/me`, rempli seulement si
 //!   le joueur a mis son pseudo RetroAchievements dans son profil RomM.
 //!
-//! RomM ne relit cette progression sur RetroAchievements que par « Rafraîchir » dans le profil
-//! RomM, ou par sa tâche planifiée (si l'administrateur l'a activée). Le launcher ne la
+//! RomM relit cette progression sur RetroAchievements par sa tâche planifiée (toutes les heures
+//! sur notre serveur), ou tout de suite par « Rafraîchir » dans le profil RomM. Le launcher ne la
 //! rafraîchit pas lui-même : la route demande le scope `me.write`, que son jeton n'a pas.
 //!
 //! La progression des amis vient du gestionnaire (`GET /api/succes/jeux/<raId>`), qui la lit

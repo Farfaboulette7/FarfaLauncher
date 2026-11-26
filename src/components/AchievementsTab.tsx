@@ -1,11 +1,11 @@
-// Section « Succès » de l'onglet Informations d'un jeu : succès RetroAchievements (lus dans
-// RomM), ceux que le joueur a débloqués, sa progression et celle de ses amis (gestionnaire).
-// Rien ne s'affiche si le jeu n'a pas de succès, ou si RomM ne répond pas.
+// Onglet « Succès » d'un jeu : succès RetroAchievements (lus dans RomM), ceux que le joueur a
+// débloqués, sa progression et celle de ses amis (gestionnaire). GameDetail lit les succès
+// (`backend.gameAchievements`) et ne montre l'onglet que si le jeu en a.
 import { useEffect, useState } from "react";
 import { Achievement, backend, FriendAchievements, GameAchievements } from "../api/backend";
 import { useCachedImage } from "../hooks/useCachedImage";
 import { PlayerAvatar } from "./FriendsMenu";
-import "./AchievementsSection.css";
+import "./AchievementsTab.css";
 
 /** Succès montrés avant « Voir tous les succès » (un jeu peut en avoir plus de 200). */
 const FIRST = 12;
@@ -28,8 +28,7 @@ function percent(n: number, total: number): number {
   return total > 0 ? Math.round((n / total) * 100) : 0;
 }
 
-export function AchievementsSection({ romId, refreshKey }: { romId: number; refreshKey?: unknown }) {
-  const [data, setData] = useState<GameAchievements | null>(null);
+export function AchievementsTab({ data }: { data: GameAchievements }) {
   const [friends, setFriends] = useState<FriendAchievements[] | null>(null);
   const [all, setAll] = useState(false);
 
@@ -38,26 +37,16 @@ export function AchievementsSection({ romId, refreshKey }: { romId: number; refr
     // Autre jeu : rien de l'ancien ne reste affiché (amis, liste dépliée).
     setFriends(null);
     setAll(false);
+    // Les amis viennent du gestionnaire : absent ou trop ancien, l'onglet reste sans eux.
     backend
-      .gameAchievements(romId)
-      .then((d) => {
-        if (!alive) return;
-        setData(d);
-        if (!d) return;
-        // Les amis viennent du gestionnaire : absent ou trop ancien, la section reste sans eux.
-        backend
-          .achievementsFriends(d.raId)
-          .then((f) => alive && setFriends(f))
-          .catch(() => alive && setFriends(null));
-      })
-      // Hors ligne ou RomM injoignable : pas de section (le reste de la page suffit).
-      .catch(() => alive && setData(null));
+      .achievementsFriends(data.raId)
+      .then((f) => alive && setFriends(f))
+      .catch(() => alive && setFriends(null));
     return () => {
       alive = false;
     };
-  }, [romId, refreshKey]);
+  }, [data.raId]);
 
-  if (!data) return null;
   const shown = all ? data.achievements : data.achievements.slice(0, FIRST);
 
   return (
@@ -78,15 +67,16 @@ export function AchievementsSection({ romId, refreshKey }: { romId: number; refr
           {data.lastUnlock && <p className="n-hint ach-hint">Dernier succès le {dateOf(data.lastUnlock)}.</p>}
           {!data.progressKnown && (
             <p className="n-hint ach-hint">
-              Aucune progression connue sur ce jeu. RomM relit vos succès quand vous cliquez « Rafraîchir » dans la partie
-              RetroAchievements de votre profil RomM (site web).
+              Aucune progression connue sur ce jeu. RomM relit vos succès toutes les heures ; pour les avoir tout de suite,
+              cliquez « Rafraîchir » dans la partie RetroAchievements de votre profil RomM (site web).
             </p>
           )}
         </div>
       ) : (
         <p className="n-hint ach-hint">
           Pour voir vos succès débloqués, indiquez votre pseudo RetroAchievements dans RomM : sur le site web de RomM, ouvrez
-          votre profil (votre avatar en haut), remplissez le champ RetroAchievements, enregistrez, puis cliquez « Rafraîchir ».
+          votre profil (votre avatar en haut), remplissez le champ RetroAchievements et enregistrez. Vos succès arrivent dans
+          l'heure, ou tout de suite avec « Rafraîchir » dans votre profil RomM.
         </p>
       )}
 

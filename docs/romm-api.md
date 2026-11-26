@@ -279,7 +279,7 @@ RomM 5.4.0 a des **sessions de jeu par utilisateur**
 (`backend/handler/metadata/ra_handler.py`, `backend/endpoints/user.py`,
 `backend/endpoints/roms/__init__.py`, `backend/models/rom.py`,
 `backend/tasks/scheduled/sync_retroachievements_progress.py`.) Lu par `achievements.rs`,
-section « Succès » de l'onglet Informations, commande `succes` du moteur du Deck.
+onglet « Succès » de la page du jeu, commande `succes` du moteur du Deck.
 
 - **Succès d'un jeu** : `GET /api/roms/{id}/simple` (`roms.read`, version légère de
   `/api/roms/{id}`, sans sauvegardes ni fichiers ; ~0,2 s pour 242 succès). Champs :
@@ -303,14 +303,20 @@ section « Succès » de l'onglet Informations, commande `succes` du moteur du D
   - **Piège** : `earned_achievements[].id` est le **nom du badge** (`badge_id`), pas
     l'identifiant du succès. Les dates y sont au format RetroAchievements
     (`2026-08-30 22:10:38`, UTC) ; le launcher les convertit en RFC 3339.
-- **Mise à jour de la progression** : RomM ne la relit pas tout seul.
+- **Mise à jour de la progression** : par la tâche planifiée de RomM, **toutes les heures**.
   - `POST /api/users/{id}/ra/refresh` (corps `{"incremental": true}`) demande **`me.write`**,
     que le jeton du launcher n'a pas (§1.5) : le launcher ne l'appelle pas. Ajouter ce scope
     forcerait tous les joueurs à se reconnecter.
-  - Le joueur clique « Rafraîchir » dans son profil RomM (site web), ou l'administrateur active
-    la tâche planifiée de RomM : variables `ENABLE_SCHEDULED_RETROACHIEVEMENTS_PROGRESS_SYNC=true`
-    et `SCHEDULED_RETROACHIEVEMENTS_PROGRESS_SYNC_CRON` (défaut `0 4 * * *`). Elle est
-    **désactivée** sur notre serveur au 2026-11-26 (absente de `GET /api/tasks`).
+  - Tâche planifiée de RomM « Scheduled RetroAchievements progress sync », pour tous les
+    comptes qui ont un pseudo : variables du conteneur RomM
+    `ENABLE_SCHEDULED_RETROACHIEVEMENTS_PROGRESS_SYNC=true` et
+    `SCHEDULED_RETROACHIEVEMENTS_PROGRESS_SYNC_CRON` (défaut `0 4 * * *`, une fois par jour).
+    Le propriétaire l'active **toutes les heures** (décision du 2026-11-26, par exemple
+    `0 * * * *`) ; désactivée, elle n'apparaît pas dans `GET /api/tasks`.
+  - Pour l'avoir tout de suite : « Rafraîchir » dans la partie RetroAchievements du profil RomM
+    (site web). L'onglet « Succès » le dit au joueur.
+  - Le gestionnaire relit `GET /api/users` toutes les 10 min : la progression d'un ami peut
+    donc avoir jusqu'à environ 1 h 10 de retard.
 - **Les autres comptes** : `GET /api/users` (`users.read`, avec `ra_progression` de chacun)
   est réservé à l'administrateur. Le gestionnaire le lit déjà pour la liste des amis et
   redonne le résumé par jeu : `GET /api/succes/jeux/<ra_id>` du gestionnaire →

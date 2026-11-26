@@ -76,7 +76,7 @@ fiches des recomps et des émulateurs) est décrit dans le dépôt du gestionnai
 | `App.tsx` | Choisit l'écran : connexion ou bibliothèque. Intro, fenêtre de mise à jour. |
 | `screens/Login.tsx` | Adresse du serveur, puis code appareil (ou code d'appairage, ou jeton collé). |
 | `screens/Library.tsx` | Bibliothèque : en-tête (joueur, actions), onglets, recherche, grille. Ouvre les Paramètres et la fiche d'un jeu. |
-| `screens/GameDetail.tsx` | Fiche d'un jeu, onglets Informations, Médias, Contrôles, Communauté. En bas de l'onglet Informations, `components/AchievementsSection.tsx` : succès RetroAchievements (rien si le jeu n'en a pas). |
+| `screens/GameDetail.tsx` | Fiche d'un jeu, onglets Informations, Médias, Contrôles, Succès, Communauté. L'onglet Succès (`components/AchievementsTab.tsx`, succès RetroAchievements) n'apparaît que si le jeu en a : `GameDetail` les lit à l'ouverture, après chaque partie et à chaque « Rafraîchir ». |
 | `screens/InstallPanel.tsx` | Installer, Jouer, Mettre à jour, Désinstaller, dossier des sauvegardes. |
 | `screens/ControlsTab.tsx` | Une manette par joueur. |
 | `screens/Settings.tsx`, `PcPanel.tsx` | Paramètres : Compte, Installation, Affichage, Sons, Émulateurs, Cache et dépannage, À propos (mises à jour, canal bêta). Informations du PC. |
@@ -180,8 +180,8 @@ chaque release.
 - Réglages, jeton (`token`, 0600) et journaux (`logs/`) dans `~/.config/farfalauncherdeck/`.
 - NieRDeck télécharge lui-même le moteur depuis la dernière release quand il est plus récent.
 - Conflit de sauvegarde sur le Deck : la plus récente gagne.
-- `succes <id>` donne les succès RetroAchievements d'un jeu (même contenu que la section du
-  launcher, plus `friends`) ; les badges se téléchargent avec `image`. L'écran de NieRDeck qui
+- `succes <id>` donne les succès RetroAchievements d'un jeu (même contenu que l'onglet Succès
+  du launcher, plus `friends`) ; les badges se téléchargent avec `image`. L'écran de NieRDeck qui
   les montre reste à faire.
 
 Conséquence : toucher à `play.rs`, `save_sync.rs`, `install/` ou `pc/`, c'est aussi toucher

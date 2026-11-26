@@ -1,6 +1,6 @@
 import { CSSProperties, lazy, ReactNode, Suspense, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { backend, formatPlaytime, Game, Manual, Platform, Target } from "../api/backend";
+import { backend, formatPlaytime, Game, GameAchievements, Manual, Platform, Target } from "../api/backend";
 import { InstallsState } from "../hooks/useInstalls";
 import { InstallFacts, InstallPanel, useCurrentMode } from "./InstallPanel";
 import { ControlsTab } from "./ControlsTab";
@@ -11,7 +11,7 @@ import { FullscreenButton } from "../components/FullscreenButton";
 import { MusicMenu } from "../components/MusicMenu";
 import { ReportsInbox } from "../components/ReportsInbox";
 import { CommunityTab } from "../components/CommunityTab";
-import { AchievementsSection } from "../components/AchievementsSection";
+import { AchievementsTab } from "../components/AchievementsTab";
 import { SubTabs } from "../components/SubTabs";
 import { useReveal } from "../reveal";
 import "./GameDetail.css";
@@ -19,7 +19,7 @@ import "./GameDetail.css";
 // pdf.js est lourd : chargé seulement à l'ouverture d'un livret.
 const PdfViewer = lazy(() => import("../components/PdfViewer").then((m) => ({ default: m.PdfViewer })));
 
-type Tab = "infos" | "medias" | "controles" | "communautaire";
+type Tab = "infos" | "medias" | "controles" | "succes" | "communautaire";
 
 interface Props {
   game: Game;
@@ -58,6 +58,27 @@ export function GameDetail({ game, platform, target, installs, favorite, onToggl
     contentDelay.current = "140ms";
   }, []);
 
+  // Succès RetroAchievements : l'onglet « Succès » n'existe que si le jeu en a. Relus après
+  // chaque partie et à chaque « Rafraîchir ». Hors ligne ou RomM injoignable : pas d'onglet.
+  // Gardés avec leur jeu : ceux d'un autre jeu ne s'affichent jamais, même un instant.
+  const [loaded, setLoaded] = useState<{ romId: number; data: GameAchievements | null } | null>(null);
+  const achievements = loaded?.romId === game.id ? loaded.data : null;
+  const lastSession = installs.lastSession.get(game.id);
+  useEffect(() => {
+    let alive = true;
+    backend
+      .gameAchievements(game.id)
+      .then((data) => alive && setLoaded({ romId: game.id, data }))
+      .catch(() => alive && setLoaded({ romId: game.id, data: null }));
+    return () => {
+      alive = false;
+    };
+  }, [game.id, lastSession, refreshKey]);
+  // L'onglet disparaît (autre jeu, serveur injoignable) : retour aux Informations.
+  useEffect(() => {
+    if (tab === "succes" && !achievements) setTab("infos");
+  }, [tab, achievements]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !document.querySelector(".lightbox, .gd-boxzoom, .pdf--full, .dialog-backdrop")) onBack();
@@ -70,6 +91,7 @@ export function GameDetail({ game, platform, target, installs, favorite, onToggl
     { id: "infos", label: "Informations" },
     { id: "medias", label: "Médias", count: game.screenshotUrls.length + game.manuals.length },
     { id: "controles", label: "Contrôles" },
+    ...(achievements ? [{ id: "succes" as Tab, label: "Succès", count: achievements.total }] : []),
     { id: "communautaire", label: "Communauté" },
   ];
 
@@ -161,6 +183,7 @@ export function GameDetail({ game, platform, target, installs, favorite, onToggl
             {tab === "infos" && <InfoTab game={game} target={target} installs={installs} onError={onError} />}
             {tab === "medias" && <MediaTab game={game} onError={onError} />}
             {tab === "controles" && <ControlsTab game={game} installs={installs} onError={onError} />}
+            {tab === "succes" && achievements && <AchievementsTab data={achievements} />}
             {tab === "communautaire" && <CommunityTab romId={game.id} refreshKey={installs.lastSession.get(game.id)} />}
           </div>
         </section>
@@ -253,7 +276,6 @@ function InfoTab({ game, target, installs, onError }: { game: Game; target: Targ
           </dl>
         </section>
       </div>
-      <AchievementsSection romId={game.id} refreshKey={refreshKey} />
       {manualOpen && createPortal(<ManualFull game={game} onError={onError} onClose={() => setManualOpen(false)} />, document.body)}
     </div>
   );

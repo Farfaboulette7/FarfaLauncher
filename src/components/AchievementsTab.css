@@ -1,6 +1,6 @@
-/* Section « Succès » de l'onglet Informations (AchievementsSection.tsx), dans le style des
-   autres sections : titre de section, barre de progression de l'installation, liste sobre. */
-.ach { display: flex; flex-direction: column; gap: 14px; margin-top: 36px; max-width: 1400px; }
+/* Onglet « Succès » d'un jeu (AchievementsTab.tsx), dans le style des autres onglets : titre de
+   section, barre de progression de l'installation, liste sobre. */
+.ach { display: flex; flex-direction: column; gap: 14px; max-width: 1400px; }
 .ach > .n-section-title { margin: 0; }
 .ach-summary { display: flex; flex-direction: column; gap: 8px; padding: 0 12px; max-width: 680px; }
 .ach-summary-line {

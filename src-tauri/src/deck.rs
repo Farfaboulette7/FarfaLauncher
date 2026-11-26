@@ -607,7 +607,7 @@ async fn install_game(state: &AppState, id: i64, emulator: Option<String>, force
     }
 }
 
-/// Succès RetroAchievements d'un jeu, comme la section « Succès » du launcher, avec `friends`
+/// Succès RetroAchievements d'un jeu, comme l'onglet « Succès » du launcher, avec `friends`
 /// (progression des amis, `null` si le gestionnaire ne la donne pas). `null` : pas de succès.
 async fn achievements(state: &AppState, id: i64) -> AppResult<Value> {
     let Some(game) = crate::achievements::game(state, id).await? else { return Ok(Value::Null) };
