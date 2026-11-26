@@ -6,11 +6,14 @@
 // - `NewRecompForm` : formulaire des clés principales, qui produit le texte d'une nouvelle recomp.
 // - `FicheEditor` : texte de la fiche, numéros de ligne, « Vérifier » (validateur du gestionnaire)
 //   et « Enregistrer » (seulement une fois vérifiée, et seulement depuis la maison).
+// - Onglets (`ONGLETS`) : « Fiches » (ce fichier) et « Service » (tableau de bord du gestionnaire,
+//   `ServicePanel.tsx`). Un nouvel onglet : une ligne dans ONGLETS et une ligne dans le rendu.
 // Le gestionnaire refait tous les contrôles (docs/securite.md des deux dépôts).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { backend, errorMessage, FicheContent, FicheDossier, FicheInfo, FichesList, FicheVerdict } from "../api/backend";
 import { Choice } from "./Choice";
 import { Dialog } from "./Dialog";
+import { ServicePanel } from "./ServicePanel";
 import "./ReportsInbox.css";
 import "./Fiches.css";
 
@@ -27,6 +30,12 @@ const ETATS: Record<FicheInfo["etat"], { label: string; tone: string }> = {
 };
 /** Nom de fichier accepté par le gestionnaire (même règle que `fiches.py`, sans le « _ » des retirées). */
 const NOM_VALIDE = /^[A-Za-z0-9][A-Za-z0-9 _.,'&()+!-]{0,118}$/;
+/** Onglets de la fenêtre, dans l'ordre d'affichage. */
+type Onglet = "fiches" | "service";
+const ONGLETS: { id: Onglet; label: string }[] = [
+  { id: "fiches", label: "Fiches" },
+  { id: "service", label: "Service" },
+];
 /** Choix « Autre » de la liste des consoles : un champ texte s'ouvre pour le slug. */
 const OTHER = "__autre__";
 
@@ -58,6 +67,7 @@ export function FichesButton({ offline, account, consoles }: { offline: boolean;
   const cached = lastList?.account === account ? lastList.list : null;
   const [list, setList] = useState<FichesList | null>(cached);
   const [open, setOpen] = useState(false);
+  const [onglet, setOnglet] = useState<Onglet>("fiches");
   const [view, setView] = useState<View>({ kind: "list" });
   const [error, setError] = useState<string | null>(null);
   // Change à chaque fiche ouverte : l'éditeur repart de zéro. Enregistrer ou retirer ne le change
@@ -122,6 +132,16 @@ export function FichesButton({ offline, account, consoles }: { offline: boolean;
             </button>
           }
         >
+          <nav className="inbox-tabs" role="tablist">
+            {ONGLETS.map((o) => (
+              <button key={o.id} role="tab" className="inbox-tab" aria-selected={onglet === o.id} onClick={() => setOnglet(o.id)}>
+                {o.label}
+              </button>
+            ))}
+          </nav>
+          {onglet === "service" && <ServicePanel />}
+          {onglet === "fiches" && (
+          <>
           {!list.modification && (
             <p className="n-alert fiches-away">
               {HORS_MAISON}. <span className="n-hint">Adresse vue par le gestionnaire : {list.adresse || "?"}</span>
@@ -161,6 +181,8 @@ export function FichesButton({ offline, account, consoles }: { offline: boolean;
                 load();
               }}
             />
+          )}
+          </>
           )}
         </Dialog>
       )}
