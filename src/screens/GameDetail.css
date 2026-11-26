@@ -166,7 +166,9 @@
   font-size: var(--fs-sm);
 }
 .gd-facts dt { color: var(--nier-mid); }
-.gd-facts dd { margin: 0; overflow-wrap: anywhere; }
+/* Coupure au milieu d'un mot seulement s'il ne tient pas seul sur la ligne (les chemins
+   vont à la ligne après leurs séparateurs, Breakable dans InstallPanel.tsx). */
+.gd-facts dd { margin: 0; min-width: 0; overflow-wrap: break-word; }
 .gd-facts--wide { margin-top: 24px; font-size: var(--fs-md); gap: 10px 32px; }
 .gd-platforms {
   display: flex;
@@ -315,6 +317,13 @@
   background: var(--nier-low);
   transition: width 0.25s linear;
 }
+/* Téléchargement : la barre s'étire en transform (pas en largeur), sans redessin. */
+.gd-progress-bar > .gd-progress-fill {
+  width: 100%;
+  transform-origin: left center;
+  will-change: transform;
+  transition: transform 0.25s linear;
+}
 .gd-progress-bar > .is-indeterminate {
   width: 30%;
   animation: gd-indeterminate 1.2s ease-in-out infinite;
@@ -336,7 +345,7 @@
   color: var(--nier-high);
 }
 .gd-running .n-spinner { background: var(--nier-high); }
-.gd-savedir { overflow-wrap: anywhere; }
+.gd-savedir { overflow-wrap: break-word; }
 .gd-facts-cols {
   display: flex;
   flex-wrap: wrap;
@@ -344,19 +353,37 @@
   margin-top: 0;
 }
 /* Assez large pour que les valeurs ne s'empilent pas mot par mot ; sinon les sections passent l'une sous l'autre. */
-.gd-facts-cols > section { flex: 1 1 380px; min-width: 0; max-width: 680px; display: flex; flex-direction: column; gap: 14px; }
+.gd-facts-cols > section {
+  flex: 1 1 440px;
+  min-width: 0;
+  max-width: 680px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  container: gd-facts / inline-size;
+}
 .gd-facts-cols .gd-facts--wide {
   margin: 0;
   padding: 0 12px;
   font-size: var(--fs-sm);
-  grid-template-columns: minmax(120px, max-content) 1fr;
+  grid-template-columns: minmax(120px, max-content) minmax(0, 1fr);
   gap: 5px 28px;
   line-height: 1.3;
   /* Sur la première ligne de la valeur : une liste de boutons reste en face de son libellé. */
   align-items: baseline;
 }
-.gd-lang { display: inline-flex; gap: 6px; }
+.gd-lang { display: inline-flex; flex-wrap: wrap; gap: 6px; }
 .gd-lang .n-btn { padding-block: 2px; }
+/* Un bouton ne se coupe jamais au milieu d'un mot (seulement entre deux mots). */
+.gd-facts .n-btn { overflow-wrap: normal; min-width: min-content; }
+.gd-facts dd > .n-link { text-align: left; }
+/* Fenêtre étroite (section de moins de 500 px) : le libellé passe au-dessus de sa valeur,
+   qui garde toute la largeur. */
+@container gd-facts (max-width: 500px) {
+  .gd-facts-cols .gd-facts--wide { grid-template-columns: minmax(0, 1fr); row-gap: 2px; }
+  .gd-facts-cols .gd-facts--wide dt { margin-top: 10px; }
+  .gd-facts-cols .gd-facts--wide dt:first-child { margin-top: 0; }
+}
 .gd-install-dest { overflow-wrap: anywhere; }
 
 /* ---------- Contrôles ---------- */

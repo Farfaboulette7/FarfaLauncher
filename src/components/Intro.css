@@ -1,4 +1,9 @@
-/* Ouverture de l'application (reprise de NieRDeck, NierIntro). */
+/* Ouverture de l'application (reprise de NieRDeck, NierIntro).
+ *
+ * Même animation sur tous les systèmes. Seuls `transform` et `opacity` sont animés :
+ * le moteur web les joue sur des calques déjà dessinés, sans redessiner la page, donc
+ * fluides même sous Linux (WebKitGTK, dessin par le processeur) et pendant le démarrage.
+ * Les flous ne s'animent pas : une copie déjà floutée apparaît ou disparaît en fondu. */
 .intro {
   position: fixed;
   inset: 0;
@@ -10,89 +15,110 @@
   /* Elle prend les clics : rien en dessous ne répond tant qu'elle se joue. */
   pointer-events: auto;
   cursor: default;
-  background-color: var(--nier-bg);
 }
-/* Avant le départ (premières images) : papier opaque, emblème caché. */
-.intro:not(.is-running) .intro-mark { opacity: 0; }
-.intro.is-running { animation: intro-veil 3s ease-in-out forwards; }
+/* Fond : l'écran du dessous, flouté (calque fixe), puis le papier par-dessus. */
+.intro-blur,
+.intro-paper {
+  position: absolute;
+  inset: 0;
+  will-change: opacity;
+}
+.intro-blur {
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+}
+.intro-paper { background-color: var(--nier-bg); }
+.is-running .intro-blur  { animation: intro-unveil 3s ease-in-out forwards; }
+.is-running .intro-paper { animation: intro-paper 3s ease-in-out forwards; }
+
 .intro-mark {
+  position: relative; /* au-dessus du papier */
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 18px;
+  opacity: 0; /* avant le départ (premières images) : emblème caché */
   will-change: opacity, transform;
 }
 .is-running .intro-mark { animation: intro-mark 3s ease-in-out forwards; }
-.intro-emblem {
+
+.intro-emblem-box {
+  position: relative;
   width: 220px;
   height: 254px;
 }
+.intro-emblem {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  will-change: opacity;
+}
+/* Copie floutée une seule fois : elle remplace le flou animé de l'emblème. */
+.intro-emblem--soft { filter: blur(6px); opacity: 0; }
+.intro-emblem--sharp { opacity: 0; }
+.is-running .intro-emblem--soft { animation: intro-soft 3s ease-in-out forwards; }
+.is-running .intro-emblem--sharp { animation: intro-sharp 3s ease-in-out forwards; }
+
 .intro-title {
   font-size: 34px;
   font-weight: 300;
   letter-spacing: 0.5em;
   padding-left: 0.5em;
+  white-space: nowrap;
 }
-.is-running .intro-title { animation: intro-title 3s ease-out forwards; }
+/* Chaque lettre part de sa place « espacée » (--d, Intro.tsx) et glisse vers la sienne. */
+.intro-title span {
+  display: inline-block;
+  opacity: 0;
+  will-change: opacity, transform;
+}
+.is-running .intro-title span { animation: intro-letter 3s ease-out forwards; }
+
 .intro-rule {
-  width: 0;
+  width: 280px;
   height: var(--nier-line);
   background-color: var(--nier-low);
+  transform: scaleX(0);
+  transform-origin: center;
+  will-change: transform;
 }
 .is-running .intro-rule { animation: intro-rule 3s ease-in-out forwards; }
+
 /* Papier opaque, puis transparent pendant que le flou s'en va. */
-@keyframes intro-veil {
-  0%, 50% {
-    background-color: var(--nier-bg);
-    backdrop-filter: blur(18px);
-  }
-  100% {
-    background-color: transparent;
-    backdrop-filter: blur(0);
-  }
+@keyframes intro-paper {
+  0%, 50% { opacity: 1; }
+  100%    { opacity: 0; }
+}
+@keyframes intro-unveil {
+  0%, 55% { opacity: 1; }
+  100%    { opacity: 0; }
 }
 @keyframes intro-mark {
-  0%   { opacity: 0; transform: scale(0.94); filter: blur(6px); }
-  28%  { opacity: 1; transform: scale(1); filter: blur(0); }
-  58%  { opacity: 1; transform: scale(1); filter: blur(0); }
-  85%, 100% { opacity: 0; transform: scale(1.03); filter: blur(4px); }
+  0%        { opacity: 0; transform: scale(0.94); }
+  28%, 58%  { opacity: 1; transform: scale(1); }
+  85%, 100% { opacity: 0; transform: scale(1.03); }
 }
-@keyframes intro-title {
-  0%, 15% { letter-spacing: 1.1em; opacity: 0; }
-  45%     { letter-spacing: 0.5em; opacity: 1; }
-  100%    { letter-spacing: 0.5em; opacity: 1; }
-}
-@keyframes intro-rule {
-  0%, 20% { width: 0; }
-  50%, 100% { width: 280px; }
-}
-
-/* Linux (WebKitGTK) : les flous animés y restent figés, l'ouverture se fait
-   sans eux.
-   Ni changement de taille : l'emblème est un masque, le redessiner à chaque image coûte
-   cher sans accélération. Seule l'opacité bouge. */
-.fx-lite .intro.is-running { animation-name: intro-veil-lite; }
-.fx-lite .is-running .intro-mark { animation-name: intro-mark-lite; }
-.fx-lite .intro-mark { will-change: opacity; }
-@keyframes intro-veil-lite {
-  0%, 50% { background-color: var(--nier-bg); }
-  100%    { background-color: transparent; }
-}
-@keyframes intro-mark-lite {
+/* Net pendant la pose, flou à l'arrivée et au départ. */
+@keyframes intro-sharp {
   0%        { opacity: 0; }
   28%, 58%  { opacity: 1; }
   85%, 100% { opacity: 0; }
 }
-/* Linux : le titre et le trait ne changent pas la mise en page à chaque image
-   (espacement, largeur), ils apparaissent en fondu et en s'étirant. */
-.fx-lite .is-running .intro-title { animation-name: intro-title-lite; }
-.fx-lite .intro-rule { width: 280px; transform-origin: center; }
-.fx-lite .is-running .intro-rule { animation-name: intro-rule-lite; }
-@keyframes intro-title-lite {
-  0%, 15% { opacity: 0; }
-  45%, 100% { opacity: 1; }
+@keyframes intro-soft {
+  0%        { opacity: 1; }
+  28%, 58%  { opacity: 0; }
+  85%, 100% { opacity: 1; }
 }
-@keyframes intro-rule-lite {
-  0%, 20% { transform: scaleX(0); }
+@keyframes intro-letter {
+  0%, 15%   { opacity: 0; transform: translateX(var(--d, 0)); }
+  45%, 100% { opacity: 1; transform: none; }
+}
+@keyframes intro-rule {
+  0%, 20%   { transform: scaleX(0); }
   50%, 100% { transform: scaleX(1); }
 }
+
+/* Linux (WebKitGTK) : un flou d'arrière-plan plein écran y est recalculé par le processeur.
+   Le papier, opaque jusqu'à mi-parcours, le cache presque entièrement : on s'en passe. */
+.fx-lite .intro-blur { display: none; }

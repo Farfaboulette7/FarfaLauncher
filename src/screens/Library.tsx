@@ -91,6 +91,12 @@ function matchesKind(game: Game, kind: Kind, installed: Map<number, unknown>): b
 /** Durées du passage vers la fiche d'un jeu (doivent suivre Hack.css). */
 const HACK_OUT_MS = 380;
 const HACK_IN_MS = 420;
+/**
+ * Filet : chaque moitié du passage se termine à la fin réelle de son animation
+ * (`animationend`), au plus tard après sa durée plus ce délai. Sous Linux, le dessin de la
+ * fiche retarde le départ de l'animation : un délai fixe la coupait avant la fin (saut, flash).
+ */
+const HACK_SLACK_MS = 1500;
 
 interface Hack {
   /** Centre de la jaquette cliquée. */
@@ -610,13 +616,25 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
 
   /** Joue une transition en deux temps ; `swap` change d'écran entre les deux. */
   function transition(at: { x: number; y: number }, out: Hack["phase"], into: Hack["phase"], swap: () => void) {
-    setHack({ ...at, phase: out });
-    setTimeout(() => {
+    let timer = 0;
+    const finish = () => {
+      clearTimeout(timer);
+      hackNext.current = null;
+      setHack(null);
+    };
+    const enter = () => {
+      clearTimeout(timer);
       swap();
       setHack({ ...at, phase: into });
-    }, HACK_OUT_MS);
-    setTimeout(() => setHack(null), HACK_OUT_MS + HACK_IN_MS);
+      hackNext.current = finish;
+      timer = window.setTimeout(finish, HACK_IN_MS + HACK_SLACK_MS);
+    };
+    hackNext.current = enter;
+    timer = window.setTimeout(enter, HACK_OUT_MS + HACK_SLACK_MS);
+    setHack({ ...at, phase: out });
   }
+  /** Étape suivante du passage, appelée à la fin de l'animation en cours. */
+  const hackNext = useRef<(() => void) | null>(null);
 
   /** Ouvre la fiche d'un jeu en zoomant vers sa jaquette. */
   const listScroll = useRef(0);
@@ -668,7 +686,13 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
     const vars = hack ? ({ "--hx": `${hack.x}px`, "--hy": `${hack.y}px` } as CSSProperties) : undefined;
     return (
       <OfflineContext.Provider value={!!session.offline}>
-        <div className={hack ? `hack-stage hack-stage--${hack.phase}` : "hack-stage"} style={vars}>
+        <div
+          className={hack ? `hack-stage hack-stage--${hack.phase}` : "hack-stage"}
+          style={vars}
+          onAnimationEnd={(e) => {
+            if (e.target === e.currentTarget && e.animationName.startsWith("hack-")) hackNext.current?.();
+          }}
+        >
           {node}
         </div>
         {over}

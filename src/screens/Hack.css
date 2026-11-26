@@ -4,7 +4,11 @@
  * puis la fiche se pose. Retour : l'inverse exact.
  * Durées : HACK_OUT_MS et HACK_IN_MS dans Library.tsx.
  */
-.hack-stage { height: 100%; }
+/* Toujours sur son propre calque (opacité seulement : pas de transform, qui changerait le
+   repère des éléments en position fixe). Sans ça, le calque était créé au début du passage et
+   retiré à la fin : sous Linux (WebKitGTK), l'écran était redessiné par morceaux et une image
+   sortait à moitié vide (clignotement au début et à la fin du zoom). */
+.hack-stage { height: 100%; will-change: opacity; }
 /* Linux (WebKitGTK) : le flou plein écran fait chuter la fluidité ; zoom et
    fondu seuls (une déclaration !important l'emporte sur l'animation). */
 .fx-lite .hack-stage[class*="hack-stage--"] { filter: none !important; }

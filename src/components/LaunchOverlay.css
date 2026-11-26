@@ -63,8 +63,10 @@
   position: absolute;
   top: 1px;
   bottom: 1px;
+  left: 0;
   width: 30%;
   background-color: var(--nier-low);
+  will-change: transform;
   animation: launch-bar 1.4s ease-in-out infinite;
 }
 .launch-hint {
@@ -84,9 +86,11 @@
   0%, 100% { opacity: 1; }
   50% { opacity: 0.55; }
 }
+/* En transform (pas `left`) : glissement sans redessin, fluide aussi sous Linux.
+   -100 % = sa largeur (30 % de la barre) : de -30 % à 100 % de la barre. */
 @keyframes launch-bar {
-  0% { left: -30%; }
-  100% { left: 100%; }
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(333.34%); }
 }
 
 /* Astuce affichée pendant le lancement. */
@@ -95,4 +99,12 @@
   font-size: var(--fs-sm);
   opacity: 0.75;
   animation: launch-in 300ms ease-out 600ms both;
+}
+
+/* Linux (WebKitGTK) : le flou plein écran derrière le panneau y est recalculé par le
+   processeur à chaque image de la barre ; un voile un peu plus couvrant le remplace. */
+.fx-lite .launch-overlay {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background-color: rgba(209, 205, 183, 0.86);
 }

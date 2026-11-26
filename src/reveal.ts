@@ -66,27 +66,46 @@ function singleLine(node: Text): boolean {
   return r.getClientRects().length <= 1;
 }
 
-/** Recale la copie exactement sur le texte d'origine (suit aussi les zooms de transition). */
-function place(t: Typing, shown: string) {
+interface Spot {
+  left: number;
+  top: number;
+  height: number;
+}
+
+/** Où poser la copie pour couvrir le texte d'origine (suit aussi les zooms de transition). */
+function measure(t: Typing): Spot {
   const r = document.createRange();
   r.selectNodeContents(t.node);
   const box = r.getBoundingClientRect();
   const host = t.host.getBoundingClientRect();
   const scale = t.host.offsetWidth > 0 ? host.width / t.host.offsetWidth : 1;
-  t.copy.textContent = shown;
-  t.copy.style.left = `${(box.left - host.left) / scale - t.host.clientLeft}px`;
-  t.copy.style.top = `${(box.top - host.top) / scale - t.host.clientTop}px`;
-  t.copy.style.lineHeight = `${box.height / scale}px`;
+  return {
+    left: (box.left - host.left) / scale - t.host.clientLeft,
+    top: (box.top - host.top) / scale - t.host.clientTop,
+    height: box.height / scale,
+  };
 }
+
+function draw(t: Typing, shown: string, at: Spot) {
+  if (t.copy.textContent !== shown) t.copy.textContent = shown;
+  t.copy.style.left = `${at.left}px`;
+  t.copy.style.top = `${at.top}px`;
+  t.copy.style.lineHeight = `${at.height}px`;
+}
+
 
 function tick(now: number) {
   typings = typings.filter((t) => {
     if (t.node.data !== t.text || !t.node.isConnected) return release(t);
+    return Math.floor((now - t.start) / CHAR_MS) < t.text.length || release(t);
+  });
+  // Toutes les mesures d'abord, puis toutes les écritures : une seule mise en page par image
+  // (mesurer après chaque écriture la recalculait autant de fois qu'il y a de textes, ce qui
+  // saccadait sous Linux, où tout est dessiné par le processeur).
+  const spots = typings.map(measure);
+  typings.forEach((t, i) => {
     const n = Math.floor((now - t.start) / CHAR_MS);
-    if (n >= t.text.length) return release(t);
-    const shown = n < 0 ? "" : t.text.slice(0, n) + (t.text[n].trim() ? glitchChar(t.text) : "");
-    place(t, shown);
-    return true;
+    draw(t, n < 0 ? "" : t.text.slice(0, n) + (t.text[n].trim() ? glitchChar(t.text) : ""), spots[i]);
   });
   frame = typings.length > 0 ? requestAnimationFrame(tick) : 0;
 }
@@ -176,7 +195,7 @@ export function reveal(root: Element) {
         host.appendChild(copy);
         const t: Typing = { node, text: node.data, start: now + delay + TEXT_DELAY_MS + before * CHAR_MS, hidden: parent, host, copy };
         before += node.data.length;
-        place(t, "");
+        // Copie vide (invisible) : elle sera posée à la première image, avec les autres.
         typings.push(t);
       }
     }

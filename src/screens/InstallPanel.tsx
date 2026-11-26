@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   backend,
@@ -531,7 +531,7 @@ export function InstallPanel({ game: base, target, installs, onError, autoPlay, 
               {recompChoice && recompChoice !== base.recompId ? recompOffer?.version : formatSize(downloadSize(game, runtimeReady))}
               {runtimeInst?.executable
                 ? ` · ${game.runtime?.name} est déjà installé`
-                : (installDir ?? installs.installRoot) && ` · dans ${installDir ?? installs.installRoot}`}
+                : (installDir ?? installs.installRoot) && <Breakable text={` · dans ${installDir ?? installs.installRoot}`} />}
             </p>
             {!runtimeInst?.executable && (
               <div className="gd-inst-actions">
@@ -1083,7 +1083,9 @@ function ModsFact({ romId, installKey }: { romId: number; installKey: string }) 
         <button className="n-link" onClick={() => backend.openModsFolder(romId).then(() => setError(null), (e) => setError(errorMessage(e)))}>
           Ouvrir le dossier des mods
         </button>{" "}
-        <span className="n-hint">{shortPath(dir)}</span>
+        <span className="n-hint">
+          <Breakable text={shortPath(dir)} />
+        </span>
         {error && <p className="n-alert">{error}</p>}
       </dd>
     </>
@@ -1283,7 +1285,7 @@ export function InstallFacts({ game: base, target, installs }: { game: Game; tar
         <>
           <dt>Emplacement</dt>
           <dd className="gd-savedir" title={sel.way.gameDir}>
-            {shortPath(sel.way.gameDir)}
+            <Breakable text={shortPath(sel.way.gameDir)} />
           </dd>
         </>
       )}
@@ -1306,25 +1308,27 @@ export function InstallFacts({ game: base, target, installs }: { game: Game; tar
         <>
           <dt>Emplacement</dt>
           <dd className="gd-savedir" title={inst.gameDir}>
-            {shortPath(inst.gameDir)}
+            <Breakable text={shortPath(inst.gameDir)} />
           </dd>
         </>
       )}
       {!preview && inst?.executable && (
         <>
           <dt>Exécutable</dt>
-          <dd>{inst.executable}</dd>
+          <dd>
+            <Breakable text={inst.executable} />
+          </dd>
           {inst.directLaunch && (
             <>
               <dt>Lancement</dt>
               <dd title={inst.directLaunch.exe}>
-                {inst.preferLauncher ? "par le launcher" : `direct (${inst.directLaunch.exe.split("/").pop()})`}
+                {inst.preferLauncher ? "par le launcher" : <Breakable text={`direct (${inst.directLaunch.exe.split("/").pop()})`} />}
               </dd>
             </>
           )}
           <dt>Sauvegardes</dt>
           <dd className="gd-savedir" title={inst.saves.dir ?? undefined}>
-            {inst.saves.off ? "non synchronisées" : inst.saves.dir ? shortPath(inst.saves.dir) : "dossier inconnu (demandé au lancement)"}
+            {inst.saves.off ? "non synchronisées" : inst.saves.dir ? <Breakable text={shortPath(inst.saves.dir)} /> : "dossier inconnu (demandé au lancement)"}
           </dd>
         </>
       )}
@@ -1614,7 +1618,7 @@ function ActiveProgress({ romId, phase, done, total, verifying, onCancel }: Prog
         </div>
       )}
       <div className="gd-progress-bar" role="progressbar" aria-valuenow={pct ?? undefined} aria-valuemin={0} aria-valuemax={100}>
-        <div className={pct === null ? "is-indeterminate" : undefined} style={pct === null ? undefined : { width: `${pct}%` }} />
+        <div className={pct === null ? "is-indeterminate" : "gd-progress-fill"} style={pct === null ? undefined : { transform: `scaleX(${Math.min(100, Math.max(0, pct)) / 100})` }} />
       </div>
       {remaining !== null && remaining >= 5 && <p className="n-hint">Encore environ {formatRemaining(remaining)}.</p>}
       {installing && <p className="n-hint">Installation en cours, elle ne peut plus être annulée.</p>}
@@ -2141,6 +2145,25 @@ function exeDir(gameDir: string, executable: string | null): string {
   const sep = gameDir.includes("\\") ? "\\" : "/";
   const rel = executable.split("/").slice(0, -1);
   return rel.length ? [gameDir.replace(/[\\/]+$/, ""), ...rel].join(sep) : gameDir;
+}
+
+/**
+ * Chemin ou nom de fichier qui peut aller à la ligne après un séparateur (/ \ _ - .),
+ * jamais au milieu d'un mot tant qu'un morceau tient sur la ligne.
+ */
+function Breakable({ text }: { text: string }) {
+  // Sans « lookbehind » : absent des anciens WebKitGTK.
+  const parts = text.replace(/([\\/_.-])/g, "$1\u0000").split("\u0000");
+  return (
+    <>
+      {parts.map((part, i) => (
+        <Fragment key={i}>
+          {i > 0 && <wbr />}
+          {part}
+        </Fragment>
+      ))}
+    </>
+  );
 }
 
 function shortPath(p: string): string {
