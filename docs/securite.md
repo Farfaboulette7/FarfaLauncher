@@ -18,6 +18,7 @@ Résumé : **1 critique, 5 élevées, 4 moyennes, 8 faibles.**
 | SL8 | en partie : le moteur du Deck se compile en lecture seule |
 | SL3 | **risque accepté** par le propriétaire le 2026-11-26 (voir SL3) |
 | SL9 à SL18 | corrigés (1.2.5) ; limites notées sous SL10 et SL11 |
+| SL19 | **nouvelle surface (phase 3)** : écran « Fiches » des administrateurs, voir SL19 |
 
 Comment lire ce rapport :
 - **Où** : le fichier et la ligne à regarder.
@@ -281,6 +282,24 @@ Outils passés :
 - Correction proposée : à la connexion par jeton collé, refuser ou signaler un jeton qui a
   des scopes d'écriture admin. Effort : petit.
 - Corrigé le 2026-11-25 (phase2-moyens-a) : jeton collé, code d'appairage et `--jeton` du Deck refusés (`token_too_powerful`) si le compte est `admin` et que le jeton lit la liste des comptes (`GET /api/users`, `users.read`) ; message dans l'emplacement d'erreur de l'écran de connexion. Limite : RomM ne donne pas les scopes d'un jeton, un jeton admin avec `users.write` sans `users.read`, ou les droits d'un `editor` (`roms.write`), passent.
+
+### SL19 — Écran « Fiches » : le launcher d'un administrateur peut modifier les fiches du gestionnaire (phase 3)
+
+- Où : `src-tauri/src/commands/fiches.rs`, `src/components/Fiches.tsx` ; côté gestionnaire,
+  `fiches.py` et les routes `/api/fiches` (son `docs/securite.md`, SG18).
+- Ce que ça ouvre : une fiche décide quel programme est installé et lancé chez tous les joueurs
+  (voir SL2). Le jeton RomM d'un administrateur, gardé par le launcher, permet maintenant d'en
+  écrire une à distance.
+- Protections (dans le gestionnaire, le launcher ne décide rien) : compte `admin` revérifié
+  auprès de RomM toutes les 60 s ; écriture seulement depuis le réseau local ou le VPN (adresse
+  vue par le proxy) ; fiche validée avant d'être écrite (clé inconnue refusée) ; noms de fichiers
+  contrôlés (des deux côtés) ; ancienne version gardée ; jamais de suppression (retirer =
+  renommer) ; alerte Discord à chaque écriture (compte, adresse, changement).
+- Ce qui reste : un jeu ou émulateur piégé lancé sur le PC de l'administrateur lit le jeton
+  (SL11) et, depuis la maison, peut écrire une fiche. L'alerte Discord et l'historique
+  permettent de le voir et de revenir en arrière (runbook du gestionnaire, §16).
+- Aucun nouveau scope RomM : l'écran utilise le même jeton et `GET /api/me` du gestionnaire.
+- Tests : `commands::fiches::tests` (noms refusés et encodés, message du gestionnaire affiché).
 
 ### SL12 — `open_url` ouvre toute adresse « dépôt » du catalogue, sans exiger https
 

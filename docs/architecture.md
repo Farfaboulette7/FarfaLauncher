@@ -48,7 +48,7 @@ fiches des recomps et des émulateurs) est décrit dans le dépôt du gestionnai
 | Module | Rôle |
 |---|---|
 | `lib.rs`, `main.rs` | Démarrage : dossiers, journaux, état partagé, liste des commandes. |
-| `commands/` | Commandes appelées par l'interface : `session` (connexion), `library`, `install`, `launch`, `saves`, `mods`, `update`, `report`, `requests`, `community`, `stats`, `presence`, `music`, `sounds`, `steam`, `system`, `window`. |
+| `commands/` | Commandes appelées par l'interface : `session` (connexion), `library`, `install`, `launch`, `saves`, `mods`, `update`, `report`, `requests`, `fiches` (écran « Fiches » des administrateurs), `community`, `stats`, `presence`, `music`, `sounds`, `steam`, `system`, `window`. |
 | `romm/` | Client de l'API RomM : `auth` (connexion), `client` (HTTP, délais, règle du jeton), `library` (consoles, jeux), `saves`, `favorites`, `playtime`. Voir `docs/romm-api.md`. |
 | `manager.rs` | Catalogue de FarfaRomManager : recomps, émulateurs, choix de la recomp par jeu, et toutes les clés des fiches. |
 | `assets.rs` | Adresse du serveur des musiques et bruitages. |
@@ -79,13 +79,40 @@ fiches des recomps et des émulateurs) est décrit dans le dépôt du gestionnai
 | `screens/InstallPanel.tsx` | Installer, Jouer, Mettre à jour, Désinstaller, dossier des sauvegardes. |
 | `screens/ControlsTab.tsx` | Une manette par joueur. |
 | `screens/Settings.tsx`, `PcPanel.tsx` | Paramètres : Compte, Installation, Affichage, Sons, Émulateurs, Cache et dépannage, À propos (mises à jour, canal bêta). Informations du PC. |
-| `components/` | Éléments communs : `Choice` (listes YoRHa, jamais de `<select>`), `MusicMenu`, `ReportsInbox` (Messages), `UpdateDialog`, `Downloads`, `BoxArt` (boîte 3D)… |
+| `components/` | Éléments communs : `Choice` (listes YoRHa, jamais de `<select>`), `MusicMenu`, `ReportsInbox` (Messages), `Fiches` (fiches du gestionnaire, administrateurs), `UpdateDialog`, `Downloads`, `BoxArt` (boîte 3D)… |
 | `api/backend.ts` | Toutes les commandes Rust, typées. |
 | `offline.ts`, `refresh.ts`, `music.ts`, `sounds.ts`, `audioGuard.ts` | Hors ligne, rafraîchissement, musique, bruitages, filet audio (Linux). |
 | `ingame/Overlay.tsx` | Menu en jeu (Select + Start maintenus). |
 | `theme/` | Thème NieR (CSS, police). |
 
 L'apparence est voulue par le propriétaire : voir la section « Interface » de `CLAUDE.md`.
+
+### Écran « Fiches » (administrateurs)
+
+`components/Fiches.tsx` + `commands/fiches.rs` : les fiches de recomps et d'émulateurs du
+gestionnaire (`recomps/<Nom>.txt`, `emulateurs/<id>.txt`), lues et modifiées sans le partage du NAS.
+
+- Entrée : une icône dans `lib-actions`, à côté des Messages, **seulement** si `fiches_list`
+  répond (compte `admin` selon `GET /api/me` du gestionnaire, et gestionnaire qui a
+  `/api/fiches`). Pour les autres comptes et avec un ancien gestionnaire (404), rien ne s'affiche.
+  La liste est demandée une fois au démarrage (sans son d'erreur), puis à chaque ouverture.
+- Liste : état de chaque fiche (valide, invalide avec l'erreur, retirée = `_<nom>.txt`).
+- « + Nouvelle recomp » : formulaire des clés principales (`recomp:`, `exe:`, `argument:`,
+  `remarque:`, `dossier-mods:`, `jeux:` avec la console prise dans la liste de RomM + « Autre »),
+  qui produit le texte (`recompText`) puis l'ouvre dans l'éditeur.
+- Éditeur : numéros de ligne, « Vérifier » (`POST /api/fiches/verifier`, rien n'est écrit, la
+  ligne en cause est marquée et cliquable), « Enregistrer » (`PUT`, actif seulement si le texte
+  affiché a été vérifié valide), « Retirer » (en deux clics) / « Remettre en service ».
+  L'enregistrement renvoie l'empreinte de la version ouverte : une fiche changée entre-temps est
+  refusée par le gestionnaire plutôt qu'écrasée.
+- Hors de la maison et du VPN (`modification: false`), le message « Modification possible
+  seulement depuis la maison ou le VPN » s'affiche et les boutons d'écriture sont désactivés.
+- Les refus expliqués du gestionnaire (`{"detail": …}` en 400/403/404/409/413/422) deviennent
+  `AppError::Refused` : leur message s'affiche tel quel.
+- Tous les contrôles de sécurité sont dans le gestionnaire (son `docs/securite.md`, SG18) : le
+  launcher ne fait que relayer, avec des noms de fichiers vérifiés et encodés dans l'adresse.
+- Pas sur le Steam Deck : `commands/` n'est compilé qu'avec l'interface (`gui`), NieRDeck n'a pas
+  cet écran. Linux (AppImage) et Mac : même écran que Windows.
 
 ## 4. Le parcours d'un joueur
 

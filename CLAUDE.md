@@ -158,6 +158,8 @@ bêta, `commands/update.rs`).
   (`audioGuard.ts`) ne coupe le son que sous Linux.
 - Messages (`ReportsInbox.tsx`) : Nouvelles versions, Toutes les demandes (admin), Mes demandes,
   Mes signalements.
+- Fiches (`Fiches.tsx`, administrateurs seulement) : icône à côté des Messages, fiches du
+  gestionnaire à lire, vérifier et modifier (`docs/architecture.md`, « Écran Fiches »).
 - Un bouton montre toujours qu'il a agi (« Envoyé ✓ »…).
 
 ## Pièges
