@@ -321,7 +321,7 @@ onglet « Succès » de la page du jeu, commande `succes` du moteur du Deck.
     `ENABLE_SCHEDULED_RETROACHIEVEMENTS_PROGRESS_SYNC=true` et
     `SCHEDULED_RETROACHIEVEMENTS_PROGRESS_SYNC_CRON` (défaut `0 4 * * *`, une fois par jour).
     Le propriétaire l'active **toutes les heures** (décision du 2026-11-26, par exemple
-    `0 * * * *`) ; désactivée, elle n'apparaît pas dans `GET /api/tasks`.
+    `0 * * * *`) ; elle n'apparaît jamais dans `GET /api/tasks`, même activée (absente de `VISIBLE_SCHEDULED_TASKS`, `endpoints/tasks.py`).
   - Pour l'avoir tout de suite : « Rafraîchir » dans la partie RetroAchievements du profil RomM
     (site web). L'onglet « Succès » le dit au joueur.
   - Le gestionnaire relit `GET /api/users` toutes les 10 min : la progression d'un ami peut
