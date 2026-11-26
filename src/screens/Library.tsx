@@ -36,6 +36,7 @@ import "./Library.css";
 import "./Hack.css";
 import { FullscreenButton } from "../components/FullscreenButton";
 import { ReportsInbox } from "../components/ReportsInbox";
+import { FichesButton } from "../components/Fiches";
 import { OfflineContext } from "../offline";
 import { Downloads } from "../components/Downloads";
 import { RequestGameButton } from "../components/GameRequests";
@@ -363,6 +364,8 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
   /** Image de profil du compte RomM, à côté du pseudo. */
   const avatar = useCachedImage(session.avatarUrl);
   const platformName = useCallback((id: number) => snapshot?.platforms.find((p) => p.id === id)?.name ?? "?", [snapshot]);
+  /** Consoles du serveur (slug et nom), proposées dans les lignes `jeux:` de l'écran « Fiches ». */
+  const ficheConsoles = useMemo(() => (snapshot?.platforms ?? []).map((p) => ({ slug: p.slug, name: p.name })), [snapshot]);
   /** Noms des consoles du serveur, proposés dans une demande de jeu. */
   const consoleNames = useMemo(() => Array.from(new Set((snapshot?.platforms ?? []).map((p) => p.name))).sort((a, b) => a.localeCompare(b, "fr")), [snapshot]);
   const gameKey = useCallback((g: Game) => (g.pc || pcPlatforms.has(g.platformId) ? PC_PLATFORM : g.console), [pcPlatforms]);
@@ -693,6 +696,8 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
         onOpenStats={setStatsFor}
       />
       <ReportsInbox offline={session.offline} />
+      {/* Administrateurs de RomM seulement : rien ne s'affiche pour les autres comptes. */}
+      <FichesButton offline={!!session.offline} account={`${session.serverUrl ?? ""}|${session.username ?? ""}`} consoles={ficheConsoles} />
       <MusicMenu />
       <button
         className="n-btn n-icon-btn"

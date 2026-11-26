@@ -14,6 +14,7 @@ pub mod update;
 pub mod report;
 pub mod presence;
 pub mod requests;
+pub mod fiches;
 pub mod window;
 
 use tauri::State;

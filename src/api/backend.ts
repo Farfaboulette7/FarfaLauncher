@@ -790,6 +790,45 @@ export interface FriendAchievements {
 }
 
 export type GameRequestStatus = "nouveau" | "accepté" | "refusé" | "ajouté";
+
+/** Écran « Fiches » (administrateurs) : fiches de FarfaRomManager, `commands/fiches.rs`. */
+export type FicheDossier = "recomps" | "emulateurs";
+
+export interface FicheInfo {
+  dossier: FicheDossier;
+  nom: string;
+  /** `retiree` : renommée `_<nom>.txt`, ignorée par le gestionnaire. */
+  etat: "valide" | "invalide" | "retiree";
+  erreur: string | null;
+  ligne: number | null;
+  modifiee: number;
+}
+
+export interface FichesList {
+  /** L'adresse vue par le gestionnaire permet d'écrire (maison seulement). */
+  modification: boolean;
+  adresse: string;
+  fiches: FicheInfo[];
+}
+
+export interface FicheContent {
+  dossier: FicheDossier;
+  nom: string;
+  texte: string;
+  empreinte: string;
+}
+
+export interface FicheVerdict {
+  valide: boolean;
+  erreur: string | null;
+  ligne: number | null;
+}
+
+export interface FicheSaved {
+  nom: string;
+  empreinte: string | null;
+  historique: string | null;
+}
 /** Demande de jeu envoyée au gestionnaire. */
 export interface GameRequest {
   id: string;
@@ -905,6 +944,15 @@ export const backend = {
   allGameRequests: () => invoke<GameRequest[] | null>("all_game_requests"),
   updateGameRequest: (id: string, status: GameRequestStatus, response: string) =>
     invoke<GameRequest>("update_game_request", { id, status, response }),
+  /** Fiches du gestionnaire (administrateur) ; `null` pour un autre compte ou un ancien gestionnaire. */
+  fichesList: () => invoke<FichesList | null>("fiches_list"),
+  ficheRead: (dossier: FicheDossier, nom: string) => invoke<FicheContent>("fiche_read", { dossier, nom }),
+  ficheCheck: (dossier: FicheDossier, nom: string, texte: string) => invoke<FicheVerdict>("fiche_check", { dossier, nom, texte }),
+  /** `empreinte` : celle de la version ouverte, `null` pour une nouvelle fiche. */
+  ficheSave: (dossier: FicheDossier, nom: string, texte: string, empreinte: string | null) =>
+    invoke<FicheSaved>("fiche_save", { dossier, nom, texte, empreinte }),
+  /** Retirer (renommée `_<nom>.txt`) ou remettre une fiche. Jamais de suppression. */
+  ficheRename: (dossier: FicheDossier, nom: string, retirer: boolean) => invoke<FicheSaved>("fiche_rename", { dossier, nom, retirer }),
   /** Amis et leur présence ; `null` : gestionnaire sans la présence. */
   friends: () => invoke<Friends | null>("friends"),
   presenceHidden: () => invoke<boolean>("presence_hidden"),
