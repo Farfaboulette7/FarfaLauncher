@@ -341,6 +341,22 @@ onglet « Succès » de la page du jeu, commande `succes` du moteur du Deck.
 - Autres routes RA de RomM, non utilisées : `GET /api/roms/by-metadata-provider?ra_id=` (une
   ROM par identifiant RetroAchievements), `GET /api/roms/by-hash?ra_hash=`.
 
+## 9. Scan d'une console (RomM 5.4.1, utilisé par le PC du propriétaire, pas par le launcher)
+
+- `POST /api/tasks/scan` (droit `tasks.run`, réservé aux administrateurs), réponse 202
+  `{task_key, task_name, task_id, status, created_at, enqueued_at}`. Corps `ScanPayload`
+  (`extra="forbid"` : une clé mal écrite est refusée, 422) : `type` (`quick` par défaut,
+  `new_platforms`, `update`, `unmatched`, `complete`, `hashes`), `platforms` (ID RomM),
+  `platform_fs_slugs` (dossiers de `roms/`, même sans plateforme encore créée), `roms_ids`, `apis`.
+  Code : `backend/endpoints/tasks.py` (`start_scan`) et `endpoints/sockets/scan.py`
+  (`ScanPayload`, `queue_scan`).
+- 409 si un scan de la bibliothèque est déjà en file ou en cours ; 503 sans worker de scan.
+- Suivi : `GET /api/tasks/{task_id}` (aussi `tasks.run`). L'interface web de RomM passe, elle,
+  par le socket `scan`, avec le même droit.
+- Sert à l'onglet « Ajouter un jeu » de l'écran Fiches : c'est `ajouts-romm.ps1` (gestionnaire,
+  sur le PC du propriétaire) qui l'appelle avec son propre jeton, **jamais** le jeton du launcher
+  (le launcher ne demande pas `tasks.run`).
+
 ---
 
 ## Points à vérifier sur ton serveur (pendant les tests)

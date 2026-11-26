@@ -48,7 +48,7 @@ fiches des recomps et des émulateurs) est décrit dans le dépôt du gestionnai
 | Module | Rôle |
 |---|---|
 | `lib.rs`, `main.rs` | Démarrage : dossiers, journaux, état partagé, liste des commandes. Fenêtre de 1440 × 880 par défaut (onglets d'un jeu sur une ligne), réduite à l'écran s'il est plus petit (`fit_to_screen`). |
-| `commands/` | Commandes appelées par l'interface : `session` (connexion), `library`, `install`, `launch`, `saves`, `mods`, `update`, `report`, `requests`, `fiches` (écran « Fiches » des administrateurs), `community`, `stats`, `presence`, `music`, `sounds`, `steam`, `system`, `window`. |
+| `commands/` | Commandes appelées par l'interface : `session` (connexion), `library`, `install`, `launch`, `saves`, `mods`, `update`, `report`, `requests`, `fiches` (écran « Fiches » des administrateurs), `ajouts` (son onglet « Ajouter un jeu »), `community`, `stats`, `presence`, `music`, `sounds`, `steam`, `system`, `window`. |
 | `romm/` | Client de l'API RomM : `auth` (connexion), `client` (HTTP, délais, règle du jeton), `library` (consoles, jeux), `saves`, `favorites`, `playtime`. Voir `docs/romm-api.md`. |
 | `manager.rs` | Catalogue de FarfaRomManager : recomps, émulateurs, choix de la recomp par jeu, et toutes les clés des fiches. |
 | `assets.rs` | Adresse du serveur des musiques et bruitages. |
@@ -113,6 +113,27 @@ gestionnaire (`recomps/<Nom>.txt`, `emulateurs/<id>.txt`), lues et modifiées sa
   gestionnaire directement sur le réseau local : une ligne dans le fichier `hosts` du PC qui mène
   le nom du gestionnaire à l'adresse locale du NAS (sinon la box renvoie la connexion avec son
   adresse publique). Pas par le VPN. Procédure exacte : `docs/ajouter-un-jeu.md` du gestionnaire.
+
+#### Onglet « Ajouter un jeu »
+
+`components/AddGamePanel.tsx` + `commands/ajouts.rs` (onglet de la même fenêtre, à côté de
+« Fiches ») : un fichier ou un dossier de Download Station devient un jeu de RomM.
+
+- `GET /api/ajouts` du gestionnaire : la liste de Download Station (premier et deuxième niveau,
+  films et séries masqués, avec ce qui est déjà lié dans RomM), les dossiers de console de
+  `RomM/roms` (avec le nom de la plateforme RomM) et les demandes récentes. Cette liste est
+  publiée par le **PC du propriétaire** (`outils/surveille-rapports/ajouts-romm.ps1` du
+  gestionnaire), pas par le gestionnaire, qui ne voit pas ce dossier.
+- Recherche (sans accents ni majuscules, 200 lignes au plus), console choisie avec `Choice`
+  (proposée d'après l'extension), sous-dossier facultatif (jeu PC : un dossier au nom du jeu),
+  cible affichée (`roms/<console>/…`), rappels de `docs/ajouter-un-jeu.md` (jeu PC, R8…).
+- « Ajouter à RomM » (`POST /api/ajouts/demandes`, maison seulement, comme les fiches) dépose une
+  demande. Le PC la traite à son prochain passage (3 min) : lien physique par SSH, scan RomM de
+  cette console, puis « fait » ou « échec » avec la raison. Le suivi (`GET /api/ajouts/demandes`)
+  est relu toutes les 15 s tant qu'une demande attend. PC éteint (`pcEnLigne`, même signal que
+  les trois petits points des rapports) : « En attente du PC (éteint) ».
+- Ancien gestionnaire (404) : l'onglet le dit, sans erreur. Aucun nouveau droit RomM pour le
+  launcher : seul le PC du propriétaire parle à RomM (scan).
 - Les refus expliqués du gestionnaire (`{"detail": …}` en 400/403/404/409/413/422) deviennent
   `AppError::Refused` : leur message s'affiche tel quel.
 - Tous les contrôles de sécurité sont dans le gestionnaire (son `docs/securite.md`, SG18) : le

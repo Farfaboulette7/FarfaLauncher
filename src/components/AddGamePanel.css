@@ -1,0 +1,17 @@
+/* Onglet « Ajouter un jeu » de l'écran Fiches (AddGamePanel.tsx) : liste à gauche, demande à droite. */
+.addgame { display: flex; flex-direction: column; gap: 14px; min-height: 0; }
+.addgame-pc { margin: 0; }
+.addgame-columns { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; min-height: 0; }
+.addgame-browse { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.addgame-search { display: flex; gap: 8px; }
+.addgame-search .n-input { flex: 1 1 auto; min-width: 0; }
+.addgame-list { max-height: 360px; overflow: auto; gap: 6px; }
+.addgame-list .inbox-item { padding: 6px 10px; }
+.addgame-list .inbox-item.is-selected { border-color: var(--nier-high); background: var(--nier-high-mid); }
+.addgame-name { overflow-wrap: anywhere; }
+.addgame-form { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.addgame-form .n-section-title { margin: 0; }
+.addgame-field { display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-sm); }
+.addgame-notes { margin: 0; }
+.addgame-form code { overflow-wrap: anywhere; }
+@media (max-width: 900px) { .addgame-columns { grid-template-columns: 1fr; } }

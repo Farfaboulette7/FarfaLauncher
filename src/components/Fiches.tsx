@@ -9,6 +9,7 @@
 // Le gestionnaire refait tous les contrôles (docs/securite.md des deux dépôts).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { backend, errorMessage, FicheContent, FicheDossier, FicheInfo, FichesList, FicheVerdict } from "../api/backend";
+import { AddGamePanel } from "./AddGamePanel";
 import { Choice } from "./Choice";
 import { Dialog } from "./Dialog";
 import "./ReportsInbox.css";
@@ -63,6 +64,8 @@ export function FichesButton({ offline, account, consoles }: { offline: boolean;
   // Change à chaque fiche ouverte : l'éditeur repart de zéro. Enregistrer ou retirer ne le change
   // pas (l'éditeur garde son message « Enregistré ✓ »).
   const [opened, setOpened] = useState(0);
+  // Onglet de la fenêtre : les fiches, ou « Ajouter un jeu » (AddGamePanel.tsx).
+  const [tab, setTab] = useState<"fiches" | "ajout">("fiches");
 
   // `quiet` : au démarrage, une erreur (serveur injoignable…) ne s'affiche pas et ne fait pas de bruit.
   const load = useCallback((quiet = false) => {
@@ -122,6 +125,18 @@ export function FichesButton({ offline, account, consoles }: { offline: boolean;
             </button>
           }
         >
+          <nav className="inbox-tabs" role="tablist">
+            <button role="tab" className="inbox-tab" aria-selected={tab === "fiches"} onClick={() => setTab("fiches")}>
+              Fiches
+            </button>
+            <button role="tab" className="inbox-tab" aria-selected={tab === "ajout"} onClick={() => setTab("ajout")}>
+              Ajouter un jeu
+            </button>
+          </nav>
+          {tab === "ajout" ? (
+            <AddGamePanel />
+          ) : (
+          <>
           {!list.modification && (
             <p className="n-alert fiches-away">
               {HORS_MAISON}. <span className="n-hint">Adresse vue par le gestionnaire : {list.adresse || "?"}</span>
@@ -161,6 +176,8 @@ export function FichesButton({ offline, account, consoles }: { offline: boolean;
                 load();
               }}
             />
+          )}
+          </>
           )}
         </Dialog>
       )}
