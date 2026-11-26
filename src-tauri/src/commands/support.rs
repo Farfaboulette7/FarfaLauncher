@@ -70,7 +70,7 @@ pub struct SupportInfo {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum SupportLink {
-    /// `"type": "text"` : valeur affichée avec un bouton « Copier » (numéro TWINT, IBAN…).
+    /// `"type": "text"` : valeur simplement affichée (numéro TWINT, IBAN…), sans bouton.
     Text { label: String, value: String },
     /// `"type": "url"` : bouton qui ouvre le lien dans le navigateur ; QR code si `show_qr`.
     #[serde(rename_all = "camelCase")]

@@ -10,7 +10,7 @@
  * lecture n'est pas finie, ou si elle échoue (fichier absent, gestionnaire injoignable, JSON
  * invalide, `enabled: false`), le composant n'affiche **rien** : pas même un cadre vide.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import qrcode from "qrcode-generator";
 import { backend, SupportInfo, SupportLink } from "../api/backend";
 
@@ -48,32 +48,15 @@ export function SupportSection() {
   );
 }
 
-/** Ligne `text` : libellé, valeur, bouton « Copier » qui affiche « Copié ! » deux secondes. */
+/**
+ * Ligne `text` : libellé et valeur (numéro TWINT…), sans bouton (voulu par l'utilisateur).
+ * La valeur reste sélectionnable : un clic la sélectionne en entier (`user-select: all`).
+ */
 function TextLine({ link }: { link: Extract<SupportLink, { type: "text" }> }) {
-  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
-  const timer = useRef<number | undefined>(undefined);
-  useEffect(() => () => window.clearTimeout(timer.current), []);
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(link.value);
-      setState("copied");
-    } catch {
-      // Presse-papiers refusé (rare) : on le dit sur le bouton, la valeur reste lisible.
-      setState("failed");
-    }
-    window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => setState("idle"), 2000);
-  }
-
   return (
     <div className="support-line">
       <span className="support-label">{link.label}</span>
-      {/* `user-select: all` : un clic sélectionne toute la valeur, pour la copier à la main au besoin. */}
       <span className="support-value">{link.value}</span>
-      <button className="n-btn n-btn--sm" onClick={() => void copy()}>
-        {state === "copied" ? "Copié !" : state === "failed" ? "Copie impossible" : "Copier"}
-      </button>
     </div>
   );
 }
@@ -94,10 +77,13 @@ function UrlLine({ link }: { link: Extract<SupportLink, { type: "url" }> }) {
 
   return (
     <div className="support-line support-line--url">
-      <span className="support-label">{link.label}</span>
-      <button className="n-btn n-btn--sm" title={link.value} onClick={() => void open()}>
-        {opened ? `${link.label} ouvert ✓` : `Ouvrir ${link.label}`}
-      </button>
+      {/* Libellé, puis le bouton juste en dessous ; le QR code (s'il y en a un) à leur droite. */}
+      <div className="support-stack">
+        <span className="support-label">{link.label}</span>
+        <button className="n-btn n-btn--sm" title={link.value} onClick={() => void open()}>
+          {opened ? `${link.label} ouvert ✓` : `Ouvrir ${link.label}`}
+        </button>
+      </div>
       {link.showQr && <QrCode text={link.value} label={link.label} />}
     </div>
   );

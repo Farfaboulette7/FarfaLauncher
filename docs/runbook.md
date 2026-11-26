@@ -242,7 +242,7 @@ aux seuls comptes connectés.
   tout le monde, sans message d'erreur.
 - **Vérifier** qu'il est valide : `Get-Content Z:\FarfaRomManager\assets\soutien.json -Raw -Encoding UTF8 | ConvertFrom-Json`
   (une erreur rouge = JSON invalide, et la section est cachée).
-- Types de lignes : `"text"` (valeur + bouton « Copier »), `"url"` (bouton qui ouvre le lien,
+- Types de lignes : `"text"` (valeur affichée, sans bouton), `"url"` (bouton qui ouvre le lien,
   `https://` seulement ; `"showQr": true` ajoute un QR code calculé dans le launcher). Un autre
   type est ignoré par cette version, ce qui permet d'en ajouter plus tard.
 - Format complet, exemple et dépannage : runbook du gestionnaire, section 21 « Modifier les infos
