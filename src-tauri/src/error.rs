@@ -97,6 +97,10 @@ pub enum AppError {
     PlutoniumMissing,
     #[error("Choisissez un mode de jeu.")]
     ModeRequired,
+    /// Refus expliqué par le gestionnaire (écran « Fiches » des administrateurs : fiche invalide,
+    /// modification hors de la maison…) : son message est montré tel quel.
+    #[error("{message}")]
+    Refused { message: String },
     #[error("Le serveur a renvoyé une erreur inattendue. Réessayez plus tard.")]
     Server,
     #[error("Une erreur inattendue est survenue. Les détails sont dans les logs.")]
@@ -147,6 +151,7 @@ impl AppError {
             AppError::ProtonUnavailable => "proton_unavailable",
             AppError::PlutoniumMissing => "plutonium_missing",
             AppError::ModeRequired => "mode_required",
+            AppError::Refused { .. } => "refused",
             AppError::Server => "server",
             AppError::Internal => "internal",
         }

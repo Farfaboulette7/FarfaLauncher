@@ -1,0 +1,44 @@
+/* Écran « Fiches » des administrateurs (Fiches.tsx). Grande fenêtre : l'éditeur a besoin de place. */
+.dialog.n-panel.fiches-dialog { width: min(1100px, 100%); height: min(820px, 100%); }
+.fiches-dialog .dialog-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
+.fiches-away { margin: 0; flex: none; }
+
+.fiches-list { display: flex; flex-direction: column; gap: 18px; }
+.fiches-toolbar { display: flex; flex-wrap: wrap; gap: 10px; }
+.inbox-status.is-error { color: var(--nier-alert); }
+.fiches-error-text { color: var(--nier-alert); opacity: 1; }
+
+/* Éditeur : numéros de ligne à gauche, alignés sur le texte (même police, même interligne). */
+.fiches-editor { display: flex; flex-direction: column; gap: 10px; flex: 1 1 auto; min-height: 0; }
+.fiches-newname { display: flex; align-items: center; gap: 8px; flex: 1 1 auto; min-width: 0; }
+.fiches-newname .n-input { flex: 1 1 auto; min-width: 0; }
+.fiches-folder { flex: 0 0 180px; }
+.fiches-code {
+  display: flex; flex: 1 1 auto; min-height: 240px;
+  border: var(--nier-line) solid var(--nier-high-mid); background: var(--nier-surface);
+  font-family: Consolas, "DejaVu Sans Mono", monospace; font-size: 14px; line-height: 20px;
+}
+.fiches-gutter {
+  flex: none; overflow: hidden; padding: 8px 8px 8px 6px; min-width: 3.2em; text-align: right;
+  color: var(--nier-mid); border-right: var(--nier-line) solid var(--nier-high-mid); user-select: none;
+}
+.fiches-gutter .is-error { color: var(--nier-high); background: var(--nier-alert); }
+.fiches-text {
+  flex: 1 1 auto; min-width: 0; resize: none; margin: 0; padding: 8px 10px; border: none; outline: none;
+  font: inherit; line-height: inherit; color: inherit; background: transparent; white-space: pre; overflow: auto;
+}
+.fiches-goto { font-weight: 600; }
+
+/* Formulaire « Nouvelle recomp ». */
+.fiches-form { display: flex; flex-direction: column; gap: 10px; }
+.fiches-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px 16px; }
+.fiches-grid label { display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-sm); }
+.fiches-grid textarea { resize: vertical; font-family: inherit; }
+.fiches-game { display: grid; grid-template-columns: 2fr 1.6fr 2fr 1fr 0.8fr 1fr auto; gap: 6px; align-items: center; }
+.fiches-game .n-input { min-width: 0; }
+.fiches-console { min-width: 0; }
+.fiches-preview {
+  margin: 0; padding: 8px 10px; max-height: 220px; overflow: auto; white-space: pre;
+  font-family: Consolas, "DejaVu Sans Mono", monospace; font-size: 13px;
+  background: var(--nier-surface); border: var(--nier-line) solid var(--nier-high-mid);
+}
