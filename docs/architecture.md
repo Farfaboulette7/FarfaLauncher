@@ -48,7 +48,7 @@ fiches des recomps et des émulateurs) est décrit dans le dépôt du gestionnai
 | Module | Rôle |
 |---|---|
 | `lib.rs`, `main.rs` | Démarrage : dossiers, journaux, état partagé, liste des commandes. Fenêtre de 1440 × 880 par défaut (onglets d'un jeu sur une ligne), réduite à l'écran s'il est plus petit (`fit_to_screen`). |
-| `commands/` | Commandes appelées par l'interface : `session` (connexion), `library`, `install`, `launch`, `saves`, `mods`, `update`, `report`, `requests`, `fiches` (écran « Fiches » des administrateurs), `community`, `stats`, `presence`, `music`, `sounds`, `steam`, `system`, `window`. |
+| `commands/` | Commandes appelées par l'interface : `session` (connexion), `library`, `install`, `launch`, `saves`, `mods`, `update`, `report`, `requests`, `fiches` (écran « Fiches » des administrateurs), `service` (son onglet « Service »), `community`, `stats`, `presence`, `music`, `sounds`, `steam`, `system`, `window`. |
 | `romm/` | Client de l'API RomM : `auth` (connexion), `client` (HTTP, délais, règle du jeton), `library` (consoles, jeux), `saves`, `favorites`, `playtime`. Voir `docs/romm-api.md`. |
 | `manager.rs` | Catalogue de FarfaRomManager : recomps, émulateurs, choix de la recomp par jeu, et toutes les clés des fiches. |
 | `assets.rs` | Adresse du serveur des musiques et bruitages. |
@@ -80,7 +80,7 @@ fiches des recomps et des émulateurs) est décrit dans le dépôt du gestionnai
 | `screens/InstallPanel.tsx` | Installer, Jouer, Mettre à jour, Désinstaller, dossier des sauvegardes. |
 | `screens/ControlsTab.tsx` | Une manette par joueur. |
 | `screens/Settings.tsx`, `PcPanel.tsx` | Paramètres : Compte, RetroAchievements (pseudo lu dans RomM, bouton qui ouvre le profil RomM `<serveur>/user/<id>` où le joueur l'indique ; l'onglet Succès y mène par « Lier mon compte »), Installation, Affichage, Sons, Émulateurs, Cache et dépannage, À propos (mises à jour, canal bêta). Informations du PC. |
-| `components/` | Éléments communs : `Choice` (listes YoRHa, jamais de `<select>`), `MusicMenu`, `ReportsInbox` (Messages), `Fiches` (fiches du gestionnaire, administrateurs), `UpdateDialog`, `Downloads`, `BoxArt` (boîte 3D)… |
+| `components/` | Éléments communs : `Choice` (listes YoRHa, jamais de `<select>`), `MusicMenu`, `ReportsInbox` (Messages), `Fiches` (fiches du gestionnaire, administrateurs) et son onglet `ServicePanel`, `UpdateDialog`, `Downloads`, `BoxArt` (boîte 3D)… |
 | `api/backend.ts` | Toutes les commandes Rust, typées. |
 | `offline.ts`, `refresh.ts`, `music.ts`, `sounds.ts`, `audioGuard.ts` | Hors ligne, rafraîchissement, musique, bruitages, filet audio (Linux). |
 | `ingame/Overlay.tsx` | Menu en jeu (Select + Start maintenus). |
@@ -119,6 +119,35 @@ gestionnaire (`recomps/<Nom>.txt`, `emulateurs/<id>.txt`), lues et modifiées sa
   launcher ne fait que relayer, avec des noms de fichiers vérifiés et encodés dans l'adresse.
 - Pas sur le Steam Deck : `commands/` n'est compilé qu'avec l'interface (`gui`), NieRDeck n'a pas
   cet écran. Linux (AppImage) et Mac : même écran que Windows.
+
+#### Onglets de la fenêtre « Fiches »
+
+La fenêtre a des onglets (`ONGLETS` dans `Fiches.tsx`, style `inbox-tabs` de la fenêtre Messages) :
+« Fiches » (ci-dessus) et « Service ». Ajouter un onglet : une ligne dans `ONGLETS`, une ligne
+`{onglet === "…" && <Composant />}` dans le rendu, et le composant dans son propre fichier. Le
+bandeau « Modification possible seulement depuis la maison » ne concerne que l'onglet « Fiches ».
+
+#### Onglet « Service » (tableau de bord du gestionnaire)
+
+`components/ServicePanel.tsx` (+ `.css`) + `commands/service.rs` : le propriétaire voit d'un coup
+d'œil si le service va bien, sans SSH ni journaux. Lecture seule, aussi hors de la maison.
+
+- Source : `GET /api/service` du gestionnaire (administrateur revérifié toutes les 60 s ; détail
+  des champs dans le `README.md` du gestionnaire, mode d'emploi dans son `docs/runbook.md`,
+  « Lire le tableau de bord »). `service_status` relaie le JSON tel quel (`serde_json::Value`) :
+  un bloc que ce launcher ne connaît pas est ignoré, un bloc absent n'est pas affiché.
+- Blocs : Santé (`started`, dernier cycle réussi, état, version), Disque du NAS (place libre,
+  seuil de 200 Go), Rapports de bug en attente (par statut, plus ancien, PC de support), Demandes
+  et joueurs (nombres), En échec (recomps, émulateurs et fiches invalides, avec la raison),
+  Dernières alertes (20), Recomps et émulateurs (version, date de la release, dernier passage).
+- Couleurs : **rouge** = à faire maintenant (cycle arrêté, disque sous le seuil, un échec) ;
+  **orange** = à regarder bientôt (disque sous deux fois le seuil, cycle sans succès depuis
+  15 min, rapports `nouveau`/`réponse`/`à décider`, demandes nouvelles, PC de support éteint avec
+  des rapports en attente). Le reste est neutre.
+- « Actualiser » relit tout et affiche « Actualisé ✓ <heure> ».
+- Gestionnaire d'avant cette route (404) : `null`, l'onglet dit qu'il faut déployer le
+  gestionnaire, sans erreur. 403 (compte plus administrateur) : message d'erreur habituel.
+- Pas sur le Steam Deck (comme l'écran « Fiches »). Linux et Mac : même onglet.
 
 ## 4. Le parcours d'un joueur
 
