@@ -70,20 +70,26 @@ export function AddGamePanel() {
   const [sous, setSous] = useState("");
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<string | null>(null);
+  // « Relu ✓ » quelques secondes après « Relire » (un bouton montre toujours qu'il a agi).
+  const [reread, setReread] = useState(false);
 
-  const load = useCallback(() => {
+  const load = useCallback((manual = false) => {
     backend
       .ajoutsList()
       .then((d) => {
         setData(d);
         setError(null);
+        if (manual) {
+          setReread(true);
+          window.setTimeout(() => setReread(false), 2500);
+        }
       })
       .catch((e) => {
         setData((old) => (old === undefined ? null : old));
         setError(errorMessage(e));
       });
   }, []);
-  useEffect(load, [load]);
+  useEffect(() => load(), [load]);
 
   // Pendant qu'une demande attend le PC, le suivi (léger, sans la liste) est relu toutes les 15 s.
   const waiting = data?.demandes.some(pending) ?? false;
@@ -190,8 +196,8 @@ export function AddGamePanel() {
                 placeholder="Chercher dans Download Station"
                 aria-label="Chercher dans Download Station"
               />
-              <button className="n-btn n-btn--sm" onClick={load} title="Relire la liste">
-                Relire
+              <button className="n-btn n-btn--sm" onClick={() => load(true)} title="Relire la liste">
+                {reread ? "Relu ✓" : "Relire"}
               </button>
             </div>
             <p className="n-hint">
