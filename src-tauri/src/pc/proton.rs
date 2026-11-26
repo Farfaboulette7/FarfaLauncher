@@ -404,6 +404,12 @@ impl Runner {
             cmd.env("STEAM_COMPAT_DATA_PATH", &self.prefix)
                 .env("STEAM_COMPAT_CLIENT_INSTALL_PATH", steam.unwrap_or_else(|| self.prefix.clone()));
         }
+        // Le Steam d'un écran HDR (Steam Deck OLED…) lance ses jeux avec DXVK_HDR=1.
+        // Un jeu PC qui ne gère pas le HDR sort alors une image délavée, voilée de gris
+        // (NieR:Automata, 2026-11-27) : on le coupe, sauf demande explicite de HDR.
+        if std::env::var("PROTON_ENABLE_HDR").map_or(true, |v| v != "1") {
+            cmd.env("DXVK_HDR", "0");
+        }
         cmd.args(args);
         cmd
     }
