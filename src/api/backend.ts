@@ -837,6 +837,25 @@ export interface FicheSaved {
   empreinte: string | null;
   historique: string | null;
 }
+
+/** Onglet « Service » de l'écran « Fiches » : tableau de bord du gestionnaire (`GET /api/service`,
+ *  administrateurs, lecture seule, `commands/service.rs`). Tous les blocs sont facultatifs : un
+ *  gestionnaire plus ancien ou plus récent peut en avoir moins ou plus. Dates en secondes Unix. */
+export interface ServiceStatus {
+  genereA?: number;
+  sante?: { status: string; version: string; started: string; cycle: string | null };
+  /** Octets ; `seuil` : 200 Go (SG9), sous lequel les envois de fichiers sont refusés. */
+  disque?: { libre: number | null; total: number | null; seuil: number; alerte: boolean };
+  misesAJour?: {
+    /** `date` : date de la release (ISO) ; `verifie` : dernier passage réussi du gestionnaire. */
+    elements: { type: "recomp" | "emulateur"; id: string; nom: string; version: string | null; date: string | null; verifie: number | null; echec: boolean }[];
+    echecs: { type: "recomp" | "emulateur" | "fiche"; id: string; nom: string; raison: string; depuis: number | null; reessai: number | null }[];
+  };
+  alertes?: { at: number; titre: string; message: string }[];
+  rapports?: { parStatut: Record<string, number>; total: number; plusAncien: number | null; support: { enLigne: boolean; vuA: number | null } };
+  demandes?: { nouvelles: number; acceptees: number };
+  joueurs?: { enLigne: number; actifs7j: number };
+}
 /** Demande de jeu envoyée au gestionnaire. */
 export interface GameRequest {
   id: string;
@@ -961,6 +980,8 @@ export const backend = {
     invoke<FicheSaved>("fiche_save", { dossier, nom, texte, empreinte }),
   /** Retirer (renommée `_<nom>.txt`) ou remettre une fiche. Jamais de suppression. */
   ficheRename: (dossier: FicheDossier, nom: string, retirer: boolean) => invoke<FicheSaved>("fiche_rename", { dossier, nom, retirer }),
+  /** Tableau de bord du gestionnaire (administrateurs) ; `null` : gestionnaire trop ancien pour cet onglet. */
+  serviceStatus: () => invoke<ServiceStatus | null>("service_status"),
   /** Amis et leur présence ; `null` : gestionnaire sans la présence. */
   friends: () => invoke<Friends | null>("friends"),
   presenceHidden: () => invoke<boolean>("presence_hidden"),

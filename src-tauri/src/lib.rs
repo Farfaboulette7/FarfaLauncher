@@ -124,6 +124,7 @@ pub fn run() {
             commands::fiches::fiche_check,
             commands::fiches::fiche_save,
             commands::fiches::fiche_rename,
+            commands::service::service_status,
             commands::presence::friends,
             commands::presence::presence_hidden,
             commands::presence::set_presence_hidden,
