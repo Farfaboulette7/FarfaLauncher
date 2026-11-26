@@ -51,6 +51,12 @@ const WINDOWS_EXCLUDED_WORDS: &[&str] = &[
     "unitycrashhandler64", "createdump",
 ];
 
+/// Morceaux de nom collés à d'autres mots (`CrashReport.exe`, `CrashReportClient.exe`,
+/// `CrashSender1403.exe`…) qui désignent toujours un programme annexe. « crash » seul
+/// n'en fait pas partie : Crash Bandicoot.
+const WINDOWS_EXCLUDED_PARTS: &[&str] =
+    &["crashreport", "crashhandler", "crashsender", "crashupload", "crashdump", "crashpad", "crashrpt", "bugsplat", "bugreport"];
+
 /// Dossiers dont les exécutables ne sont jamais le jeu.
 const EXCLUDED_DIRS: &[&str] = &[
     "redist", "_commonredist", "commonredist", "__installer", "installer", "directx", "vcredist", "dotnet", "support",
@@ -118,6 +124,7 @@ pub fn is_annex_name(stem: &str) -> bool {
     // Désinstalleurs Inno Setup : unins000.exe, unins001.exe…
     WINDOWS_EXCLUDED_WORDS.contains(&stem.as_str())
         || stem.starts_with("unins")
+        || WINDOWS_EXCLUDED_PARTS.iter().any(|p| stem.contains(p))
         || words(&stem).iter().any(|w| WINDOWS_EXCLUDED_WORDS.contains(&w.as_str()))
 }
 
@@ -200,6 +207,18 @@ mod tests {
             touch(&g, f, b"MZ");
         }
         assert_eq!(find_candidates(&g, Target::Windows), [PathBuf::from("Game.exe")]);
+    }
+
+    #[test]
+    fn windows_glued_crash_reporters_are_annex() {
+        // Resident Evil Village : CrashReport.exe était proposé avant re8.exe.
+        let g = tmp("re8");
+        for f in ["re8.exe", "CrashReport.exe", "CrashReportClient.exe", "CrashSender1403.exe", "BugSplatHD64.exe"] {
+            touch(&g, f, b"MZ");
+        }
+        assert_eq!(find_candidates(&g, Target::Windows), [PathBuf::from("re8.exe")]);
+        // « crash » seul reste un nom de jeu.
+        assert!(!is_annex_name("CrashBandicootNSaneTrilogy"));
     }
 
     #[test]

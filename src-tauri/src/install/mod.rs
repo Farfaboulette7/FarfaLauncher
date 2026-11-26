@@ -684,6 +684,54 @@ pub async fn change_executable(config_dir: &Path, mut st: InstalledGame, executa
     Ok(st)
 }
 
+/// Jeux installés avec un programme annexe pour exécutable (`CrashReport.exe` de
+/// Resident Evil Village, choisi avant que la détection ne l'écarte) : s'il ne reste
+/// qu'un candidat, il le remplace. Les sauvegardes trouvées à partir du mauvais nom
+/// (`CrashReportClient\Saved`) sont oubliées si elles n'ont jamais été échangées.
+pub async fn repair_annex_executables(config_dir: &Path) -> usize {
+    let mut repaired = 0;
+    for st in state::list_installed(config_dir) {
+        let Some(exe) = st.executable.clone() else { continue };
+        let name = rel_to_path(&exe).file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+        let stem = name.strip_suffix(".exe").unwrap_or(&name).to_string();
+        if st.shared.is_some() || !detect::is_annex_name(&stem) {
+            continue;
+        }
+        let target = match &st.pc {
+            Some(pc) if pc.os == crate::pc::PcOs::Windows => Target::Windows,
+            _ => crate::platform::detect(),
+        };
+        let gd = st.game_dir.clone();
+        let candidates: Vec<String> = match blocking(move || Ok(detect::find_candidates(&gd, target).iter().map(|p| path_to_rel(p)).collect())).await {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let [good] = candidates.as_slice() else {
+            tracing::warn!("« {} » lance {exe} (programme annexe), candidats {candidates:?} : à changer depuis la fiche", st.name);
+            continue;
+        };
+        let good = good.clone();
+        let wrong_saves = st.saves.synced_hash.is_none() && st.saves.synced_server.is_none();
+        let game_name = st.name.clone();
+        match change_executable(config_dir, st, &good).await {
+            Ok(mut st) => {
+                if wrong_saves && st.saves.dir.is_some() {
+                    st.saves.dir = None;
+                    st.saves.patterns.clear();
+                    st.saves.searched_after_play = false;
+                    if let Err(e) = state::write_state(config_dir, &st) {
+                        tracing::error!("sauvegardes de « {} » non oubliées: {}", st.name, e.code());
+                    }
+                }
+                tracing::info!("« {} » : exécutable {exe} (programme annexe) remplacé par {good}", st.name);
+                repaired += 1;
+            }
+            Err(e) => tracing::error!("exécutable de « {game_name} » non réparé: {}", e.code()),
+        }
+    }
+    repaired
+}
+
 /// Désinstalle un jeu ; avec `keep_saves`, les dossiers save/saves restent en place.
 pub async fn uninstall(config_dir: &Path, st: InstalledGame, keep_saves: bool) -> AppResult<()> {
     match st.shared.clone() {

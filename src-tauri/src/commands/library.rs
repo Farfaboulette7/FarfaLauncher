@@ -99,6 +99,10 @@ async fn start_refresh(app: &AppHandle, state: &AppState) -> AppResult<LibrarySn
     if moved > 0 {
         tracing::info!("{moved} installation(s) passée(s) de portage-* à leur vraie console");
     }
+    let repaired = crate::install::repair_annex_executables(&state.config_dir).await;
+    if repaired > 0 {
+        tracing::info!("{repaired} installation(s) lançaient un programme annexe : exécutable réparé");
+    }
     let hidden: HashSet<i64> = moves.iter().map(|(old, _)| *old).collect();
     // Chargés d'avance : les recomps et les jeux installés (filtre « Installés »), même
     // rangés dans une console qui ne se charge qu'à l'ouverture de sa liste.
