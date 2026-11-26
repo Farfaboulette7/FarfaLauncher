@@ -1,0 +1,32 @@
+/* Onglet « Service » de l'écran « Fiches » (ServicePanel.tsx) : blocs du tableau de bord.
+   Rouge (--nier-alert) : à faire maintenant ; orange (--svc-warn) : à regarder bientôt ; le reste est neutre. */
+.svc-panel { --svc-warn: #c98a3b; display: flex; flex-direction: column; gap: 12px; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.svc-done { align-self: center; }
+
+.svc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+.svc-block {
+  display: flex; flex-direction: column; gap: 6px; padding: 10px 14px;
+  border: var(--nier-line) solid var(--nier-high-mid); border-left: 4px solid var(--nier-low); background: var(--nier-surface);
+}
+.svc-block.is-wide { grid-column: 1 / -1; }
+.svc-block.is-warn { border-left-color: var(--svc-warn); }
+.svc-block.is-bad { border-left-color: var(--nier-alert); background: rgba(205, 102, 77, 0.08); }
+.svc-block .n-section-title { margin: 0 0 4px; }
+
+.svc-line { display: flex; justify-content: space-between; gap: 12px; font-size: var(--fs-sm); }
+.svc-label { opacity: 0.8; }
+.svc-value { text-align: right; }
+.svc-value.is-warn, .svc-say.is-warn { color: var(--svc-warn); font-weight: 600; }
+.svc-value.is-bad, .svc-say.is-bad { color: var(--nier-alert); font-weight: 600; }
+.svc-say { font-size: var(--fs-sm); }
+
+.svc-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.svc-reason { margin: 4px 0 0 !important; font-size: var(--fs-sm); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--nier-alert); }
+.svc-reason.is-quiet { color: inherit; opacity: 0.8; }
+
+.svc-table-wrap { max-height: 320px; overflow: auto; }
+.svc-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+.svc-table th { position: sticky; top: 0; text-align: left; font-weight: 600; background: var(--nier-surface); border-bottom: var(--nier-line) solid var(--nier-low); }
+.svc-table th, .svc-table td { padding: 3px 8px; }
+.svc-table tbody tr:nth-child(even) { background: rgba(87, 84, 74, 0.05); }
+.svc-table tr.is-bad td { color: var(--nier-alert); font-weight: 600; }
