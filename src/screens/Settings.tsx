@@ -9,6 +9,7 @@ import { Dialog } from "../components/Dialog";
 import { play as playSound, reloadSounds, setSoundSettings, soundSettings } from "../sounds";
 import { musicSettings, reloadMusic, setMusicSettings } from "../music";
 import { PcPanel } from "./PcPanel";
+import { SupportSection } from "../components/SupportSection";
 import { useReveal } from "../reveal";
 import { backdropMotion, setBackdropMotion } from "../display";
 import { audioAutoDisabled, clearAudioNotice } from "../audioGuard";
@@ -497,6 +498,9 @@ export function Settings({ session, installs, onBack, onLogout, onCacheCleared, 
               )}
             </div>
           </section>
+
+          {/* Dons, tout en bas : cachée si soutien.json est absent, invalide ou désactivé. */}
+          <SupportSection />
         </main>
         <PcPanel version={version} serverUrl={session.offline ? null : session.serverUrl} />
       </div>

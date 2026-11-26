@@ -950,6 +950,14 @@ export type UpdateProgress = { event: "progress"; done: number; total: number | 
 export const INSTALL_PROGRESS_EVENT = "install-progress";
 export const INSTALL_FINISHED_EVENT = "install-finished";
 
+/** Infos de don lues à distance (`commands/support.rs`), déjà nettoyées par le Rust. */
+export interface SupportInfo {
+  message: string;
+  links: SupportLink[];
+}
+/** `text` : valeur à copier. `url` : lien https à ouvrir, avec un QR code si `showQr`. */
+export type SupportLink = { type: "text"; label: string; value: string } | { type: "url"; label: string; value: string; showQr: boolean };
+
 export const backend = {
   sessionStatus: () => invoke<SessionInfo>("session_status"),
   /** Le serveur répond-il ? (Le Rust passe en mode hors ligne ou en sort.) */
@@ -1045,6 +1053,8 @@ export const backend = {
   ficheRename: (dossier: FicheDossier, nom: string, retirer: boolean) => invoke<FicheSaved>("fiche_rename", { dossier, nom, retirer }),
   /** Tableau de bord du gestionnaire (administrateurs) ; `null` : gestionnaire trop ancien pour cet onglet. */
   serviceStatus: () => invoke<ServiceStatus | null>("service_status"),
+  /** Infos de don (section « Soutenir le projet ») ; `null` = section cachée. Ne rejette jamais. */
+  supportInfo: () => invoke<SupportInfo | null>("support_info"),
   /** Onglet « Ajouter un jeu » ; `null` : gestionnaire trop ancien (ou compte non administrateur). */
   ajoutsList: () => invoke<AjoutsList | null>("ajouts_list"),
   ajoutsSuivi: () => invoke<AjoutsSuivi | null>("ajouts_suivi"),

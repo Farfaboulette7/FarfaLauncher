@@ -228,3 +228,28 @@ La première vérifie tout (1 à 3 minutes), la seconde seulement la partie rés
 **premier** échec : le tableau de `smoke-test.md` dit quoi faire pour chaque étape.
 
 Sur GitHub, il tourne chaque matin (*Actions → Smoke test RomM*). Un échec envoie un courriel.
+
+## 4. Modifier les infos de don
+
+La section *Paramètres → Soutenir le projet* (tout en bas) n'a rien d'écrit dans le code : elle
+lit à chaque ouverture des paramètres le fichier **`soutien.json` du gestionnaire**, sur le NAS
+dans `Z:\FarfaRomManager\assets\soutien.json`. Il est servi par `GET <gestionnaire>/soutien.json`,
+aux seuls comptes connectés.
+
+- **Changer** le message, le numéro ou un lien : modifier ce fichier (UTF-8) et enregistrer. Pas
+  de redémarrage ni de nouvelle version : il suffit de rouvrir les paramètres.
+- **Désactiver** : mettre `"enabled": false` (ou renommer le fichier). La section disparaît chez
+  tout le monde, sans message d'erreur.
+- **Vérifier** qu'il est valide : `Get-Content Z:\FarfaRomManager\assets\soutien.json -Raw -Encoding UTF8 | ConvertFrom-Json`
+  (une erreur rouge = JSON invalide, et la section est cachée).
+- Types de lignes : `"text"` (valeur + bouton « Copier »), `"url"` (bouton qui ouvre le lien,
+  `https://` seulement ; `"showQr": true` ajoute un QR code calculé dans le launcher). Un autre
+  type est ignoré par cette version, ce qui permet d'en ajouter plus tard.
+- Format complet, exemple et dépannage : runbook du gestionnaire, section 21 « Modifier les infos
+  de don ».
+
+Code : `src-tauri/src/commands/support.rs` (lecture, délai de 3 s, règles de validation,
+constante `SUPPORT_PATH` = chemin du fichier sur le gestionnaire) et
+`src/components/SupportSection.tsx` (affichage). Le journal du launcher note pourquoi la
+section est cachée (lignes « soutien : »). Pas sur le Steam Deck (NieRDeck n'a pas d'écran de
+paramètres).

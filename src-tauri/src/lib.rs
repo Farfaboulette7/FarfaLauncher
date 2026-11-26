@@ -125,6 +125,7 @@ pub fn run() {
             commands::fiches::fiche_save,
             commands::fiches::fiche_rename,
             commands::service::service_status,
+            commands::support::support_info,
             commands::ajouts::ajouts_list,
             commands::ajouts::ajouts_suivi,
             commands::ajouts::ajout_create,

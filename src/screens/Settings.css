@@ -67,3 +67,15 @@
 
 /* Liste de la limite de débit, à droite de son libellé. */
 .settings-limit { width: auto; min-width: 9em; margin-left: auto; }
+
+/* Section « Soutenir le projet » (components/SupportSection.tsx), tout en bas des paramètres. */
+.support-links { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 14px; }
+/* Une ligne : libellé, valeur ou bouton, puis le QR code s'il y en a un. */
+.support-line { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; font-size: var(--fs-sm); }
+.support-label { min-width: 6em; }
+/* Valeur à copier (numéro TWINT…) : un clic la sélectionne en entier. */
+.support-value { user-select: all; letter-spacing: var(--nier-tracking-wide); }
+/* QR code : modules foncés sur fond clair, couleurs du thème mais bien contrastées pour un téléphone. */
+.support-qr { flex-basis: 100%; width: 160px; height: 160px; max-width: 160px; }
+.support-qr-bg { fill: var(--nier-high); }
+.support-qr-fg { fill: var(--nier-ink); }

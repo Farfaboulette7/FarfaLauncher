@@ -16,6 +16,7 @@ pub mod presence;
 pub mod requests;
 pub mod fiches;
 pub mod service;
+pub mod support;
 pub mod ajouts;
 pub mod window;
 
@@ -45,7 +46,11 @@ pub fn open_url(app: tauri::AppHandle, state: State<'_, AppState>, url: String) 
     // N'ouvre que des pages du serveur RomM configuré (ex. page d'approbation)…
     let server = state.server_url()?;
     // … ou le dépôt GitHub d'une recomp ou d'un émulateur connus.
-    let known_repo = state.catalog().knows_repo(&url) || state.manifest().runtimes.iter().any(|r| r.repo == url);
+    // … ou un lien `url` de la section « Soutenir le projet », tel que lu à l'ouverture des
+    // paramètres (commands/support.rs) : comme un dépôt, il doit être en `https://`.
+    let known_repo = state.catalog().knows_repo(&url)
+        || state.manifest().runtimes.iter().any(|r| r.repo == url)
+        || support::is_support_link(&url);
     if !url_allowed(&url, &server, known_repo) {
         tracing::warn!("adresse refusée à l'ouverture : {url}");
         return Err(AppError::Internal);
