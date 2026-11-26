@@ -135,7 +135,7 @@ Pour revenir en arrière :
   L'historique d'un jeu d'émulateur ne commence qu'avec ce launcher : les versions remplacées
   avant n'existent plus (RomM ne garde que la dernière).
 - Restauration impossible sur un jeu d'émulateur (erreur) : le launcher n'a pas pu recopier la
-  sauvegarde actuelle de RomM dans l'historique (réseau, quota de 20 Go du compte, disque du
+  sauvegarde actuelle de RomM dans l'historique (réseau, quota de 10 Go des copies RomM du compte, disque du
   NAS) ; il s'arrête alors sans rien changer. Voir le journal (`copiée sur le gestionnaire`,
   `non comparée à sa copie`).
 - À la main, sans launcher (administrateur) : les versions d'un jeu d'émulateur sont dans

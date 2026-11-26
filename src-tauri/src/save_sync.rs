@@ -110,7 +110,7 @@ fn reenable_if_found(config_dir: &std::path::Path, st: &mut InstalledGame) -> bo
 }
 
 fn store_of(state: &AppState, client: RommClient, st: &InstalledGame) -> SaveStore {
-    SaveStore::of(&state.catalog(), &state.settings(), client, st)
+    SaveStore::of(&state.config_dir, &state.catalog(), &state.settings(), client, st)
 }
 
 fn server_unavailable(e: &AppError) -> bool {

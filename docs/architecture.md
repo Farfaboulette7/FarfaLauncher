@@ -129,17 +129,22 @@ taille), gardées par FarfaRomManager, pour tous les jeux.
   launcher envoie **une copie** au gestionnaire, sous `api/saves/jeux.romm/<id RomM>` (avec
   l'en-tête `X-Farfa-Device`). Le gestionnaire la traite comme une sauvegarde de recomp :
   l'ancienne copie passe dans l'historique (10 gardées, les plus anciennes effacées), quota de
-  20 Go par compte et seuil de disque (SG9). Une copie qui échoue n'empêche jamais l'envoi.
+  10 Go par compte, à part de celui des recomps qu'il ne bloque jamais, et seuil de disque (SG9). Une copie qui échoue n'empêche jamais l'envoi.
   - Lire l'historique : le launcher compare d'abord la sauvegarde actuelle de RomM au SHA-1 de
     la copie ; si elles diffèrent (envoi d'un ancien launcher, copie ratée), il la recopie sans
-    nom d'appareil, et l'ancienne copie passe dans l'historique.
-  - Restaurer : même contrôle, **obligatoire** (en cas d'erreur, rien n'est changé), puis
+    nom d'appareil, et l'ancienne copie passe dans l'historique. Pour ne pas retélécharger à
+    chaque ouverture, `romm-saves-copied.json` (dossier de réglages) note, par jeu, la date RomM
+    (`updated_at`) de la dernière sauvegarde dont la copie est à jour : même date, rien n'est
+    téléchargé. Fichier perdu ou abîmé : tout est simplement recomparé.
+  - Restaurer : même contrôle, complet (sans le mémo) et **obligatoire** (en cas d'erreur, rien
+    n'est changé), puis
     restauration sur le gestionnaire (l'actuelle passe dans l'historique), téléchargement de la
     version et envoi à RomM, enfin sur l'appareil (copie de la locale dans
     `.farfalauncher/backups/`, comme « Prendre celle du serveur »). Si l'envoi à RomM échoue,
     RomM garde l'actuelle, qui est déjà dans l'historique : on peut recommencer.
-  - Gestionnaire d'avant (404 sur la copie) ou aucun gestionnaire : pas d'historique, message
-    « Pas d'historique pour ce jeu ». Le reste marche comme avant.
+  - Gestionnaire d'avant (404 sur la copie, ou réponse de `…/history` sans l'en-tête
+    `X-Farfa-Historique-Romm`) ou aucun gestionnaire : pas d'historique, message « Pas
+    d'historique pour … ». Le reste marche comme avant.
 - Pourquoi pas dans RomM ? RomM 5.4.1 sait garder des versions (« slots », `romm-api.md` §7),
   mais l'appareil n'y est connu qu'avec un nouveau scope (`devices.write`, reconnexion de tous
   les joueurs), les anciens launchers ne verraient plus les nouvelles sauvegardes, et c'est
