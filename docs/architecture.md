@@ -144,6 +144,8 @@ d'œil si le service va bien, sans SSH ni journaux. Lecture seule, aussi hors de
   **orange** = à regarder bientôt (disque sous deux fois le seuil, cycle sans succès depuis
   15 min, rapports `nouveau`/`réponse`/`à décider`, demandes nouvelles, PC de support éteint avec
   des rapports en attente). Le reste est neutre.
+- Heures de la santé : `startedAt` et `cycleAt` (secondes Unix) ; `started` et `cycle` de `/health` sont
+  des heures locales du conteneur sans fuseau, qui fausseraient « il y a … » et l'orange du cycle.
 - « Actualiser » relit tout et affiche « Actualisé ✓ <heure> ».
 - Gestionnaire d'avant cette route (404) : `null`, l'onglet dit qu'il faut déployer le
   gestionnaire, sans erreur. 403 (compte plus administrateur) : message d'erreur habituel.

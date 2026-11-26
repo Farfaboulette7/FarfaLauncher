@@ -121,7 +121,8 @@ function Tableau({ etat }: { etat: ServiceStatus }) {
   const { sante, disque, misesAJour, alertes, rapports, demandes, joueurs } = etat;
 
   // Santé : rouge si le cycle est arrêté, orange s'il n'a pas réussi depuis un moment.
-  const cycleS = sante?.cycle ? new Date(sante.cycle).getTime() / 1000 : null;
+  // Secondes Unix (`cycleAt`) : les heures en texte de /health n'ont pas de fuseau, l'écart serait faux.
+  const cycleS = sante?.cycleAt ?? null;
   const cycleEnRetard = cycleS !== null && Date.now() / 1000 - cycleS > CYCLE_EN_RETARD_S;
   const tonSante: Ton = sante && sante.status !== "ok" ? "is-bad" : cycleEnRetard ? "is-warn" : "";
 
@@ -142,9 +143,9 @@ function Tableau({ etat }: { etat: ServiceStatus }) {
             {sante.status === "ok" ? "ok ✓" : sante.status}
           </Ligne>
           <Ligne label="Dernier cycle réussi" ton={cycleEnRetard ? "is-warn" : ""}>
-            {sante.cycle ? `${quand(sante.cycle)} (${ilYa(cycleS)})` : "pas encore"}
+            {cycleS ? `${quand(cycleS)} (${ilYa(cycleS)})` : "pas encore"}
           </Ligne>
-          <Ligne label="Démarré">{quand(sante.started)}</Ligne>
+          <Ligne label="Démarré">{quand(sante.startedAt ?? sante.started)}</Ligne>
           <Ligne label="Version">{sante.version}</Ligne>
         </Bloc>
       )}

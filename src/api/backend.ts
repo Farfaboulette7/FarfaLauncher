@@ -843,7 +843,9 @@ export interface FicheSaved {
  *  gestionnaire plus ancien ou plus récent peut en avoir moins ou plus. Dates en secondes Unix. */
 export interface ServiceStatus {
   genereA?: number;
-  sante?: { status: string; version: string; started: string; cycle: string | null };
+  /** `started` et `cycle` : heures locales du conteneur, sans fuseau (comme `/health`) ; l'interface
+   *  utilise `startedAt` et `cycleAt` (secondes Unix), sans ambiguïté de fuseau. */
+  sante?: { status: string; version: string; started: string; cycle: string | null; startedAt?: number; cycleAt?: number | null };
   /** Octets ; `seuil` : 200 Go (SG9), sous lequel les envois de fichiers sont refusés. */
   disque?: { libre: number | null; total: number | null; seuil: number; alerte: boolean };
   misesAJour?: {
