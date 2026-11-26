@@ -740,6 +740,55 @@ export interface RankingRow {
   sessions?: number;
 }
 
+/** Un succès RetroAchievements d'un jeu (`achievements.rs`). */
+export interface Achievement {
+  id: number | null;
+  title: string;
+  description: string;
+  points: number;
+  /** Image du badge sur RomM (à passer à `useCachedImage`), en couleur et grisée. */
+  badgeUrl: string | null;
+  badgeLockUrl: string | null;
+  /** Date du déblocage (RFC 3339), `null` s'il ne l'est pas. */
+  unlocked: string | null;
+  unlockedHardcore: string | null;
+  /** `progression`, `win_condition`, `missable`… */
+  kind: string | null;
+  /** Joueurs RetroAchievements qui l'ont. */
+  players: number | null;
+}
+
+/** Succès RetroAchievements d'un jeu et progression du joueur. */
+export interface GameAchievements {
+  raId: number;
+  /** Le joueur a mis son pseudo RetroAchievements dans son profil RomM. */
+  linked: boolean;
+  /** RomM a déjà relu sa progression sur ce jeu. */
+  progressKnown: boolean;
+  total: number;
+  totalPoints: number;
+  earned: number;
+  earnedHardcore: number;
+  earnedPoints: number;
+  /** `mastered`, `completed`, `beaten-hardcore`, `beaten-softcore`. */
+  award: string | null;
+  lastUnlock: string | null;
+  achievements: Achievement[];
+}
+
+/** Progression d'un ami sur un jeu (gestionnaire, `/api/succes/jeux/<raId>`). */
+export interface FriendAchievements {
+  id: number;
+  username: string;
+  avatar: boolean;
+  earned: number;
+  earnedHardcore: number;
+  total: number;
+  award: string | null;
+  /** Date du dernier succès, `null` si l'ami apparaît hors ligne. */
+  last: string | null;
+}
+
 export type GameRequestStatus = "nouveau" | "accepté" | "refusé" | "ajouté";
 /** Demande de jeu envoyée au gestionnaire. */
 export interface GameRequest {
@@ -865,6 +914,10 @@ export const backend = {
   playerStats: (id: number | null) => invoke<PlayerStats | null>("player_stats", { id }),
   statsRanking: () => invoke<RankingRow[] | null>("stats_ranking"),
   gameRanking: (romId: number) => invoke<RankingRow[] | null>("game_ranking", { romId }),
+  /** `null` : le jeu n'a pas de succès RetroAchievements. */
+  gameAchievements: (romId: number) => invoke<GameAchievements | null>("game_achievements", { romId }),
+  /** `null` : gestionnaire trop ancien. */
+  achievementsFriends: (raId: number) => invoke<FriendAchievements[] | null>("achievements_friends", { raId }),
   /** Avis des joueurs sur un jeu (notes RomM publiques) et l'ID du joueur. */
   gameReviews: (romId: number) => invoke<{ me: number; notes: RommNote[] }>("game_reviews", { romId }),
   saveGameReview: (romId: number, noteId: number | null, content: string, rating: number | null, difficulty: number | null, completion: number | null) =>

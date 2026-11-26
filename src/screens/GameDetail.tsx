@@ -11,6 +11,7 @@ import { FullscreenButton } from "../components/FullscreenButton";
 import { MusicMenu } from "../components/MusicMenu";
 import { ReportsInbox } from "../components/ReportsInbox";
 import { CommunityTab } from "../components/CommunityTab";
+import { AchievementsSection } from "../components/AchievementsSection";
 import { SubTabs } from "../components/SubTabs";
 import { useReveal } from "../reveal";
 import "./GameDetail.css";
@@ -252,6 +253,7 @@ function InfoTab({ game, target, installs, onError }: { game: Game; target: Targ
           </dl>
         </section>
       </div>
+      <AchievementsSection romId={game.id} refreshKey={refreshKey} />
       {manualOpen && createPortal(<ManualFull game={game} onError={onError} onClose={() => setManualOpen(false)} />, document.body)}
     </div>
   );
