@@ -363,7 +363,8 @@ pub async fn after_play(state: &AppState, client: Option<RommClient>, rom_id: i6
 }
 
 /// Versions précédentes de la sauvegarde du jeu sur le serveur ; `None` : pas d'historique
-/// pour ce jeu (sauvegarde gardée par RomM).
+/// (aucun gestionnaire, ou gestionnaire pas encore à jour pour les jeux gardés par RomM).
+/// Recomps et jeux RomM (émulateurs, jeux PC) : même réponse, voir `save_store`.
 pub async fn history(state: &AppState, rom_id: i64) -> AppResult<Option<Vec<crate::save_store::SaveVersion>>> {
     let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
     let store = store_of(state, state.online_client()?, &st);
