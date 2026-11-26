@@ -35,6 +35,9 @@ export function AchievementsSection({ romId, refreshKey }: { romId: number; refr
 
   useEffect(() => {
     let alive = true;
+    // Autre jeu : rien de l'ancien ne reste affiché (amis, liste dépliée).
+    setFriends(null);
+    setAll(false);
     backend
       .gameAchievements(romId)
       .then((d) => {

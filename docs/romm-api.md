@@ -315,7 +315,8 @@ section « Succès » de l'onglet Informations, commande `succes` du moteur du D
   est réservé à l'administrateur. Le gestionnaire le lit déjà pour la liste des amis et
   redonne le résumé par jeu : `GET /api/succes/jeux/<ra_id>` du gestionnaire →
   `[{id, username, avatar, earned, earnedHardcore, total, award, last}]` (sans le joueur
-  lui-même ; 404 avec un gestionnaire plus ancien, et la section s'affiche sans les amis).
+  lui-même, et seulement les comptes qui ont déjà ouvert le launcher ; 404 avec un gestionnaire
+  plus ancien, et la section s'affiche sans les amis).
 - Autres routes RA de RomM, non utilisées : `GET /api/roms/by-metadata-provider?ra_id=` (une
   ROM par identifiant RetroAchievements), `GET /api/roms/by-hash?ra_hash=`.
 
