@@ -45,7 +45,7 @@ La dernière ligne construit **la** version de test :
 - Sans `npm run build` avant, l'exe embarque l'ancienne interface.
 - Binaire du Deck : `cd src-tauri && cargo build --no-default-features --bin farfalauncherdeck`.
 - `cargo` échoue sur `sdl3-sys` (« cmake not found ») après un `target-test` vidé : ajouter au PATH
-  `C:\Program Files (x86)\Microsoft Visual Studio2\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMakein`
+  `C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin`
   (cmake des Build Tools de Visual Studio, absent du PATH de Git Bash).
 - Smoke test (vrais serveurs, lecture seule) : double-clic sur `scripts\smoke-test.bat`
   (`docs/smoke-test.md`).
