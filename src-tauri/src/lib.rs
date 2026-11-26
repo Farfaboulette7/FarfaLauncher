@@ -1,6 +1,7 @@
 // Sans la feature `gui` (programme du Steam Deck), une partie du moteur ne sert pas.
 #![cfg_attr(not(feature = "gui"), allow(dead_code, unused_imports))]
 
+mod achievements;
 mod assets;
 mod cache;
 #[cfg(feature = "gui")]
@@ -132,6 +133,8 @@ pub fn run() {
             commands::community::delete_game_review,
             commands::community::game_reports,
             commands::stats::game_ranking,
+            commands::stats::game_achievements,
+            commands::stats::achievements_friends,
             commands::stats::set_stats_hidden,
             commands::update::install_update,
             commands::update::install_test_version,

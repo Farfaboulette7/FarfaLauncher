@@ -1,4 +1,5 @@
-//! Statistiques entre amis : profil, classements et « Masquer mes statistiques » (voir `crate::stats`).
+//! Statistiques entre amis : profil, classements et « Masquer mes statistiques » (voir `crate::stats`),
+//! et succès RetroAchievements d'un jeu (voir `crate::achievements`).
 
 use serde_json::Value;
 use tauri::{AppHandle, Manager, State};
@@ -42,4 +43,16 @@ pub async fn game_ranking(state: State<'_, AppState>, rom_id: i64) -> AppResult<
 pub async fn set_stats_hidden(state: State<'_, AppState>, hidden: bool) -> AppResult<bool> {
     crate::stats::set_hidden(&state, hidden).await?;
     Ok(hidden)
+}
+
+/// Succès RetroAchievements d'un jeu et progression du joueur (`None` : pas de succès).
+#[tauri::command]
+pub async fn game_achievements(state: State<'_, AppState>, rom_id: i64) -> AppResult<Option<crate::achievements::GameAchievements>> {
+    crate::achievements::game(&state, rom_id).await
+}
+
+/// Progression des amis sur ce jeu (`None` : gestionnaire trop ancien).
+#[tauri::command]
+pub async fn achievements_friends(state: State<'_, AppState>, ra_id: i64) -> AppResult<Option<Value>> {
+    crate::achievements::friends(&state, ra_id).await
 }

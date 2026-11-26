@@ -63,6 +63,7 @@ fiches des recomps et des émulateurs) est décrit dans le dépôt du gestionnai
 | `shaders.rs`, `switch_content.rs`, `switch_saves.rs`, `n3ds.rs` | Cas propres à Switch et 3DS, pilotés par les clés des fiches. |
 | `save_sync.rs`, `save_store.rs`, `saves.rs` | Sauvegardes : comparaison, envoi, restauration. |
 | `stats.rs`, `presence.rs`, `report.rs` | Statistiques entre amis, présence, rapports de bug (vers le gestionnaire). |
+| `achievements.rs` | Succès RetroAchievements d'un jeu : liste et progression du joueur lues dans RomM (`/api/roms/<id>/simple`, `/api/users/me`), progression des amis lue au gestionnaire (`/api/succes/jeux/<raId>`). Voir `docs/romm-api.md` §8. |
 | `runtimes.rs` | Recomps à plusieurs jeux (Gen1recomp…). |
 | `settings.rs`, `secrets.rs`, `safe_file.rs`, `cache.rs`, `logging.rs`, `state.rs`, `error.rs` | Réglages, jeton, écriture sûre, cache, journaux, état partagé, erreurs. |
 | `dialogs.rs`, `ingame.rs` | Windows seulement : réponse automatique aux fenêtres d'un émulateur, menu en jeu. |
@@ -75,7 +76,7 @@ fiches des recomps et des émulateurs) est décrit dans le dépôt du gestionnai
 | `App.tsx` | Choisit l'écran : connexion ou bibliothèque. Intro, fenêtre de mise à jour. |
 | `screens/Login.tsx` | Adresse du serveur, puis code appareil (ou code d'appairage, ou jeton collé). |
 | `screens/Library.tsx` | Bibliothèque : en-tête (joueur, actions), onglets, recherche, grille. Ouvre les Paramètres et la fiche d'un jeu. |
-| `screens/GameDetail.tsx` | Fiche d'un jeu, onglets Informations, Médias, Contrôles, Communauté. |
+| `screens/GameDetail.tsx` | Fiche d'un jeu, onglets Informations, Médias, Contrôles, Succès, Communauté. L'onglet Succès (`components/AchievementsTab.tsx`, succès RetroAchievements) n'apparaît que si le jeu en a : `GameDetail` les lit à l'ouverture, après chaque partie et à chaque « Rafraîchir ». |
 | `screens/InstallPanel.tsx` | Installer, Jouer, Mettre à jour, Désinstaller, dossier des sauvegardes. |
 | `screens/ControlsTab.tsx` | Une manette par joueur. |
 | `screens/Settings.tsx`, `PcPanel.tsx` | Paramètres : Compte, Installation, Affichage, Sons, Émulateurs, Cache et dépannage, À propos (mises à jour, canal bêta). Informations du PC. |
@@ -179,6 +180,9 @@ chaque release.
 - Réglages, jeton (`token`, 0600) et journaux (`logs/`) dans `~/.config/farfalauncherdeck/`.
 - NieRDeck télécharge lui-même le moteur depuis la dernière release quand il est plus récent.
 - Conflit de sauvegarde sur le Deck : la plus récente gagne.
+- `succes <id>` donne les succès RetroAchievements d'un jeu (même contenu que l'onglet Succès
+  du launcher, plus `friends`) ; les badges se téléchargent avec `image`. L'écran de NieRDeck qui
+  les montre reste à faire.
 
 Conséquence : toucher à `play.rs`, `save_sync.rs`, `install/` ou `pc/`, c'est aussi toucher
 au Deck. La CI compile le moteur à chaque push (`ci.yml`, job `deck`). Le smoke test utilise
