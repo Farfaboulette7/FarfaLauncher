@@ -756,7 +756,7 @@ export interface FicheInfo {
 }
 
 export interface FichesList {
-  /** L'adresse vue par le gestionnaire permet d'écrire (maison ou VPN). */
+  /** L'adresse vue par le gestionnaire permet d'écrire (maison seulement). */
   modification: boolean;
   adresse: string;
   fiches: FicheInfo[];

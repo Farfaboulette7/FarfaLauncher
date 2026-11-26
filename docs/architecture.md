@@ -95,7 +95,8 @@ gestionnaire (`recomps/<Nom>.txt`, `emulateurs/<id>.txt`), lues et modifiées sa
 - Entrée : une icône dans `lib-actions`, à côté des Messages, **seulement** si `fiches_list`
   répond (compte `admin` selon `GET /api/me` du gestionnaire, et gestionnaire qui a
   `/api/fiches`). Pour les autres comptes et avec un ancien gestionnaire (404), rien ne s'affiche.
-  La liste est demandée une fois au démarrage (sans son d'erreur), puis à chaque ouverture.
+  La liste est demandée une fois par compte (sans son d'erreur ; gardée par compte, pour qu'un
+  autre compte après une déconnexion ne voie jamais celle du précédent), puis à chaque ouverture.
 - Liste : état de chaque fiche (valide, invalide avec l'erreur, retirée = `_<nom>.txt`).
 - « + Nouvelle recomp » : formulaire des clés principales (`recomp:`, `exe:`, `argument:`,
   `remarque:`, `dossier-mods:`, `jeux:` avec la console prise dans la liste de RomM + « Autre »),
@@ -105,8 +106,12 @@ gestionnaire (`recomps/<Nom>.txt`, `emulateurs/<id>.txt`), lues et modifiées sa
   affiché a été vérifié valide), « Retirer » (en deux clics) / « Remettre en service ».
   L'enregistrement renvoie l'empreinte de la version ouverte : une fiche changée entre-temps est
   refusée par le gestionnaire plutôt qu'écrasée.
-- Hors de la maison et du VPN (`modification: false`), le message « Modification possible
-  seulement depuis la maison ou le VPN » s'affiche et les boutons d'écriture sont désactivés.
+- Hors de la maison (`modification: false`), le message « Modification possible seulement
+  depuis la maison » s'affiche, avec l'adresse vue par le gestionnaire, et les boutons d'écriture
+  sont désactivés. L'écriture ne marche **que depuis la maison**, et seulement si le PC joint le
+  gestionnaire directement sur le réseau local : une ligne dans le fichier `hosts` du PC qui mène
+  le nom du gestionnaire à l'adresse locale du NAS (sinon la box renvoie la connexion avec son
+  adresse publique). Pas par le VPN. Procédure exacte : `docs/ajouter-un-jeu.md` du gestionnaire.
 - Les refus expliqués du gestionnaire (`{"detail": …}` en 400/403/404/409/413/422) deviennent
   `AppError::Refused` : leur message s'affiche tel quel.
 - Tous les contrôles de sécurité sont dans le gestionnaire (son `docs/securite.md`, SG18) : le

@@ -3,7 +3,7 @@
 //! passer par le partage du NAS.
 //!
 //! Tout le contrôle est fait par le gestionnaire (`/api/fiches`, voir son `docs/securite.md`) :
-//! compte administrateur de RomM, écriture seulement depuis la maison ou le VPN, fiche validée
+//! compte administrateur de RomM, écriture seulement depuis la maison (pas par le VPN), fiche validée
 //! avant d'être écrite, ancienne version gardée, jamais de suppression. Ici, on ne fait que
 //! relayer, avec des noms de fichiers contrôlés et encodés dans l'adresse.
 //!
@@ -35,7 +35,7 @@ pub struct FicheInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FichesList {
-    /// L'adresse vue par le gestionnaire permet d'écrire (réseau local ou VPN).
+    /// L'adresse vue par le gestionnaire permet d'écrire (réseau local de la maison).
     pub modification: bool,
     /// Adresse vue par le gestionnaire (aide quand la modification est refusée).
     #[serde(default)]
@@ -136,6 +136,10 @@ fn refusal(status: u16, body: &str) -> AppError {
         .ok()
         .and_then(|v| v.get("detail").and_then(|d| d.as_str()).map(str::to_string));
     match (status, detail) {
+        // Réponse de FastAPI pour une route absente : gestionnaire trop ancien, ou fiche disparue.
+        (404, Some(message)) if message == "Not Found" => AppError::Refused {
+            message: "Fiche introuvable, ou gestionnaire trop ancien pour cet écran.".to_string(),
+        },
         (_, Some(message)) if !message.trim().is_empty() => AppError::Refused { message: truncate(message.trim(), 500).to_string() },
         (403, _) => AppError::Forbidden,
         _ => AppError::Server,
@@ -220,8 +224,10 @@ mod tests {
 
     #[test]
     fn manager_refusal_is_shown_as_its_message() {
-        let e = refusal(403, r#"{"detail":"Modification possible seulement depuis la maison ou le VPN"}"#);
-        assert_eq!(e.to_string(), "Modification possible seulement depuis la maison ou le VPN");
+        let e = refusal(403, r#"{"detail":"Modification possible seulement depuis la maison"}"#);
+        assert_eq!(e.to_string(), "Modification possible seulement depuis la maison");
+        // « Not Found » de FastAPI (route absente) : traduit.
+        assert_eq!(refusal(404, r#"{"detail":"Not Found"}"#).to_string(), "Fiche introuvable, ou gestionnaire trop ancien pour cet écran.");
         assert_eq!(e.code(), "refused");
         assert!(matches!(refusal(403, "<html>403</html>"), AppError::Forbidden));
         assert!(matches!(refusal(409, ""), AppError::Server));

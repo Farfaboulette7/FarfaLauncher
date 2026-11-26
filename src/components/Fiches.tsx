@@ -5,7 +5,7 @@
 // - La liste : état de chaque fiche (valide, invalide, retirée).
 // - `NewRecompForm` : formulaire des clés principales, qui produit le texte d'une nouvelle recomp.
 // - `FicheEditor` : texte de la fiche, numéros de ligne, « Vérifier » (validateur du gestionnaire)
-//   et « Enregistrer » (seulement une fois vérifiée, et seulement depuis la maison ou le VPN).
+//   et « Enregistrer » (seulement une fois vérifiée, et seulement depuis la maison).
 // Le gestionnaire refait tous les contrôles (docs/securite.md des deux dépôts).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { backend, errorMessage, FicheContent, FicheDossier, FicheInfo, FichesList, FicheVerdict } from "../api/backend";
@@ -14,8 +14,8 @@ import { Dialog } from "./Dialog";
 import "./ReportsInbox.css";
 import "./Fiches.css";
 
-/** Message du gestionnaire quand l'adresse n'est ni celle de la maison ni celle du VPN. */
-const HORS_MAISON = "Modification possible seulement depuis la maison ou le VPN";
+/** Message du gestionnaire quand l'adresse n'est pas celle de la maison (le VPN ne suffit pas). */
+const HORS_MAISON = "Modification possible seulement depuis la maison";
 const DOSSIERS: { value: FicheDossier; label: string }[] = [
   { value: "recomps", label: "Recomps" },
   { value: "emulateurs", label: "Émulateurs" },
@@ -47,12 +47,16 @@ function normalize(t: string): string {
   return s.endsWith("\n") ? s : s + "\n";
 }
 
-/** Dernière liste reçue (undefined : jamais demandée). L'icône est dans l'en-tête de la bibliothèque
- *  et de chaque page de jeu : sans ce cache, chaque changement de page redemanderait la liste. */
-let lastList: FichesList | null | undefined;
+/** Dernière liste reçue, avec le compte qui l'a reçue. L'icône fait partie des boutons de l'en-tête,
+ *  affichés tantôt par la bibliothèque, tantôt par la page d'un jeu : elle est recréée à chaque
+ *  passage de l'une à l'autre. Sans ce cache, chaque passage redemanderait la liste. Il est rangé par
+ *  compte : après une déconnexion, un autre compte ne voit jamais la liste (ou l'absence de liste)
+ *  du précédent. */
+let lastList: { account: string; list: FichesList | null } | undefined;
 
-export function FichesButton({ offline, consoles }: { offline: boolean; consoles: FicheConsole[] }) {
-  const [list, setList] = useState<FichesList | null>(lastList ?? null);
+export function FichesButton({ offline, account, consoles }: { offline: boolean; account: string; consoles: FicheConsole[] }) {
+  const cached = lastList?.account === account ? lastList.list : null;
+  const [list, setList] = useState<FichesList | null>(cached);
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<View>({ kind: "list" });
   const [error, setError] = useState<string | null>(null);
@@ -66,18 +70,21 @@ export function FichesButton({ offline, consoles }: { offline: boolean; consoles
     backend
       .fichesList()
       .then((l) => {
-        lastList = l;
+        lastList = { account, list: l };
         setList(l);
         setError(null);
       })
       .catch((e) => {
         if (!quiet) setError(errorMessage(e));
       });
-  }, [offline]);
-  // Une seule demande au démarrage ; ensuite, la liste est rechargée à chaque ouverture.
+  }, [offline, account]);
+  // Une seule demande par compte ; ensuite, la liste est rechargée à chaque ouverture.
   useEffect(() => {
-    if (lastList === undefined) load(true);
-  }, [load]);
+    if (lastList?.account !== account) {
+      setList(null);
+      load(true);
+    }
+  }, [load, account]);
 
   if (!list) return null;
 
