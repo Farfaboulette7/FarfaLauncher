@@ -159,7 +159,8 @@ bêta, `commands/update.rs`).
 - Messages (`ReportsInbox.tsx`) : Nouvelles versions, Toutes les demandes (admin), Mes demandes,
   Mes signalements.
 - Fiches (`Fiches.tsx`, administrateurs seulement) : icône à côté des Messages, fiches du
-  gestionnaire à lire, vérifier et modifier (`docs/architecture.md`, « Écran Fiches »).
+  gestionnaire à lire, vérifier et modifier (`docs/architecture.md`, « Écran Fiches »), et
+  onglet « Ajouter un jeu » (`AddGamePanel.tsx` : Download Station vers RomM, par le PC du propriétaire).
 - Un bouton montre toujours qu'il a agi (« Envoyé ✓ »…).
 
 ## Pièges

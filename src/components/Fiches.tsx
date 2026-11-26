@@ -6,11 +6,12 @@
 // - `NewRecompForm` : formulaire des clés principales, qui produit le texte d'une nouvelle recomp.
 // - `FicheEditor` : texte de la fiche, numéros de ligne, « Vérifier » (validateur du gestionnaire)
 //   et « Enregistrer » (seulement une fois vérifiée, et seulement depuis la maison).
-// - Onglets (`ONGLETS`) : « Fiches » (ce fichier) et « Service » (tableau de bord du gestionnaire,
-//   `ServicePanel.tsx`). Un nouvel onglet : une ligne dans ONGLETS et une ligne dans le rendu.
+// - Onglets (`ONGLETS`) : « Fiches » (ce fichier), « Service » (tableau de bord du gestionnaire,
+//   `ServicePanel.tsx`) et « Ajouter un jeu » (Download Station vers RomM, `AddGamePanel.tsx`). Un nouvel onglet : une ligne dans ONGLETS et une ligne dans le rendu.
 // Le gestionnaire refait tous les contrôles (docs/securite.md des deux dépôts).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { backend, errorMessage, FicheContent, FicheDossier, FicheInfo, FichesList, FicheVerdict } from "../api/backend";
+import { AddGamePanel } from "./AddGamePanel";
 import { Choice } from "./Choice";
 import { Dialog } from "./Dialog";
 import { ServicePanel } from "./ServicePanel";
@@ -31,10 +32,11 @@ const ETATS: Record<FicheInfo["etat"], { label: string; tone: string }> = {
 /** Nom de fichier accepté par le gestionnaire (même règle que `fiches.py`, sans le « _ » des retirées). */
 const NOM_VALIDE = /^[A-Za-z0-9][A-Za-z0-9 _.,'&()+!-]{0,118}$/;
 /** Onglets de la fenêtre, dans l'ordre d'affichage. */
-type Onglet = "fiches" | "service";
+type Onglet = "fiches" | "service" | "ajout";
 const ONGLETS: { id: Onglet; label: string }[] = [
   { id: "fiches", label: "Fiches" },
   { id: "service", label: "Service" },
+  { id: "ajout", label: "Ajouter un jeu" },
 ];
 /** Choix « Autre » de la liste des consoles : un champ texte s'ouvre pour le slug. */
 const OTHER = "__autre__";
@@ -140,6 +142,7 @@ export function FichesButton({ offline, account, consoles }: { offline: boolean;
             ))}
           </nav>
           {onglet === "service" && <ServicePanel />}
+          {onglet === "ajout" && <AddGamePanel />}
           {onglet === "fiches" && (
           <>
           {!list.modification && (

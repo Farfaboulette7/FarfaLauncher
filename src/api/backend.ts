@@ -858,6 +858,67 @@ export interface ServiceStatus {
   demandes?: { nouvelles: number; acceptees: number };
   joueurs?: { enLigne: number; actifs7j: number };
 }
+
+/** Onglet « Ajouter un jeu » (administrateurs) : Download Station vers RomM, `commands/ajouts.rs`. */
+export interface DsElement {
+  /** Chemin dans Download Station : « Nom » ou « Dossier/Nom » (deux niveaux au plus). */
+  chemin: string;
+  type: "fichier" | "dossier";
+  taille: number;
+  date: number;
+  /** Fichiers qui peuvent être des ROM, et combien sont déjà liés dans RomM. */
+  fichiers: number;
+  lies: number;
+  consoles: string[];
+}
+
+export interface AjoutConsole {
+  /** Dossier dans RomM/roms (`fs_slug`). */
+  dossier: string;
+  nom: string;
+  id: number | null;
+}
+
+export interface DownloadStationList {
+  genereA: number;
+  consoles: AjoutConsole[];
+  elements: DsElement[];
+  masques: number;
+}
+
+export type AjoutStatus = "en attente" | "en cours" | "fait" | "échec";
+
+export interface AjoutDemande {
+  id: string;
+  username: string;
+  source: string;
+  console: string;
+  sousDossier: string;
+  cible: string;
+  status: AjoutStatus;
+  raison: string;
+  liens: number | null;
+  ignores: number | null;
+  /** Scan RomM après le lien : « lancé », « à relancer », « échec : … ». */
+  scan: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface AjoutsSuivi {
+  /** Le PC du propriétaire (qui fait les liens) a donné signe de vie il y a moins de 8 min. */
+  pcEnLigne: boolean;
+  pcVuA: number | null;
+  demandes: AjoutDemande[];
+}
+
+export interface AjoutsList extends AjoutsSuivi {
+  /** L'adresse vue par le gestionnaire permet de demander (maison seulement). */
+  modification: boolean;
+  adresse: string;
+  /** `null` : le PC n'a pas encore publié la liste. */
+  liste: DownloadStationList | null;
+}
 /** Demande de jeu envoyée au gestionnaire. */
 export interface GameRequest {
   id: string;
@@ -984,6 +1045,11 @@ export const backend = {
   ficheRename: (dossier: FicheDossier, nom: string, retirer: boolean) => invoke<FicheSaved>("fiche_rename", { dossier, nom, retirer }),
   /** Tableau de bord du gestionnaire (administrateurs) ; `null` : gestionnaire trop ancien pour cet onglet. */
   serviceStatus: () => invoke<ServiceStatus | null>("service_status"),
+  /** Onglet « Ajouter un jeu » ; `null` : gestionnaire trop ancien (ou compte non administrateur). */
+  ajoutsList: () => invoke<AjoutsList | null>("ajouts_list"),
+  ajoutsSuivi: () => invoke<AjoutsSuivi | null>("ajouts_suivi"),
+  /** Demande d'ajout à RomM : le PC du propriétaire fait le lien et le scan à son prochain passage. */
+  ajoutCreate: (source: string, console: string, sousDossier: string) => invoke<AjoutDemande>("ajout_create", { source, console, sousDossier }),
   /** Amis et leur présence ; `null` : gestionnaire sans la présence. */
   friends: () => invoke<Friends | null>("friends"),
   presenceHidden: () => invoke<boolean>("presence_hidden"),

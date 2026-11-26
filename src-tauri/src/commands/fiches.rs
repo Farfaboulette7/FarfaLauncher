@@ -83,7 +83,7 @@ struct Me {
 }
 
 /// Client du gestionnaire (même jeton que RomM), refusé hors ligne.
-fn manager(state: &AppState) -> AppResult<RommClient> {
+pub(crate) fn manager(state: &AppState) -> AppResult<RommClient> {
     let base = crate::manager::base_url(&state.settings()).ok_or(AppError::NotAvailable)?;
     Ok(state.online_client()?.with_base(&base))
 }
@@ -131,7 +131,7 @@ async fn send(client: &RommClient, req: reqwest::RequestBuilder) -> AppResult<re
 }
 
 /// Message du gestionnaire (`detail`), ou l'erreur habituelle s'il n'y en a pas.
-fn refusal(status: u16, body: &str) -> AppError {
+pub(crate) fn refusal(status: u16, body: &str) -> AppError {
     let detail = serde_json::from_str::<serde_json::Value>(body)
         .ok()
         .and_then(|v| v.get("detail").and_then(|d| d.as_str()).map(str::to_string));
