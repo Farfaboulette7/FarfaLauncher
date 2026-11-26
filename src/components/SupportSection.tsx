@@ -37,7 +37,8 @@ export function SupportSection() {
     <section className="n-panel">
       <div className="n-panel-header">Soutenir le projet</div>
       <div className="n-panel-body settings-section">
-        {info.message && <p>{info.message}</p>}
+        {/* « \n » dans le message du JSON = retour à la ligne (voir .support-message). */}
+        {info.message && <p className="support-message">{info.message}</p>}
         <ul className="support-links">
           {info.links.map((link, i) => (
             <li key={i}>{link.type === "text" ? <TextLine link={link} /> : <UrlLine link={link} />}</li>

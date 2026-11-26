@@ -237,10 +237,12 @@ dans `Z:\FarfaRomManager\assets\soutien.json`. Il est servi par `GET <gestionnai
 aux seuls comptes connectés.
 
 - **Changer** le message, le numéro ou un lien : modifier ce fichier (UTF-8) et enregistrer. Pas
-  de redémarrage ni de nouvelle version : il suffit de rouvrir les paramètres.
+  de redémarrage ni de nouvelle version : il suffit de rouvrir les paramètres. Pour aller à la
+  ligne dans le message, écrire `\n` (jamais la touche Entrée entre les guillemets).
 - **Désactiver** : mettre `"enabled": false` (ou renommer le fichier). La section disparaît chez
   tout le monde, sans message d'erreur.
-- **Vérifier** qu'il est valide : `Get-Content Z:\FarfaRomManager\assets\soutien.json -Raw -Encoding UTF8 | ConvertFrom-Json`
+- **Vérifier** qu'il est valide, aussi strictement que le launcher :
+  `node -e "JSON.parse(require('fs').readFileSync('Z:/FarfaRomManager/assets/soutien.json','utf8')); console.log('JSON valide')"`
   (une erreur rouge = JSON invalide, et la section est cachée).
 - Types de lignes : `"text"` (valeur affichée, sans bouton), `"url"` (bouton qui ouvre le lien,
   `https://` seulement ; `"showQr": true` ajoute un QR code calculé dans le launcher). Un autre
