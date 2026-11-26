@@ -118,8 +118,37 @@ Si un jeu a une recomp et un émulateur, la recomp est proposée en premier.
   gestionnaire (sa fiche RomM peut disparaître).
 - **Hors ligne** : `pending_upload` dans `installed.json`, envoi au retour (`flush_pending`).
 
-Historique des sauvegardes des recomps côté serveur (`/api/saves/…/history`, restauration) :
-[README du gestionnaire, « Pour le launcher »](https://github.com/Farfaboulette7/FarfaRomManager/blob/master/README.md#pour-le-launcher).
+**Historique** (*Historique des sauvegardes…* sur la fiche du jeu, `historique` / `restaurer`
+du moteur du Deck) : les 10 versions précédentes de chaque sauvegarde (date, appareil,
+taille), gardées par FarfaRomManager, pour tous les jeux.
+
+- **Recomp** : le gestionnaire garde la sauvegarde et son historique
+  (`api/saves/<recomp>/<jeu>`, `…/history`, `…/history/<version>/restore`).
+- **Jeu gardé par RomM** (émulateur, jeu PC), depuis la phase 3 : RomM reste la référence
+  (lancement, comparaison, anciens launchers inchangés). Après chaque envoi réussi à RomM, le
+  launcher envoie **une copie** au gestionnaire, sous `api/saves/jeux.romm/<id RomM>` (avec
+  l'en-tête `X-Farfa-Device`). Le gestionnaire la traite comme une sauvegarde de recomp :
+  l'ancienne copie passe dans l'historique (10 gardées, les plus anciennes effacées), quota de
+  20 Go par compte et seuil de disque (SG9). Une copie qui échoue n'empêche jamais l'envoi.
+  - Lire l'historique : le launcher compare d'abord la sauvegarde actuelle de RomM au SHA-1 de
+    la copie ; si elles diffèrent (envoi d'un ancien launcher, copie ratée), il la recopie sans
+    nom d'appareil, et l'ancienne copie passe dans l'historique.
+  - Restaurer : même contrôle, **obligatoire** (en cas d'erreur, rien n'est changé), puis
+    restauration sur le gestionnaire (l'actuelle passe dans l'historique), téléchargement de la
+    version et envoi à RomM, enfin sur l'appareil (copie de la locale dans
+    `.farfalauncher/backups/`, comme « Prendre celle du serveur »). Si l'envoi à RomM échoue,
+    RomM garde l'actuelle, qui est déjà dans l'historique : on peut recommencer.
+  - Gestionnaire d'avant (404 sur la copie) ou aucun gestionnaire : pas d'historique, message
+    « Pas d'historique pour ce jeu ». Le reste marche comme avant.
+- Pourquoi pas dans RomM ? RomM 5.4.1 sait garder des versions (« slots », `romm-api.md` §7),
+  mais l'appareil n'y est connu qu'avec un nouveau scope (`devices.write`, reconnexion de tous
+  les joueurs), les anciens launchers ne verraient plus les nouvelles sauvegardes, et c'est
+  RomM qui effacerait les anciennes. La copie sur le gestionnaire ne change rien à RomM, réutilise
+  le code, les quotas et l'écran des recomps, et ne demande aucun scope.
+- Le moteur du Deck répond pareil pour les deux (`{"versions": [...] | null}`) : NieRDeck n'a
+  rien à changer.
+
+Routes du gestionnaire : [README du gestionnaire, « Pour le launcher »](https://github.com/Farfaboulette7/FarfaRomManager/blob/master/README.md#pour-le-launcher).
 
 ## 6. Stockage local
 
