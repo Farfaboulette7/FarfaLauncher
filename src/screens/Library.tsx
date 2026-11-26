@@ -192,6 +192,9 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
   const [seen, setSeen] = useState(loadSeen);
   // Paramètres ouverts ; "retroachievements" : ouverts depuis l'onglet Succès, sur cette partie.
   const [showSettings, setShowSettings] = useState<boolean | "retroachievements">(false);
+  // Jeu dont on a ouvert les paramètres par « Lier mon compte » : au retour, sa page s'ouvre sur
+  // l'onglet Succès.
+  const [backToAchievements, setBackToAchievements] = useState<number | null>(null);
   const [hack, setHack] = useState<Hack | null>(null);
   /** Filtre alphabétique (« # » : chiffres, signes, autres alphabets). */
   const [letter, setLetter] = useState<string | null>(null);
@@ -764,6 +767,7 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
         favoriteError={favorites.error}
         onBack={() => {
           setAutoPlayId(null);
+          setBackToAchievements(null);
           closeGame();
         }}
         onError={handleError}
@@ -771,7 +775,11 @@ export function Library({ session, onLogout, onCheckUpdates, update, onUpdate }:
         onAutoPlayed={() => setAutoPlayId(null)}
         actions={headerActions}
         refreshKey={refreshTick}
-        onLinkRetroAchievements={() => setShowSettings("retroachievements")}
+        onLinkRetroAchievements={() => {
+          setBackToAchievements(selected.id);
+          setShowSettings("retroachievements");
+        }}
+        openOnAchievements={backToAchievements === selected.id}
       />,
       statsDialog,
     );

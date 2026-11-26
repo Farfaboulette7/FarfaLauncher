@@ -63,15 +63,25 @@ export function Settings({ session, installs, onBack, onLogout, onCacheCleared, 
   // RetroAchievements : pseudo indiqué dans le profil RomM. Le launcher ne peut pas l'écrire
   // (scope `me.write`) : il ouvre la page du profil RomM, où le joueur le remplit.
   const [ra, setRa] = useState<RaAccount | null>(null);
+  /** Lecture du compte en échec (serveur injoignable…) : ne pas le confondre avec « aucun compte ». */
+  const [raError, setRaError] = useState<string | null>(null);
   const [raOpened, setRaOpened] = useState(false);
   const [raChecked, setRaChecked] = useState(false);
   const raSection = useRef<HTMLElement>(null);
-  function loadRa(): Promise<void> {
-    if (session.offline) return Promise.resolve();
+  /** Relit le compte ; rend `true` si la lecture a réussi. */
+  function loadRa(): Promise<boolean> {
+    if (session.offline) return Promise.resolve(false);
     return backend
       .raAccount()
-      .then(setRa)
-      .catch(() => setRa(null));
+      .then((account) => {
+        setRa(account);
+        setRaError(null);
+        return true;
+      })
+      .catch((e) => {
+        setRaError(errorMessage(e));
+        return false;
+      });
   }
   useEffect(() => {
     void loadRa();
@@ -90,8 +100,7 @@ export function Settings({ session, installs, onBack, onLogout, onCacheCleared, 
   }
   async function checkRa() {
     setRaChecked(false);
-    await loadRa();
-    setRaChecked(true);
+    setRaChecked(await loadRa());
   }
 
   function updateSound(next: Partial<ReturnType<typeof soundSettings>>) {
@@ -200,8 +209,9 @@ export function Settings({ session, installs, onBack, onLogout, onCacheCleared, 
             <div className="n-panel-body settings-section">
               <dl className="gd-facts">
                 <dt>Compte</dt>
-                <dd>{session.offline ? "hors ligne" : (ra?.username ?? "aucun compte lié")}</dd>
+                <dd>{session.offline ? "hors ligne" : raError ? "illisible" : (ra?.username ?? "aucun compte lié")}</dd>
               </dl>
+              {raError && <p className="n-alert">Compte RetroAchievements illisible : {raError}</p>}
               <p className="n-hint">
                 Vos succès s'affichent dans l'onglet « Succès » de chaque jeu qui en a. Pour y voir ceux que vous avez
                 débloqués, indiquez votre pseudo RetroAchievements dans votre profil RomM (champ RetroAchievements), puis

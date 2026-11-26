@@ -252,21 +252,60 @@ pub fn run() {
 
 /// Taille par défaut de la fenêtre (`tauri.conf.json`, 1440 × 880) : assez large pour que les
 /// onglets de la page d'un jeu tiennent sur une ligne. Sur un écran plus petit (Steam Deck en
-/// mode bureau, 1280 × 800 ; petit portable), on la réduit à la zone utile de l'écran, sans
+/// mode bureau, 1280 × 800 ; petit portable ; écran à 125 %), on la réduit pour qu'elle tienne
+/// dans la zone utile de l'écran (sans la barre des tâches), barre de titre comprise, sans
 /// passer sous la taille minimale, puis on la recentre.
+///
+/// Appelée avant le premier affichage. Pièges (relecture du 2026-11-26) :
+/// - `set_size` fixe la taille **intérieure** (sans la barre de titre) : on compare donc la
+///   taille intérieure à la zone utile moins les décorations ;
+/// - sous Linux, la taille extérieure d'une fenêtre encore cachée n'est pas fiable (GTK) : on
+///   y prend une marge fixe pour la barre de titre et les bords.
 #[cfg(feature = "gui")]
 fn fit_to_screen(window: &tauri::WebviewWindow) {
-    let Ok(Some(monitor)) = window.current_monitor() else { return };
+    let monitor = match window.current_monitor() {
+        Ok(Some(m)) => m,
+        _ => match window.primary_monitor() {
+            Ok(Some(m)) => m,
+            _ => return, // écran inconnu (Wayland…) : on garde la taille par défaut
+        },
+    };
     let scale = monitor.scale_factor();
     let area = monitor.work_area().size.to_logical::<f64>(scale);
-    let Ok(size) = window.outer_size() else { return };
-    let size = size.to_logical::<f64>(scale);
-    if size.width <= area.width && size.height <= area.height {
+    let Ok(inner) = window.inner_size() else { return };
+    let inner = inner.to_logical::<f64>(scale);
+    // Décorations (barre de titre et bords), en pixels logiques.
+    let (deco_w, deco_h) = decorations(window, scale, inner);
+    let max_w = area.width - deco_w;
+    let max_h = area.height - deco_h;
+    if inner.width <= max_w && inner.height <= max_h {
         return;
     }
     // 960 × 600 : taille minimale de la fenêtre (`tauri.conf.json`).
-    let width = size.width.min(area.width).max(960.0);
-    let height = size.height.min(area.height).max(600.0);
+    let width = inner.width.min(max_w).max(960.0);
+    let height = inner.height.min(max_h).max(600.0);
     let _ = window.set_size(tauri::LogicalSize::new(width, height));
     let _ = window.center();
+}
+
+/// Taille des décorations de la fenêtre : extérieure moins intérieure sous Windows (juste avant
+/// l'affichage), marge fixe ailleurs (taille extérieure pas encore connue sous Linux).
+#[cfg(feature = "gui")]
+fn decorations(window: &tauri::WebviewWindow, scale: f64, inner: tauri::LogicalSize<f64>) -> (f64, f64) {
+    const MARGE: (f64, f64) = (16.0, 48.0);
+    if !cfg!(windows) {
+        return MARGE;
+    }
+    match window.outer_size() {
+        Ok(outer) => {
+            let outer = outer.to_logical::<f64>(scale);
+            let (w, h) = (outer.width - inner.width, outer.height - inner.height);
+            if (0.0..200.0).contains(&w) && (0.0..200.0).contains(&h) && h > 0.0 {
+                (w, h)
+            } else {
+                MARGE
+            }
+        }
+        Err(_) => MARGE,
+    }
 }

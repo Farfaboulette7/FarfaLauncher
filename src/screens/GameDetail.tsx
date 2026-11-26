@@ -37,6 +37,8 @@ interface Props {
   onAutoPlayed?: () => void;
   /** Ouvre les paramètres sur la partie RetroAchievements (lien de l'onglet Succès). */
   onLinkRetroAchievements?: () => void;
+  /** Ouvrir directement l'onglet Succès (retour des paramètres après « Lier mon compte »). */
+  openOnAchievements?: boolean;
   /** Boutons en haut à droite de la bibliothèque (téléchargements, amis, messages, musique,
    * rafraîchir, plein écran, paramètres) : les mêmes ici. */
   actions?: ReactNode;
@@ -44,8 +46,8 @@ interface Props {
   refreshKey?: number;
 }
 
-export function GameDetail({ game, platform, target, installs, favorite, onToggleFavorite, favoriteError, onBack, onError, autoPlay, onAutoPlayed, actions, refreshKey = 0, onLinkRetroAchievements }: Props) {
-  const [tab, setTab] = useState<Tab>("infos");
+export function GameDetail({ game, platform, target, installs, favorite, onToggleFavorite, favoriteError, onBack, onError, autoPlay, onAutoPlayed, actions, refreshKey = 0, onLinkRetroAchievements, openOnAchievements = false }: Props) {
+  const [tab, setTab] = useState<Tab>(openOnAchievements ? "succes" : "infos");
   /** Mode dans lequel le jeu se lance (étiquette à côté de la console). */
   const current = useCurrentMode(game, installs);
   const [coverKind, setCoverKind] = useState<"box" | "flat" | null>(null);
@@ -76,10 +78,11 @@ export function GameDetail({ game, platform, target, installs, favorite, onToggl
       alive = false;
     };
   }, [game.id, lastSession, refreshKey]);
-  // L'onglet disparaît (autre jeu, serveur injoignable) : retour aux Informations.
+  // L'onglet disparaît (autre jeu, serveur injoignable) : retour aux Informations. On attend que
+  // les succès de ce jeu soient lus : à l'ouverture sur l'onglet Succès, ils arrivent juste après.
   useEffect(() => {
-    if (tab === "succes" && !achievements) setTab("infos");
-  }, [tab, achievements]);
+    if (tab === "succes" && loaded?.romId === game.id && !loaded.data) setTab("infos");
+  }, [tab, loaded, game.id]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
