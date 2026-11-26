@@ -5,15 +5,15 @@
 // - « Ajouter à RomM » dépose une demande au gestionnaire. Le PC du propriétaire fait le lien
 //   physique (pas de copie, règle R9) et le scan RomM de cette console à son prochain passage, puis
 //   la demande passe en « fait » ou « échec ». PC éteint : la demande attend.
-// - Demande seulement depuis la maison, comme les fiches (le gestionnaire refait tous les contrôles,
+// - Demande seulement depuis la maison ou le VPN, comme les fiches (le gestionnaire refait tous les contrôles,
 //   docs/securite.md du gestionnaire, SG19).
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AjoutDemande, AjoutsList, backend, DsElement, errorMessage } from "../api/backend";
 import { Choice } from "./Choice";
 import "./AddGamePanel.css";
 
-/** Message du gestionnaire quand l'adresse n'est pas celle de la maison (le VPN ne suffit pas). */
-const HORS_MAISON = "Modification possible seulement depuis la maison";
+/** Message du gestionnaire quand l'adresse n'est ni celle de la maison ni celle du VPN. */
+const HORS_MAISON = "Modification possible seulement depuis la maison ou le VPN";
 /** Lignes montrées au plus : la liste compte des milliers de ROM (collections). */
 const MAX_ROWS = 200;
 /** Dossier de console des jeux PC (plateforme « Ordinateur ») : un jeu y a son propre dossier. */

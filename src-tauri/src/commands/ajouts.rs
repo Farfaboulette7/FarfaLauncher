@@ -7,7 +7,7 @@
 //!   qui ne voit pas ce dossier) ;
 //! - une demande est un petit fichier sur le NAS ; le PC du propriétaire fait le lien physique et
 //!   le scan RomM à son prochain passage (3 min), puis écrit le résultat (« fait » ou « échec ») ;
-//! - compte administrateur de RomM, demande seulement depuis la maison (comme les fiches).
+//! - compte administrateur de RomM, demande seulement depuis la maison ou le VPN (comme les fiches).
 //!
 //! Pas sur le Steam Deck (module `commands`, interface seulement).
 
@@ -102,7 +102,7 @@ pub struct AjoutDemande {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AjoutsList {
-    /// L'adresse vue par le gestionnaire permet de demander (réseau local de la maison).
+    /// L'adresse vue par le gestionnaire permet de demander (réseau local de la maison ou VPN).
     pub modification: bool,
     #[serde(default)]
     pub adresse: String,

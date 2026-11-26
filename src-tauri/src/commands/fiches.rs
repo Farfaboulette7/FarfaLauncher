@@ -3,7 +3,7 @@
 //! passer par le partage du NAS.
 //!
 //! Tout le contrôle est fait par le gestionnaire (`/api/fiches`, voir son `docs/securite.md`) :
-//! compte administrateur de RomM, écriture seulement depuis la maison (pas par le VPN), fiche validée
+//! compte administrateur de RomM, écriture seulement depuis la maison ou le VPN, fiche validée
 //! avant d'être écrite, ancienne version gardée, jamais de suppression. Ici, on ne fait que
 //! relayer, avec des noms de fichiers contrôlés et encodés dans l'adresse.
 //!
@@ -35,7 +35,7 @@ pub struct FicheInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FichesList {
-    /// L'adresse vue par le gestionnaire permet d'écrire (réseau local de la maison).
+    /// L'adresse vue par le gestionnaire permet d'écrire (réseau local de la maison ou VPN).
     pub modification: bool,
     /// Adresse vue par le gestionnaire (aide quand la modification est refusée).
     #[serde(default)]
@@ -117,7 +117,7 @@ fn encode_segment(s: &str) -> String {
 }
 
 /// Envoie une requête au gestionnaire. Un refus expliqué (`{"detail": "…"}` en 400, 403, 404,
-/// 409, 413 ou 422 : fiche invalide, hors de la maison, fiche changée…) devient un message
+/// 409, 413 ou 422 : fiche invalide, hors de la maison et du VPN, fiche changée…) devient un message
 /// lisible (`AppError::Refused`) ; le reste suit les règles habituelles (`check`).
 async fn send(client: &RommClient, req: reqwest::RequestBuilder) -> AppResult<reqwest::Response> {
     let resp = req.send().await.map_err(|e| log_err(AppError::ServerUnreachable, "requête HTTP", error_chain(&e)))?;
@@ -224,8 +224,8 @@ mod tests {
 
     #[test]
     fn manager_refusal_is_shown_as_its_message() {
-        let e = refusal(403, r#"{"detail":"Modification possible seulement depuis la maison"}"#);
-        assert_eq!(e.to_string(), "Modification possible seulement depuis la maison");
+        let e = refusal(403, r#"{"detail":"Modification possible seulement depuis la maison ou le VPN"}"#);
+        assert_eq!(e.to_string(), "Modification possible seulement depuis la maison ou le VPN");
         // « Not Found » de FastAPI (route absente) : traduit.
         assert_eq!(refusal(404, r#"{"detail":"Not Found"}"#).to_string(), "Fiche introuvable, ou gestionnaire trop ancien pour cet écran.");
         assert_eq!(e.code(), "refused");
