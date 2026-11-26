@@ -49,6 +49,8 @@ Commandes (réponses en JSON, une ligne par message) :
   choisir <id> <exécutable>     termine une installation qui attend ce choix
   fiche <id> [<console>]        ce que l'onglet Informations du launcher montre en plus de `jeu` :
                                 temps de jeu, nouveautés, classement, shaders partagés, page RomM
+  succes <id>                   succès RetroAchievements du jeu, ceux du joueur et la progression
+                                des amis (`null` si le jeu n'en a pas ; images : commande `image`)
   langue <id> [fr|en]         langue du jeu (Black Ops III, recomps qui proposent l'anglais)
   historique <id>               versions précédentes de la sauvegarde
   restaurer <id> <version>      remet une version (l'actuelle est gardée dans l'historique)
@@ -292,6 +294,7 @@ async fn run(args: Vec<String>) -> AppResult<Value> {
             use_install(&state, id, kind, way)
         }
         "fiche" => sheet(&open_state(), rom_id(rest.first())?, rest.get(1).cloned().unwrap_or_default()).await,
+        "succes" => achievements(&open_state(), rom_id(rest.first())?).await,
         "langue" => language(&open_state(), rom_id(rest.first())?, rest.get(1).map(String::as_str)).await,
         "historique" => {
             let state = open_state();
@@ -602,6 +605,16 @@ async fn install_game(state: &AppState, id: i64, emulator: Option<String>, force
             Ok(json!({ "status": "needsChoice", "game": game, "candidates": candidates }))
         }
     }
+}
+
+/// Succès RetroAchievements d'un jeu, comme la section « Succès » du launcher, avec `friends`
+/// (progression des amis, `null` si le gestionnaire ne la donne pas). `null` : pas de succès.
+async fn achievements(state: &AppState, id: i64) -> AppResult<Value> {
+    let Some(game) = crate::achievements::game(state, id).await? else { return Ok(Value::Null) };
+    let friends = crate::achievements::friends(state, game.ra_id).await.ok().flatten();
+    let mut out = serde_json::to_value(&game).map_err(|_| AppError::Internal)?;
+    out["friends"] = friends.unwrap_or(Value::Null);
+    Ok(out)
 }
 
 /// Le reste de la fiche d'un jeu (onglets Informations et Nouveautés du launcher). Chaque
