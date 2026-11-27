@@ -522,6 +522,9 @@ fn summaries(state: &AppState, mut games: Vec<Game>) -> Vec<Value> {
                 "platformId": g.platform_id,
                 "console": g.console,
                 "coverUrl": g.cover_url,
+                // Boîte 3D comme dans le launcher (BoxArt) : faces scrapées, sinon boîte détourée.
+                "boxFaces": g.box_faces,
+                "box3dUrl": g.box3d_url,
                 "releaseYear": g.release_year,
                 "recomp": g.recomp,
                 "pc": g.pc.is_some(),

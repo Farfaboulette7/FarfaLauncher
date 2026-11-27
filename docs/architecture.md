@@ -298,7 +298,12 @@ chaque release.
   répond en lignes JSON. Liste : `farfalauncherdeck aide`.
 - Réglages, jeton (`token`, 0600) et journaux (`logs/`) dans `~/.config/farfalauncherdeck/`.
 - NieRDeck télécharge lui-même le moteur depuis la dernière release quand il est plus récent.
-- Conflit de sauvegarde sur le Deck : la plus récente gagne.
+- Conflit de sauvegarde sur le Deck : la plus récente gagne. Avant chaque envoi (PC et Deck), le
+  serveur est relu (`save_sync::after_play`) : une sauvegarde reçue d'un autre appareil n'est jamais
+  écrasée à l'aveugle. `veille`, `reveil` et `resultat` servent à NieRDeck (mise en veille, réveil,
+  notification à la fermeture d'un jeu).
+- Les résumés de jeux (`jeux`, `recherche`) donnent `boxFaces` et `box3dUrl` : NieRDeck dessine la
+  même boîte 3D que `BoxArt` du launcher.
 - `succes <id>` donne les succès RetroAchievements d'un jeu (même contenu que l'onglet Succès
   du launcher, plus `friends`) ; les badges se téléchargent avec `image`. L'écran de NieRDeck qui
   les montre reste à faire.
