@@ -27,6 +27,7 @@ mod optimize;
 mod pad_rate;
 mod pc;
 mod play;
+mod play_status;
 mod report;
 mod platform;
 mod presence;

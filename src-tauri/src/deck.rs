@@ -37,7 +37,10 @@ Commandes (réponses en JSON, une ligne par message) :
   consoles                      consoles du serveur jouables sur le Deck
   jeux <console> [<début>]      jeux d'une console (par 100)
   recherche <texte>             recherche dans tout le serveur
-  installes                     jeux installés
+  installes [--resumes]         jeux installés ; --resumes : comme `jeux` (badges, filtres)
+  favoris                       favoris de l'utilisateur (collection RomM, comme le launcher), avec
+                                leurs résumés ; hors ligne, les derniers connus
+  favori <id> oui|non           ajoute ou retire un jeu des favoris
   jeu <id>                      fiche complète d'un jeu
   image <url> [<url>...]        télécharge des images du serveur en cache, renvoie leurs chemins
   installer <id> [--emulateur <id>] [--recomp [<id>]]
@@ -310,7 +313,24 @@ async fn run(args: Vec<String>) -> AppResult<Value> {
         }
         "installes" => {
             let state = open_state();
+            if flag(rest, "--resumes") {
+                return installed_summaries(&state).await;
+            }
             Ok(json!({ "games": state::list_installed(&state.config_dir) }))
+        }
+        "favoris" => favorites(&open_state()).await,
+        "favori" => {
+            let state = open_state();
+            let id = rom_id(rest.first())?;
+            let on = match rest.get(1).map(String::as_str) {
+                Some("oui") => true,
+                Some("non") => false,
+                _ => return Err(AppError::Internal),
+            };
+            let client = state.client()?;
+            let rom_ids = crate::romm::favorites::set(&client, id, on).await?;
+            crate::cache::save_favorites(&state.cache_dir, client.base(), &rom_ids);
+            Ok(json!({ "romIds": rom_ids }))
         }
         "jeu" => game(&open_state(), rom_id(rest.first())?).await,
         "image" => images(&open_state(), rest).await,
@@ -502,12 +522,50 @@ async fn games_page(state: &AppState, console: i64, offset: usize) -> AppResult<
     Ok(json!({ "games": summaries(state, games), "more": more, "offset": offset }))
 }
 
-/// Ce que la liste affiche d'un jeu, avec son état d'installation.
+/// Favoris (collection RomM, comme le launcher) avec leurs résumés ; hors ligne, la dernière
+/// liste connue, sans résumés.
+async fn favorites(state: &AppState) -> AppResult<Value> {
+    let client = state.client()?;
+    let (rom_ids, offline) = match crate::romm::favorites::list(&client).await {
+        Ok(ids) => {
+            crate::cache::save_favorites(&state.cache_dir, client.base(), &ids);
+            (ids, false)
+        }
+        Err(e @ (AppError::ServerUnreachable | AppError::Server)) => match crate::cache::load_favorites(&state.cache_dir, client.base()) {
+            Some(ids) => (ids, true),
+            None => return Err(e),
+        },
+        Err(e) => return Err(e),
+    };
+    let games = if offline {
+        Vec::new()
+    } else {
+        refresh_catalog(state).await;
+        let mut games = library::list_games_by_ids(&client, &rom_ids, target()).await;
+        games.sort_by_key(|g| g.name.to_lowercase());
+        summaries(state, games)
+    };
+    Ok(json!({ "romIds": rom_ids, "offline": offline, "games": games }))
+}
+
+/// Jeux installés, avec les mêmes résumés que `jeux` (badges, filtres).
+async fn installed_summaries(state: &AppState) -> AppResult<Value> {
+    let ids: Vec<i64> = state::list_installed(&state.config_dir).iter().map(|g| g.rom_id).filter(|id| *id > 0).collect();
+    let client = state.client()?;
+    refresh_catalog(state).await;
+    let mut games = library::list_games_by_ids(&client, &ids, target()).await;
+    games.sort_by_key(|g| g.name.to_lowercase());
+    Ok(json!({ "games": summaries(state, games) }))
+}
+
+/// Ce que la liste affiche d'un jeu, avec son état d'installation, ses façons de jouer et ses
+/// badges (mêmes règles que les cartes du launcher : `play_status`).
 fn summaries(state: &AppState, mut games: Vec<Game>) -> Vec<Value> {
     let catalog = state.catalog();
     let manifest = state.manifest();
     let recomps = catalog.recomp_rom_ids();
-    let installed: HashSet<i64> = state::list_installed(&state.config_dir).iter().map(|g| g.rom_id).collect();
+    let installed: std::collections::HashMap<i64, state::InstalledGame> = state::list_installed(&state.config_dir).into_iter().map(|g| (g.rom_id, g)).collect();
+    let now = state::now() as i64;
     games.retain(|g| !manifest.is_runtime(g.id));
     games
         .iter_mut()
@@ -516,6 +574,7 @@ fn summaries(state: &AppState, mut games: Vec<Game>) -> Vec<Value> {
                 g.runtime = Some(crate::runtimes::link(runtime, def));
             }
             crate::runtimes::annotate(g, &catalog, &recomps, target());
+            let modes = crate::play_status::play_modes(g);
             json!({
                 "id": g.id,
                 "name": g.name,
@@ -529,7 +588,14 @@ fn summaries(state: &AppState, mut games: Vec<Game>) -> Vec<Value> {
                 "recomp": g.recomp,
                 "pc": g.pc.is_some(),
                 "emulator": g.emulator.as_ref().filter(|e| e.available).map(|e| &e.name),
-                "installed": installed.contains(&g.id),
+                "installed": installed.get(&g.id).is_some_and(|i| i.executable.is_some()),
+                // Filtres Recomp / Émulation et badge « comment y jouer » (playModes).
+                "modes": { "recomp": modes.0, "emulation": modes.1 },
+                "available": crate::play_status::is_available(g),
+                "detailsLoaded": g.details_loaded,
+                "update": crate::play_status::has_update(g, installed.get(&g.id)),
+                "createdAt": g.created_at,
+                "new": crate::play_status::is_new(&g.created_at, now),
             })
         })
         .collect()

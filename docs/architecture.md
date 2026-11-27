@@ -302,8 +302,10 @@ chaque release.
   serveur est relu (`save_sync::after_play`) : une sauvegarde reçue d'un autre appareil n'est jamais
   écrasée à l'aveugle. `veille`, `reveil` et `resultat` servent à NieRDeck (mise en veille, réveil,
   notification à la fermeture d'un jeu).
-- Les résumés de jeux (`jeux`, `recherche`) donnent `boxFaces` et `box3dUrl` : NieRDeck dessine la
-  même boîte 3D que `BoxArt` du launcher.
+- Les résumés de jeux (`jeux`, `recherche`, `favoris`, `installes --resumes`) donnent `boxFaces` et
+  `box3dUrl` (même boîte 3D que `BoxArt`), et les badges et filtres des cartes de la bibliothèque :
+  `modes`, `update`, `new`… calculés par `play_status.rs`, portage de `backend.ts` / `Library.tsx`
+  (une règle changée là-bas doit l'être là aussi). `favoris` / `favori` : mêmes favoris RomM.
 - `succes <id>` donne les succès RetroAchievements d'un jeu (même contenu que l'onglet Succès
   du launcher, plus `friends`) ; les badges se téléchargent avec `image`. L'écran de NieRDeck qui
   les montre reste à faire.
