@@ -307,8 +307,13 @@ chaque release.
   `modes`, `update`, `new`… calculés par `play_status.rs`, portage de `backend.ts` / `Library.tsx`
   (une règle changée là-bas doit l'être là aussi). `favoris` / `favori` : mêmes favoris RomM.
 - `succes <id>` donne les succès RetroAchievements d'un jeu (même contenu que l'onglet Succès
-  du launcher, plus `friends`) ; les badges se téléchargent avec `image`. L'écran de NieRDeck qui
-  les montre reste à faire.
+  du launcher, plus `friends`) ; les badges se téléchargent avec `image`. `compte-ra` : le compte
+  RetroAchievements lié dans RomM (comme les paramètres du launcher).
+- `livret <id> [<n>]` télécharge un livret PDF (`cache::manual_file`, partagé avec
+  `manual_path`). Le navigateur de Steam n'affiche pas les PDF : NieRDeck rend chaque page en PNG
+  avec `pdftoppm` (poppler, fourni par SteamOS).
+- `commandes <id>` : la page Contrôles d'un jeu installé (`controls::info_of`, aussi utilisé par
+  `controls_info`), affichée en lecture seule sur le Deck.
 
 Conséquence : toucher à `play.rs`, `save_sync.rs`, `install/` ou `pc/`, c'est aussi toucher
 au Deck. La CI compile le moteur à chaque push (`ci.yml`, job `deck`). Le smoke test utilise
