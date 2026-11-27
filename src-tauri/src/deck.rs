@@ -57,6 +57,14 @@ Commandes (réponses en JSON, une ligne par message) :
   desinstaller <id> [--garder-sauvegardes]
   jouer <id>                    sauvegarde du serveur, réglages, jeu, envoi de la sauvegarde
   synchroniser [<id>]           envoie les sauvegardes changées et le temps de jeu en attente
+  veille [<secondes>]           mise en veille : chaque partie en cours envoie sa sauvegarde
+                                (8 s d'attente au plus), sans fermer le jeu
+  reveil                        sortie de veille : sauvegardes des parties en cours changées
+                                entre-temps sur le serveur (autre appareil)
+  resultat <id> [<depuis>] [<attendre>]
+                                dernier envoi de sauvegarde d'un jeu (fin de partie ou veille),
+                                s'il date d'après <depuis> (secondes Unix), en l'attendant
+                                <attendre> secondes au plus
   essai <id> [<secondes>]       smoke test : lance le jeu sans rien envoyer au serveur, vérifie
                                 qu'il tient <secondes> (10 par défaut), puis le ferme
 
@@ -69,6 +77,13 @@ static GAME_STOP: std::sync::OnceLock<Arc<std::sync::atomic::AtomicBool>> = std:
 /// Annulation de l'installation en cours (`installer`), levée par le signal d'arrêt que
 /// NieRDeck envoie quand le joueur annule : le téléchargement s'arrête proprement.
 static INSTALL_CANCEL: std::sync::OnceLock<CancellationToken> = std::sync::OnceLock::new();
+
+/// Mise en veille annoncée par NieRDeck (`veille` → SIGUSR1 au `jouer` en cours).
+static SUSPEND: std::sync::OnceLock<Arc<tokio::sync::Notify>> = std::sync::OnceLock::new();
+
+fn suspend_notify() -> Arc<tokio::sync::Notify> {
+    SUSPEND.get_or_init(|| Arc::new(tokio::sync::Notify::new())).clone()
+}
 
 /// Taille des pages de `jeux`.
 const PAGE: usize = 100;
@@ -122,6 +137,22 @@ pub fn main() {
                         }
                     });
                 }
+            }
+        }
+        // Mise en veille : `veille` (NieRDeck) envoie SIGUSR1 au `jouer` en cours, qui envoie
+        // la sauvegarde lui-même (il tient le verrou du jeu). Posé avant le fichier
+        // `sessions/<id>.jouer` : seul un `jouer` qui l'attend reçoit ce signal.
+        #[cfg(unix)]
+        if args.first().is_some_and(|c| c == "jouer") {
+            use tokio::signal::unix::{signal, SignalKind};
+            if let Ok(mut s) = signal(SignalKind::user_defined1()) {
+                let notify = suspend_notify();
+                tokio::spawn(async move {
+                    while s.recv().await.is_some() {
+                        tracing::info!("mise en veille annoncée : envoi de la sauvegarde en cours de partie");
+                        notify.notify_one();
+                    }
+                });
             }
         }
         match run(args).await {
@@ -212,6 +243,8 @@ fn open_state() -> AppState {
     crate::saves::set_prefixes_dir(crate::pc::proton::prefixes_dir(&config_dir));
     let default_root = home().join("FarfaLauncher").join("Jeux");
     let state = AppState::new(config_dir.clone(), log_dir, cache_dir, default_root);
+    // Pas de question possible sur le Deck : en cas de conflit, la plus récente gagne.
+    state.newest_wins.store(true, std::sync::atomic::Ordering::Relaxed);
     if let (Some(url), Some(token)) = (state.settings().server_url, load_token(&config_dir)) {
         match RommClient::new(&url, Some(token)) {
             Ok(client) => state.set_client(Some(client)),
@@ -331,7 +364,14 @@ async fn run(args: Vec<String>) -> AppResult<Value> {
             let started = rest.get(2).and_then(|a| a.parse().ok()).ok_or(AppError::Internal)?;
             after_game(&open_state(), pid, id, started).await
         }
-        "synchroniser" => sync(&open_state(), rest.first().and_then(|a| a.parse().ok())).await,
+        "synchroniser" => sync(&open_state(), rest.first().and_then(|a| a.parse().ok()), false).await,
+        "veille" => suspend(&open_state(), rest.first().and_then(|a| a.parse().ok()).unwrap_or(8)).await,
+        "reveil" => resume(&open_state()).await,
+        "resultat" => {
+            let since = rest.get(1).and_then(|a| a.parse().ok()).unwrap_or(0);
+            let wait = rest.get(2).and_then(|a| a.parse().ok()).unwrap_or(0);
+            Ok(wait_save_result(&open_state(), rom_id(rest.first())?, since, "", wait).await.unwrap_or(Value::Null))
+        }
         "essai" => {
             let secs = rest.get(1).and_then(|s| s.parse().ok()).unwrap_or(10);
             smoke_launch(&open_state(), rom_id(rest.first())?, secs).await
@@ -738,26 +778,195 @@ async fn choose(state: &AppState, id: i64, executable: String) -> AppResult<Valu
 /// Pas de question possible pendant un lancement depuis Steam : en cas de
 /// différence, la sauvegarde la plus récente l'emporte (l'autre reste en
 /// copie de secours : sur le serveur, ou dans `.farfalauncher/backups`).
-fn save_choice(check: &SaveCheck) -> SaveChoice {
+/// Date illisible, égalité ou pas de sauvegarde locale : le serveur gagne (jamais la locale
+/// par défaut, elle pourrait être vieille de plusieurs jours).
+fn save_choice(name: &str, check: &SaveCheck) -> SaveChoice {
     match check {
         SaveCheck::Conflict { local_modified, server_modified } => {
-            let server = time::OffsetDateTime::parse(server_modified, &time::format_description::well_known::Rfc3339).ok().map(|d| d.unix_timestamp());
-            match (local_modified, server) {
-                (None, _) => SaveChoice::Server,
-                (Some(local), Some(server)) if server > *local as i64 => SaveChoice::Server,
-                _ => SaveChoice::Local,
-            }
+            let server = crate::save_sync::parse_server_date(server_modified);
+            let choice = match (local_modified, server) {
+                (Some(local), Some(server)) if *local as i64 > server => SaveChoice::Local,
+                _ => SaveChoice::Server,
+            };
+            tracing::info!(
+                "« {name} » : sauvegardes différentes (Deck : {}, serveur : {server_modified}{}) → {choice:?}",
+                local_modified.map(|t| crate::save_sync::format_unix(t as i64)).unwrap_or_else(|| "aucune".into()),
+                if server.is_none() { ", date illisible" } else { "" },
+            );
+            choice
+        }
+        SaveCheck::Unknown { .. } => {
+            tracing::warn!("« {name} » : dossier des sauvegardes pas encore connu, mais une sauvegarde existe sur le serveur : elle sera comparée à celle du Deck après la partie (la perdante est gardée)");
+            SaveChoice::Unchanged
         }
         _ => SaveChoice::Unchanged,
     }
+}
+
+/// Serveur RomM joignable ? Essayé pendant `secs` secondes au plus (Wi-Fi qui revient
+/// après la veille), puis noté (`set_offline`) : hors ligne, plus d'attente à chaque requête.
+async fn wait_for_server(state: &AppState, secs: u64) -> bool {
+    let Ok(client) = state.client() else { return false };
+    let limit = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+    loop {
+        let req = client.get("api/heartbeat").timeout(std::time::Duration::from_secs(3));
+        if client.send(req).await.is_ok() {
+            state.set_offline(false);
+            return true;
+        }
+        if std::time::Instant::now() >= limit {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+    state.set_offline(true);
+    false
+}
+
+/// Partie en cours : `sessions/<id>.jouer` (pid du `jouer`), pour `veille` et `reveil`.
+fn running_file(state: &AppState, id: i64) -> PathBuf {
+    let dir = state.config_dir.join("sessions");
+    let _ = std::fs::create_dir_all(&dir);
+    dir.join(format!("{id}.jouer"))
+}
+
+/// Parties en cours : (jeu, pid) des `jouer` encore vivants. Les fichiers d'une partie
+/// finie sans nettoyage (programme tué) sont retirés.
+fn running_games(state: &AppState) -> Vec<(i64, u32)> {
+    let Ok(rd) = std::fs::read_dir(state.config_dir.join("sessions")) else { return Vec::new() };
+    let mut out = Vec::new();
+    for path in rd.filter_map(Result::ok).map(|e| e.path()) {
+        if path.extension().is_none_or(|e| e != "jouer") {
+            continue;
+        }
+        let id = path.file_stem().and_then(|s| s.to_str()).and_then(|s| s.parse::<i64>().ok());
+        let pid = std::fs::read_to_string(&path).ok().and_then(|t| t.trim().parse::<u32>().ok());
+        match (id, pid) {
+            (Some(id), Some(pid)) if is_play_process(pid) => out.push((id, pid)),
+            _ => {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
+    out
+}
+
+/// `pid` est bien un `farfalauncherdeck jouer` (un pid peut être réutilisé).
+fn is_play_process(pid: u32) -> bool {
+    let Ok(cmd) = std::fs::read(format!("/proc/{pid}/cmdline")) else { return false };
+    let args: Vec<&[u8]> = cmd.split(|b| *b == 0).collect();
+    args.get(1).is_some_and(|a| *a == b"jouer")
+}
+
+/// Dernier envoi de sauvegarde d'un jeu, lu par NieRDeck (`resultat`) pour le dire au joueur.
+fn save_result_file(state: &AppState, id: i64) -> PathBuf {
+    let dir = state.config_dir.join("sessions");
+    let _ = std::fs::create_dir_all(&dir);
+    dir.join(format!("{id}.sauvegarde.json"))
+}
+
+/// `moment` : `fin` (fin de partie) ou `veille`.
+fn write_save_result(state: &AppState, id: i64, moment: &str, save: &crate::save_sync::SaveUpload, error: Option<&AppError>) {
+    let st = state::find(&state.config_dir, id);
+    let no_dir = st.as_ref().is_some_and(|st| st.saves.dir.is_none());
+    let body = json!({
+        "romId": id,
+        "name": st.as_ref().map(|s| s.name.clone()),
+        "at": state::now(),
+        "moment": moment,
+        "save": save,
+        // `off` sans dossier connu : rien n'a pu être envoyé (pas un choix du joueur).
+        "noSaveDir": no_dir,
+        "error": error.map(|e| json!({ "code": e.code(), "message": e.to_string() })),
+    });
+    if let Err(e) = crate::safe_file::write_atomic(&save_result_file(state, id), &body.to_string()) {
+        tracing::warn!("résultat de la sauvegarde non écrit: {e}");
+    }
+}
+
+/// Résultat d'après `since` (et du `moment` donné, s'il n'est pas vide), attendu `wait`
+/// secondes au plus.
+async fn wait_save_result(state: &AppState, id: i64, since: u64, moment: &str, wait: u64) -> Option<Value> {
+    let limit = std::time::Instant::now() + std::time::Duration::from_secs(wait);
+    loop {
+        let found = std::fs::read_to_string(save_result_file(state, id))
+            .ok()
+            .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+            .filter(|v| v["at"].as_u64().is_some_and(|at| at >= since) && (moment.is_empty() || v["moment"] == moment));
+        if found.is_some() || std::time::Instant::now() >= limit {
+            return found;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+}
+
+/// Mise en veille (NieRDeck) : chaque partie en cours envoie sa sauvegarde (SIGUSR1 à son
+/// `jouer`, qui tient le verrou du jeu), attendue `wait` secondes au plus.
+async fn suspend(state: &AppState, wait: u64) -> AppResult<Value> {
+    let since = state::now();
+    let games = running_games(state);
+    for (id, pid) in &games {
+        let sent = std::process::Command::new("kill").args(["-USR1", &pid.to_string()]).status().is_ok_and(|s| s.success());
+        tracing::info!("mise en veille : partie du jeu {id} prévenue (pid {pid}, {})", if sent { "ok" } else { "échec" });
+    }
+    let mut out = Vec::new();
+    for (id, _) in games {
+        let r = wait_save_result(state, id, since, "veille", wait).await;
+        out.push(r.unwrap_or_else(|| json!({ "romId": id, "timeout": true })));
+    }
+    Ok(json!({ "games": out }))
+}
+
+/// Sortie de veille (NieRDeck) : pour chaque partie en cours, la sauvegarde du serveur
+/// a-t-elle changé depuis le dernier échange (partie jouée ailleurs pendant la veille) ?
+async fn resume(state: &AppState) -> AppResult<Value> {
+    let games = running_games(state);
+    if games.is_empty() {
+        return Ok(json!({ "games": [] }));
+    }
+    // Le Wi-Fi revient quelques secondes après la veille.
+    if !wait_for_server(state, 20).await {
+        tracing::warn!("sortie de veille : serveur injoignable, sauvegardes non vérifiées");
+        return Ok(json!({ "games": [], "offline": true }));
+    }
+    let client = state.client()?;
+    let mut out = Vec::new();
+    for (id, _) in games {
+        let Some(st) = state::find(&state.config_dir, id) else { continue };
+        if st.saves.off || st.saves.dir.is_none() {
+            continue;
+        }
+        let store = crate::save_store::SaveStore::of(&state.config_dir, &state.catalog(), &state.settings(), client.clone(), &st);
+        let changed = match store.find().await {
+            Ok(Some(remote)) if st.saves.synced_server.as_deref() != Some(remote.updated_at.as_str()) => {
+                // Date changée : le contenu aussi ? (copie refaite sans changement…)
+                match store.download(&remote).await.ok().and_then(|b| crate::saves::hash_zip(&b).ok()) {
+                    Some(h) => h.is_some() && h != st.saves.synced_hash,
+                    None => true,
+                }
+            }
+            _ => false,
+        };
+        if changed {
+            tracing::warn!("« {} » : sauvegarde changée sur le serveur pendant la veille (autre appareil)", st.name);
+        }
+        out.push(json!({ "romId": id, "name": st.name, "changed": changed }));
+    }
+    Ok(json!({ "games": out }))
 }
 
 async fn play(state: &AppState, id: i64) -> AppResult<Value> {
     let _lock = lock(state, id)?;
     let st = state::find(&state.config_dir, id).ok_or(AppError::NotInstalled)?;
     st.executable.as_ref().ok_or(AppError::NoExecutable)?;
+    // Sortie de veille : le Wi-Fi met quelques secondes à revenir. Sans serveur, on joue
+    // avec la locale ; avant d'être envoyée, elle sera comparée au serveur (garde-fou).
+    let online = wait_for_server(state, 10).await;
+    if !online && state.client().is_ok() {
+        tracing::warn!("« {} » : serveur injoignable après 10 s, partie hors ligne (sauvegarde comparée au serveur avant l'envoi)", st.name);
+    }
     // Réglages du catalogue à jour (langue, optimisations) ; hors ligne, ceux du cache.
-    if state.client().is_ok() {
+    if online {
         refresh_catalog(state).await;
     }
     let check = match crate::save_sync::check(state, id).await {
@@ -767,7 +976,7 @@ async fn play(state: &AppState, id: i64) -> AppResult<Value> {
             SaveCheck::Ready
         }
     };
-    let choice = save_choice(&check);
+    let choice = save_choice(&st.name, &check);
     tracing::info!("« {} » : lancement depuis le Deck (sauvegarde : {choice:?})", st.name);
     #[cfg(not(feature = "gui"))]
     let pads = crate::gamepad::snapshot();
@@ -779,15 +988,38 @@ async fn play(state: &AppState, id: i64) -> AppResult<Value> {
     let crate::play::Started { running, started, shader_job, .. } = started;
     let _ = GAME_STOP.set(running.stop_flag());
     spawn_watcher(id, started.unix_timestamp());
+    let running_marker = running_file(state, id);
+    let _ = std::fs::write(&running_marker, std::process::id().to_string());
     let presence = presence_while_playing(state, id);
-    let (learned, crash) = tokio::task::spawn_blocking(move || running.wait_outcome(|| {})).await.unwrap_or((None, None));
+    let mut game = tokio::task::spawn_blocking(move || running.wait_outcome(|| {}));
+    let suspend = suspend_notify();
+    let (learned, crash) = loop {
+        tokio::select! {
+            r = &mut game => break r.unwrap_or((None, None)),
+            _ = suspend.notified() => {
+                // Mise en veille : la sauvegarde part maintenant, le jeu reste ouvert.
+                if state.is_offline() {
+                    wait_for_server(state, 2).await;
+                }
+                let (save, error) = crate::save_sync::upload_during_play(state, id, std::time::SystemTime::from(started)).await;
+                tracing::info!("« {} » : sauvegarde à la mise en veille → {save:?}", st.name);
+                write_save_result(state, id, "veille", &save, error.as_ref());
+            }
+        }
+    };
     if let Some((task, client)) = presence {
         task.abort();
         // Partie finie : le Deck n'a pas de launcher ouvert, le joueur passe hors ligne.
         let _ = tokio::time::timeout(std::time::Duration::from_secs(3), client.send(client.delete("api/presence", &json!({})))).await;
     }
     let crashed = crash.is_some();
+    // Partie commencée hors ligne : le serveur est peut-être revenu.
+    if state.is_offline() {
+        wait_for_server(state, 3).await;
+    }
     let finished = crate::play::finish(state, id, started, learned, shader_job).await;
+    write_save_result(state, id, "fin", &finished.save, finished.save_error.as_ref());
+    let _ = std::fs::remove_file(&running_marker);
     // Statistiques entre amis : la session part aussi au gestionnaire (sans retenir plus de 10 s).
     let _ = tokio::time::timeout(std::time::Duration::from_secs(10), crate::stats::sync(state)).await;
     // Fin de partie traitée ici : le veilleur n'a plus que la synchronisation à vérifier.
@@ -904,7 +1136,12 @@ async fn after_game(state: &AppState, pid: u32, id: i64, started: i64) -> AppRes
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }
     let marker = session_marker(state, id, started);
-    if marker.exists() {
+    // `jouer` arrêté par Steam : son fichier de partie reste.
+    if std::fs::read_to_string(running_file(state, id)).ok().is_some_and(|p| p.trim() == pid.to_string()) {
+        let _ = std::fs::remove_file(running_file(state, id));
+    }
+    let finished_normally = marker.exists();
+    if finished_normally {
         let _ = std::fs::remove_file(&marker);
     } else if let Ok(start) = time::OffsetDateTime::from_unix_timestamp(started) {
         let end = time::OffsetDateTime::now_utc();
@@ -915,13 +1152,15 @@ async fn after_game(state: &AppState, pid: u32, id: i64, started: i64) -> AppRes
             }
         }
     }
-    sync(state, Some(id)).await
+    // Le résultat de `jouer` reste, sauf si le veilleur a fait le travail (ou envoyé à son tour).
+    sync(state, Some(id), !finished_normally).await
 }
 
 /// Envoie les sauvegardes changées depuis le dernier échange (partie interrompue
 /// par Steam avant l'envoi…) et le temps de jeu en attente. Appelé par NieRDeck
 /// à la fermeture d'un jeu.
-async fn sync(state: &AppState, only: Option<i64>) -> AppResult<Value> {
+/// `report` : écrit le résultat (`resultat`) de chaque jeu ; sinon seulement d'un envoi.
+async fn sync(state: &AppState, only: Option<i64>, report: bool) -> AppResult<Value> {
     let client = state.client()?;
     let since = std::time::SystemTime::now() - std::time::Duration::from_secs(6 * 3600);
     let mut out = Vec::new();
@@ -932,6 +1171,9 @@ async fn sync(state: &AppState, only: Option<i64>) -> AppResult<Value> {
         // Jeu en cours (son `jouer` tient le verrou) : il enverra lui-même.
         let Ok(_lock) = lock(state, st.rom_id) else { continue };
         let (save, error) = crate::save_sync::after_play(state, Some(client.clone()), st.rom_id, since).await;
+        if only.is_some() && (report || !matches!(save, crate::save_sync::SaveUpload::Unchanged | crate::save_sync::SaveUpload::Off)) {
+            write_save_result(state, st.rom_id, "fin", &save, error.as_ref());
+        }
         out.push(json!({ "romId": st.rom_id, "save": save, "error": error }));
     }
     let pending = crate::romm::playtime::flush(&client, &state.config_dir).await.unwrap_or_else(|_| crate::romm::playtime::pending_count(&state.config_dir));

@@ -2131,7 +2131,9 @@ function sessionSummary(s: GameStopped): string {
         ? " Serveur injoignable : sauvegarde gardée sur ce PC, envoyée à son retour."
         : s.save === "failed"
           ? ` Sauvegarde non envoyée : ${s.saveError?.message ?? "erreur inconnue"}`
-          : "";
+          : s.save === "conflict"
+            ? " Sauvegarde changée aussi sur un autre appareil : gardée sur ce PC, rien n'est écrasé. Le choix te sera proposé au prochain lancement."
+            : "";
   return time + save;
 }
 

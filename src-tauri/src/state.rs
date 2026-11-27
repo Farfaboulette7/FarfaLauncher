@@ -33,6 +33,9 @@ pub struct AppState {
     /// Serveur injoignable (NAS éteint…) : jeux installés jouables, envois mis en file
     /// d'attente, sans attendre la fin du délai de connexion à chaque requête.
     pub offline: AtomicBool,
+    /// Steam Deck : pas de question possible, en cas de conflit de sauvegardes la plus
+    /// récente l'emporte (l'autre est gardée). Le launcher, lui, demande au joueur.
+    pub newest_wins: AtomicBool,
     /// Installations en cours (jeu → jeton d'annulation).
     pub installs: Mutex<HashMap<i64, CancellationToken>>,
     /// Installations en attente de leur tour ou en pause (voir `commands::install`).
@@ -91,6 +94,7 @@ impl AppState {
             library: Mutex::new(None),
             refreshing: AtomicBool::new(false),
             offline: AtomicBool::new(false),
+            newest_wins: AtomicBool::new(false),
             installs: Mutex::new(HashMap::new()),
             queue: Mutex::new(Vec::new()),
             pause_requested: Mutex::new(HashSet::new()),

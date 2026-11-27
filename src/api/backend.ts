@@ -599,7 +599,9 @@ export interface GameStopped {
   pending: number;
   /** Envoi de la sauvegarde après la partie. */
   /** `pending` : serveur injoignable, sauvegarde gardée sur ce PC et envoyée à son retour. */
-  save: "off" | "unchanged" | "uploaded" | "failed" | "pending";
+  /** `conflict` : changée aussi sur un autre appareil, gardée ici, question au prochain lancement.
+   *  `uploadedKeptOther` / `serverNewer` : seulement sur le Steam Deck (la plus récente gagne). */
+  save: "off" | "unchanged" | "uploaded" | "failed" | "pending" | "conflict" | "uploadedKeptOther" | "serverNewer";
   saveError: AppError | null;
   /** État du jeu, quand le jeu démarré par son launcher vient d'être relevé. */
   game: InstalledGame | null;

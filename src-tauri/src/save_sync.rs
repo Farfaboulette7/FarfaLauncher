@@ -51,6 +51,31 @@ pub enum SaveChoice {
     Unchanged,
 }
 
+/// Date d'une sauvegarde du serveur, en secondes Unix. Tolérante : RFC 3339 (RomM :
+/// `…+00:00`, gestionnaire : fractions de seconde), espace au lieu du `T`, et date sans
+/// fuseau, lue en UTC. `None` : illisible.
+pub fn parse_server_date(s: &str) -> Option<i64> {
+    use time::format_description::well_known::Rfc3339;
+    let s = s.trim();
+    let mut iso = s.to_string();
+    if iso.len() > 10 && iso.as_bytes()[10] == b' ' {
+        iso.replace_range(10..11, "T");
+    }
+    if let Ok(d) = time::OffsetDateTime::parse(&iso, &Rfc3339) {
+        return Some(d.unix_timestamp());
+    }
+    // Sans fuseau : UTC (les deux serveurs écrivent en UTC).
+    time::OffsetDateTime::parse(&format!("{iso}Z"), &Rfc3339).ok().map(|d| d.unix_timestamp())
+}
+
+/// Date Unix lisible dans le journal (RFC 3339, UTC).
+pub fn format_unix(t: i64) -> String {
+    time::OffsetDateTime::from_unix_timestamp(t)
+        .ok()
+        .and_then(|d| d.format(&time::format_description::well_known::Rfc3339).ok())
+        .unwrap_or_else(|| t.to_string())
+}
+
 pub fn location(st: &InstalledGame) -> Option<SaveLocation> {
     st.saves.dir.clone().map(|dir| SaveLocation { dir, patterns: st.saves.patterns.clone() })
 }
@@ -148,8 +173,12 @@ pub async fn check(state: &AppState, rom_id: i64) -> AppResult<SaveCheck> {
         let suggestions = saves::suggestions(&st.game_dir, &exes(&st), &st.name).iter().map(|p| p.to_string_lossy().into_owned()).collect();
         return Ok(SaveCheck::Unknown { suggestions });
     };
-    // Hors ligne : on joue avec la locale, envoyée au retour du serveur.
-    let Ok(client) = state.online_client() else { return Ok(SaveCheck::Ready) };
+    // Hors ligne : on joue avec la locale. Avant d'être envoyée, elle sera comparée au
+    // serveur (`guard`) : rien n'est écrasé à l'aveugle.
+    let Ok(client) = state.online_client() else {
+        tracing::warn!("« {} » : serveur injoignable, sauvegardes non comparées, on joue avec la locale", st.name);
+        return Ok(SaveCheck::Ready);
+    };
     let store = store_of(&state, client, &st);
     let remote = match store.find().await {
         Ok(Some(s)) => s,
@@ -245,7 +274,23 @@ fn prune_backups(dir: &std::path::Path) {
         .collect();
     saves.sort();
     while saves.len() > KEEP_BACKUPS {
-        let _ = std::fs::remove_dir_all(saves.remove(0));
+        let old = saves.remove(0);
+        // Copie de la locale (dossier) ou version du serveur gardée (`keep_server_copy`, zip).
+        let _ = if old.is_dir() { std::fs::remove_dir_all(old) } else { std::fs::remove_file(old) };
+    }
+}
+
+/// Steam Deck : version du serveur remplacée par une locale plus récente, gardée aussi sur
+/// l'appareil (en plus de l'historique du serveur), dans les copies de secours du jeu.
+fn keep_server_copy(st: &InstalledGame, bytes: &[u8]) {
+    let backups = st.game_dir.join(INTERNAL_DIR).join("backups");
+    let path = backups.join(format!("saves-{}-serveur.zip", state::now()));
+    match std::fs::create_dir_all(&backups).and_then(|_| std::fs::write(&path, bytes)) {
+        Ok(()) => {
+            tracing::info!("« {} » : version du serveur gardée dans {}", st.name, path.display());
+            prune_backups(&backups);
+        }
+        Err(e) => tracing::error!("« {} » : version du serveur non gardée sur l'appareil ({e}), elle reste dans l'historique", st.name),
     }
 }
 
@@ -260,10 +305,81 @@ pub enum SaveUpload {
     Failed,
     /// Serveur injoignable : gardée sur ce PC, envoyée à son retour.
     Pending,
+    /// Changée aussi sur le serveur depuis le dernier échange : rien n'est écrasé, la locale
+    /// reste sur cet appareil et la question est posée au prochain lancement (`check`).
+    Conflict,
+    /// Steam Deck : envoyée par-dessus une version plus ancienne d'un autre appareil, gardée
+    /// (historique du serveur et copie dans `.farfalauncher/backups`).
+    UploadedKeptOther,
+    /// Steam Deck : celle du serveur était plus récente, elle est remise sur l'appareil (la
+    /// locale est d'abord copiée dans `.farfalauncher/backups`).
+    ServerNewer,
+}
+
+/// Ce que fait `after_play` d'une sauvegarde locale changée, selon le serveur.
+#[derive(Debug, PartialEq)]
+enum Guard {
+    /// Serveur inchangé depuis le dernier échange (ou vide) : la locale part.
+    Upload,
+    /// Le serveur a déjà ce contenu : rien à envoyer.
+    AlreadyThere,
+    /// Les deux ont changé : rien n'est écrasé, question au prochain lancement.
+    AskLater,
+    /// Les deux ont changé, la locale est la plus récente (Deck) : elle part, l'autre est gardée.
+    UploadKeepOther,
+    /// Les deux ont changé, le serveur est le plus récent (Deck) : il revient sur l'appareil.
+    TakeServer,
+}
+
+/// Décision du garde-fou, sans réseau ni disque (testée) :
+/// - `same_date` : `updated_at` du serveur = `synced_server` (rien reçu d'ailleurs) ;
+/// - empreintes du serveur, du dernier échange et de la locale ;
+/// - dates (secondes Unix) de la locale et du serveur, pour le Deck (`newest_wins`) ;
+/// - `during_play` : jeu encore ouvert, ses fichiers ne sont jamais remplacés.
+#[allow(clippy::too_many_arguments)]
+fn guard_decision(
+    same_date: bool,
+    remote_hash: Option<&str>,
+    synced_hash: Option<&str>,
+    local_hash: Option<&str>,
+    local_modified: Option<i64>,
+    server_modified: Option<i64>,
+    newest_wins: bool,
+    during_play: bool,
+) -> Guard {
+    if same_date || remote_hash.is_none() {
+        return Guard::Upload;
+    }
+    if remote_hash == local_hash {
+        return Guard::AlreadyThere;
+    }
+    // Même contenu qu'au dernier échange (date changée seulement : copie refaite…).
+    if remote_hash == synced_hash {
+        return Guard::Upload;
+    }
+    if !newest_wins {
+        return Guard::AskLater;
+    }
+    // Date du serveur illisible : le serveur gagne (la locale est gardée en copie).
+    match (local_modified, server_modified) {
+        (Some(local), Some(server)) if local > server => Guard::UploadKeepOther,
+        _ if during_play => Guard::AskLater,
+        _ => Guard::TakeServer,
+    }
 }
 
 /// Après la partie : envoie la sauvegarde si elle a changé depuis le dernier échange.
 pub async fn after_play(state: &AppState, client: Option<RommClient>, rom_id: i64, started: SystemTime) -> (SaveUpload, Option<AppError>) {
+    upload_changed(state, client, rom_id, started, false).await
+}
+
+/// Pendant la partie (mise en veille du Steam Deck) : envoie la sauvegarde si elle a changé,
+/// avec le même garde-fou, sans jamais remplacer les fichiers du jeu ouvert.
+pub async fn upload_during_play(state: &AppState, rom_id: i64, started: SystemTime) -> (SaveUpload, Option<AppError>) {
+    upload_changed(state, state.client().ok(), rom_id, started, true).await
+}
+
+async fn upload_changed(state: &AppState, client: Option<RommClient>, rom_id: i64, started: SystemTime, during_play: bool) -> (SaveUpload, Option<AppError>) {
     let Some(mut st) = state::find(&state.config_dir, rom_id) else { return (SaveUpload::Off, None) };
     // Jeu Switch : dossier trouvé maintenant que la partie l'a créé.
     crate::switch_saves::fill(&state.catalog(), &state.config_dir, &mut st, Some(started));
@@ -309,6 +425,8 @@ pub async fn after_play(state: &AppState, client: Option<RommClient>, rom_id: i6
                 tracing::error!("recherche des sauvegardes non mémorisée: {}", e.code());
             }
             tracing::info!("« {} » : sauvegardes toujours introuvables après la partie", st.name);
+        } else {
+            tracing::info!("« {} » : pas de dossier de sauvegarde connu, rien n'est envoyé", st.name);
         }
         return (SaveUpload::Off, None);
     };
@@ -322,6 +440,7 @@ pub async fn after_play(state: &AppState, client: Option<RommClient>, rom_id: i6
         .await
         .map_err(|_| AppError::Internal)??;
         if hash.is_none() || hash == st.saves.synced_hash {
+            tracing::info!("« {} » : sauvegarde inchangée depuis le dernier échange", st.name);
             if st.saves.pending_upload {
                 st.saves.pending_upload = false;
                 state::write_state(&state.config_dir, &st)?;
@@ -332,14 +451,74 @@ pub async fn after_play(state: &AppState, client: Option<RommClient>, rom_id: i6
             return Err(AppError::ServerUnreachable);
         }
         let client = client.ok_or(AppError::AuthInvalid)?;
-        let size = zip.len();
-        let updated_at = store_of(state, client, &st).upload(zip).await?;
-        st.saves.synced_hash = hash;
-        st.saves.synced_server = Some(updated_at);
-        st.saves.pending_upload = false;
-        state::write_state(&state.config_dir, &st)?;
-        tracing::info!("« {} » : sauvegarde envoyée ({size} octets)", st.name);
-        Ok(SaveUpload::Uploaded)
+        let store = store_of(state, client, &st);
+        // Garde-fou : le serveur a-t-il reçu une autre sauvegarde depuis le dernier échange ?
+        let (decision, remote) = match store.find().await? {
+            None => (Guard::Upload, None),
+            Some(remote) if st.saves.synced_server.as_deref() == Some(remote.updated_at.as_str()) => (Guard::Upload, None),
+            Some(remote) => {
+                let bytes = store.download(&remote).await?;
+                let remote_hash = saves::hash_zip(&bytes)?;
+                let local_modified = saves::latest_modified(&loc).map(|t| t as i64);
+                let server_modified = parse_server_date(&remote.updated_at);
+                let newest_wins = state.newest_wins.load(std::sync::atomic::Ordering::Relaxed);
+                let d = guard_decision(false, remote_hash.as_deref(), st.saves.synced_hash.as_deref(), hash.as_deref(), local_modified, server_modified, newest_wins, during_play);
+                if d != Guard::Upload && d != Guard::AlreadyThere {
+                    tracing::warn!(
+                        "« {} » : sauvegarde changée ici et sur le serveur depuis le dernier échange (locale : {}, serveur : {}{}, dernier échange : {}) → {d:?}",
+                        st.name,
+                        local_modified.map(format_unix).unwrap_or_else(|| "?".into()),
+                        remote.updated_at,
+                        if server_modified.is_none() { " (date illisible)" } else { "" },
+                        st.saves.synced_server.as_deref().unwrap_or("jamais"),
+                    );
+                }
+                (d, Some((remote.updated_at, bytes)))
+            }
+        };
+        match (decision, remote) {
+            (Guard::AlreadyThere, Some((updated_at, _))) => {
+                st.saves.synced_hash = hash;
+                st.saves.synced_server = Some(updated_at);
+                st.saves.pending_upload = false;
+                state::write_state(&state.config_dir, &st)?;
+                tracing::info!("« {} » : le serveur a déjà cette sauvegarde", st.name);
+                Ok(SaveUpload::Unchanged)
+            }
+            (Guard::AskLater, _) => {
+                st.saves.pending_upload = false;
+                state::write_state(&state.config_dir, &st)?;
+                tracing::info!("« {} » : sauvegarde gardée sur cet appareil, question au prochain lancement", st.name);
+                Ok(SaveUpload::Conflict)
+            }
+            (Guard::TakeServer, Some((updated_at, bytes))) => {
+                let backups = st.game_dir.join(INTERNAL_DIR).join("backups");
+                let backup = backups.join(format!("saves-{}", state::now()));
+                let (loc2, bytes2) = (loc.clone(), bytes.clone());
+                tokio::task::spawn_blocking(move || saves::restore(&loc2, &bytes2, &backup)).await.map_err(|_| AppError::Internal)??;
+                prune_backups(&backups);
+                st.saves.synced_hash = saves::hash_zip(&bytes)?;
+                st.saves.synced_server = Some(updated_at);
+                st.saves.pending_upload = false;
+                state::write_state(&state.config_dir, &st)?;
+                tracing::info!("« {} » : sauvegarde du serveur plus récente, remise sur l'appareil (la locale est dans les copies de secours)", st.name);
+                Ok(SaveUpload::ServerNewer)
+            }
+            (decision, remote) => {
+                let kept_other = decision == Guard::UploadKeepOther;
+                if let (true, Some((_, bytes))) = (kept_other, &remote) {
+                    keep_server_copy(&st, bytes);
+                }
+                let size = zip.len();
+                let updated_at = store.upload(zip).await?;
+                st.saves.synced_hash = hash;
+                st.saves.synced_server = Some(updated_at);
+                st.saves.pending_upload = false;
+                state::write_state(&state.config_dir, &st)?;
+                tracing::info!("« {} » : sauvegarde envoyée ({size} octets){}", st.name, if kept_other { ", l'autre version est gardée" } else { "" });
+                Ok(if kept_other { SaveUpload::UploadedKeptOther } else { SaveUpload::Uploaded })
+            }
+        }
     }
     .await;
     match res {
@@ -452,5 +631,57 @@ mod pending_tests {
         // Envoyée depuis le Deck pendant la nuit : on ne l'écrase pas.
         assert_eq!(pending_action(Some("2026-11-16T02:00:00Z"), Some("2026-11-16T03:00:00Z")), PendingAction::AskAtNextLaunch);
         assert_eq!(pending_action(None, Some("2026-11-16T03:00:00Z")), PendingAction::AskAtNextLaunch);
+    }
+}
+
+#[cfg(test)]
+mod guard_tests {
+    use super::{guard_decision, parse_server_date, Guard};
+
+    #[test]
+    fn reads_the_dates_of_both_servers() {
+        // RomM.
+        assert_eq!(parse_server_date("2026-07-16T15:53:39+00:00"), Some(1784217219));
+        // Gestionnaire : fractions de seconde.
+        assert_eq!(parse_server_date("2026-07-16T15:53:39.123456+00:00"), Some(1784217219));
+        assert_eq!(parse_server_date("2026-07-16T15:53:39Z"), Some(1784217219));
+        // Sans fuseau : UTC. Espace au lieu du T.
+        assert_eq!(parse_server_date("2026-07-16T15:53:39"), Some(1784217219));
+        assert_eq!(parse_server_date("2026-07-16 15:53:39.5"), Some(1784217219));
+        assert_eq!(parse_server_date(" 2026-07-16T17:53:39+02:00 "), Some(1784217219));
+        assert_eq!(parse_server_date("hier soir"), None);
+        assert_eq!(parse_server_date(""), None);
+    }
+
+    fn d(same: bool, remote: Option<&str>, synced: Option<&str>, local: Option<&str>, lt: Option<i64>, st: Option<i64>, deck: bool, during: bool) -> Guard {
+        guard_decision(same, remote, synced, local, lt, st, deck, during)
+    }
+
+    #[test]
+    fn never_overwrites_a_save_sent_by_another_device() {
+        // Serveur inchangé depuis le dernier échange, ou vide : la locale part.
+        assert_eq!(d(true, Some("b"), Some("a"), Some("c"), None, None, false, false), Guard::Upload);
+        assert_eq!(d(false, None, None, Some("c"), None, None, true, false), Guard::Upload);
+        // Date changée, même contenu qu'au dernier échange : la locale part.
+        assert_eq!(d(false, Some("a"), Some("a"), Some("c"), None, None, false, false), Guard::Upload);
+        // Le serveur a déjà ce contenu.
+        assert_eq!(d(false, Some("c"), Some("a"), Some("c"), None, None, false, false), Guard::AlreadyThere);
+        // PC : les deux ont changé → rien n'est écrasé, question au prochain lancement.
+        assert_eq!(d(false, Some("b"), Some("a"), Some("c"), Some(200), Some(100), false, false), Guard::AskLater);
+        // Jamais synchronisée ici (BotW) : compte comme un changement du serveur.
+        assert_eq!(d(false, Some("b"), None, Some("c"), Some(200), Some(100), false, false), Guard::AskLater);
+    }
+
+    #[test]
+    fn on_the_deck_the_newest_wins() {
+        assert_eq!(d(false, Some("b"), Some("a"), Some("c"), Some(200), Some(100), true, false), Guard::UploadKeepOther);
+        assert_eq!(d(false, Some("b"), Some("a"), Some("c"), Some(100), Some(200), true, false), Guard::TakeServer);
+        // Égalité, date du serveur illisible ou locale sans date : le serveur gagne.
+        assert_eq!(d(false, Some("b"), Some("a"), Some("c"), Some(100), Some(100), true, false), Guard::TakeServer);
+        assert_eq!(d(false, Some("b"), Some("a"), Some("c"), Some(200), None, true, false), Guard::TakeServer);
+        assert_eq!(d(false, Some("b"), Some("a"), Some("c"), None, Some(100), true, false), Guard::TakeServer);
+        // Jeu encore ouvert (veille) : ses fichiers ne sont jamais remplacés.
+        assert_eq!(d(false, Some("b"), Some("a"), Some("c"), Some(100), Some(200), true, true), Guard::AskLater);
+        assert_eq!(d(false, Some("b"), Some("a"), Some("c"), Some(200), Some(100), true, true), Guard::UploadKeepOther);
     }
 }
