@@ -549,51 +549,7 @@ pub fn controller_ports(state: State<'_, AppState>, rom_id: i64) -> AppResult<us
     Ok(state.catalog().controllers_for_install(&st).map(|f| crate::controllers::ports(&f)).unwrap_or(0))
 }
 
-/// Page « Contrôles » d'un jeu installé : joueurs, boutons de la console et réglages.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ControlsInfo {
-    /// Joueurs dont le launcher pose la manette (0 : le jeu choisit lui-même).
-    ports: usize,
-    /// Famille des boutons réglables ici (`gc`), sinon `None` : boutons réglés dans l'émulateur.
-    layout: Option<&'static str>,
-    buttons: Vec<crate::controls::ConsoleButton>,
-    /// Clavier et souris possibles comme joueur.
-    keyboard: bool,
-    scope: crate::controls::Scope,
-    binds: Vec<Option<crate::controls::PlayerBinds>>,
-    /// Nom de l'émulateur (portée « tous les jeux du même émulateur »).
-    emulator: Option<String>,
-}
-
-fn controls_target(state: &AppState, rom_id: i64) -> AppResult<(usize, Option<(&'static str, String, String)>)> {
-    let st = state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
-    let catalog = state.catalog();
-    let Some(format) = catalog.controllers_for_install(&st) else { return Ok((0, None)) };
-    let ports = crate::controllers::ports(&format);
-    let target = match (crate::controls::layout_of(&format), catalog.emulator_for_install(&st)) {
-        (Some(layout), Some(e)) => Some((layout, e.id.clone(), e.name.clone())),
-        _ => None,
-    };
-    Ok((ports, target))
-}
-
-fn controls_info_of(state: &AppState, rom_id: i64) -> AppResult<ControlsInfo> {
-    let (ports, target) = controls_target(state, rom_id)?;
-    let Some((layout, id, name)) = target else {
-        return Ok(ControlsInfo { ports, layout: None, buttons: Vec::new(), keyboard: false, scope: Default::default(), binds: Vec::new(), emulator: None });
-    };
-    let (scope, binds) = crate::controls::current(&state.config_dir, &crate::controls::Target { rom_id, emulator: &id, layout });
-    Ok(ControlsInfo {
-        ports,
-        layout: Some(layout),
-        buttons: crate::controls::buttons_of(layout),
-        keyboard: crate::controls::keyboard_here(),
-        scope,
-        binds,
-        emulator: Some(name),
-    })
-}
+use crate::controls::{info_of as controls_info_of, target_of as controls_target, ControlsInfo};
 
 #[tauri::command]
 pub fn controls_info(state: State<'_, AppState>, rom_id: i64) -> AppResult<ControlsInfo> {

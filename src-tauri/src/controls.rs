@@ -14,7 +14,8 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::LockOrRecover;
+use crate::error::{AppError, AppResult, LockOrRecover};
+use crate::state::AppState;
 
 /// Clé de `PlayerPad` pour « Clavier et souris ».
 pub const KEYBOARD: &str = "clavier-souris";
@@ -386,6 +387,53 @@ fn x11_key(code: &str) -> Option<String> {
         .to_string(),
     )
 }
+
+/// Page « Contrôles » d'un jeu installé : joueurs, boutons de la console et réglages.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ControlsInfo {
+    /// Joueurs dont le launcher pose la manette (0 : le jeu choisit lui-même).
+    ports: usize,
+    /// Famille des boutons réglables ici (`gc`), sinon `None` : boutons réglés dans l'émulateur.
+    layout: Option<&'static str>,
+    buttons: Vec<ConsoleButton>,
+    /// Clavier et souris possibles comme joueur.
+    keyboard: bool,
+    scope: Scope,
+    binds: Vec<Option<PlayerBinds>>,
+    /// Nom de l'émulateur (portée « tous les jeux du même émulateur »).
+    emulator: Option<String>,
+}
+
+pub fn target_of(state: &AppState, rom_id: i64) -> AppResult<(usize, Option<(&'static str, String, String)>)> {
+    let st = crate::install::state::find(&state.config_dir, rom_id).ok_or(AppError::NotInstalled)?;
+    let catalog = state.catalog();
+    let Some(format) = catalog.controllers_for_install(&st) else { return Ok((0, None)) };
+    let ports = crate::controllers::ports(&format);
+    let target = match (layout_of(&format), catalog.emulator_for_install(&st)) {
+        (Some(layout), Some(e)) => Some((layout, e.id.clone(), e.name.clone())),
+        _ => None,
+    };
+    Ok((ports, target))
+}
+
+pub fn info_of(state: &AppState, rom_id: i64) -> AppResult<ControlsInfo> {
+    let (ports, target) = target_of(state, rom_id)?;
+    let Some((layout, id, name)) = target else {
+        return Ok(ControlsInfo { ports, layout: None, buttons: Vec::new(), keyboard: false, scope: Default::default(), binds: Vec::new(), emulator: None });
+    };
+    let (scope, binds) = current(&state.config_dir, &Target { rom_id, emulator: &id, layout });
+    Ok(ControlsInfo {
+        ports,
+        layout: Some(layout),
+        buttons: buttons_of(layout),
+        keyboard: keyboard_here(),
+        scope,
+        binds,
+        emulator: Some(name),
+    })
+}
+
 
 #[cfg(test)]
 mod tests {

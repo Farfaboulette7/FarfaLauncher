@@ -10,7 +10,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::error::{log_err, AppError, AppResult};
 use crate::romm::client::RommClient;
-use crate::romm::library::{Game, Platform};
+use crate::romm::library::{self, Game, Manual, Platform};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -134,6 +134,22 @@ pub fn prune_dir(dir: &Path, max_bytes: u64) -> u64 {
         }
     }
     removed
+}
+
+/// Livret PDF d'un jeu, téléchargé une fois dans `<cache>/manuals` (launcher et Deck).
+pub async fn manual_file(client: &RommClient, cache_dir: &Path, rom_id: i64, manual: &Manual) -> AppResult<PathBuf> {
+    let dir = cache_dir.join("manuals");
+    match manual {
+        Manual::Resource { url } => {
+            let prefix = format!("{}/assets/", client.base());
+            let rest = url.strip_prefix(&prefix).ok_or(AppError::Internal)?;
+            cached_download(client, &dir, url, &format!("assets/{rest}"), Some("pdf")).await
+        }
+        Manual::File { file } => {
+            let key = format!("{rom_id}:{}:{}:{}", file.id, file.size, file.sha1.as_deref().unwrap_or(""));
+            cached_download(client, &dir, &key, &library::file_content_path(file), Some("pdf")).await
+        }
+    }
 }
 
 pub async fn cached_download(

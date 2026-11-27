@@ -54,6 +54,9 @@ Commandes (réponses en JSON, une ligne par message) :
                                 temps de jeu, nouveautés, classement, shaders partagés, page RomM
   succes <id>                   succès RetroAchievements du jeu, ceux du joueur et la progression
                                 des amis (`null` si le jeu n'en a pas ; images : commande `image`)
+  compte-ra                     compte RetroAchievements lié dans RomM (pseudo, page du profil RomM)
+  livret <id> [<n>]             livret PDF n° n (0 par défaut) téléchargé : { path, count }
+  commandes <id>                page Contrôles du launcher (jeu installé) : joueurs, boutons de la console
   langue <id> [fr|en]         langue du jeu (Black Ops III, recomps qui proposent l'anglais)
   historique <id>               versions précédentes de la sauvegarde
   restaurer <id> <version>      remet une version (l'actuelle est gardée dans l'historique)
@@ -348,6 +351,18 @@ async fn run(args: Vec<String>) -> AppResult<Value> {
         }
         "fiche" => sheet(&open_state(), rom_id(rest.first())?, rest.get(1).cloned().unwrap_or_default()).await,
         "succes" => achievements(&open_state(), rom_id(rest.first())?).await,
+        "compte-ra" => {
+            let account = crate::achievements::account(&open_state()).await?;
+            serde_json::to_value(account).map_err(|_| AppError::Internal)
+        }
+        "livret" => {
+            let index = rest.get(1).and_then(|n| n.parse().ok()).unwrap_or(0);
+            manual(&open_state(), rom_id(rest.first())?, index).await
+        }
+        "commandes" => {
+            let info = crate::controls::info_of(&open_state(), rom_id(rest.first())?)?;
+            serde_json::to_value(info).map_err(|_| AppError::Internal)
+        }
         "langue" => language(&open_state(), rom_id(rest.first())?, rest.get(1).map(String::as_str)).await,
         "historique" => {
             let state = open_state();
@@ -724,6 +739,15 @@ async fn achievements(state: &AppState, id: i64) -> AppResult<Value> {
     let mut out = serde_json::to_value(&game).map_err(|_| AppError::Internal)?;
     out["friends"] = friends.unwrap_or(Value::Null);
     Ok(out)
+}
+
+/// Livret PDF n° `index` d'un jeu, téléchargé dans le cache : son chemin, et combien le jeu en a.
+async fn manual(state: &AppState, id: i64, index: usize) -> AppResult<Value> {
+    let client = state.client()?;
+    let game = library::fetch_game_details(&client, id, target()).await?;
+    let manual = game.manuals.get(index).ok_or(AppError::Internal)?;
+    let path = crate::cache::manual_file(&client, &state.cache_dir, id, manual).await?;
+    Ok(json!({ "path": path, "count": game.manuals.len() }))
 }
 
 /// Le reste de la fiche d'un jeu (onglets Informations et Nouveautés du launcher). Chaque

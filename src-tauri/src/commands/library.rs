@@ -235,18 +235,7 @@ pub async fn image_path(state: State<'_, AppState>, url: String) -> AppResult<St
 #[tauri::command]
 pub async fn manual_path(state: State<'_, AppState>, rom_id: i64, manual: Manual) -> AppResult<String> {
     let client = state.client()?;
-    let dir = state.cache_dir.join("manuals");
-    let path = match &manual {
-        Manual::Resource { url } => {
-            let prefix = format!("{}/assets/", client.base());
-            let rest = url.strip_prefix(&prefix).ok_or(AppError::Internal)?;
-            cache::cached_download(&client, &dir, url, &format!("assets/{rest}"), Some("pdf")).await?
-        }
-        Manual::File { file } => {
-            let key = format!("{rom_id}:{}:{}:{}", file.id, file.size, file.sha1.as_deref().unwrap_or(""));
-            cache::cached_download(&client, &dir, &key, &library::file_content_path(file), Some("pdf")).await?
-        }
-    };
+    let path = cache::manual_file(&client, &state.cache_dir, rom_id, &manual).await?;
     Ok(path.to_string_lossy().into_owned())
 }
 
