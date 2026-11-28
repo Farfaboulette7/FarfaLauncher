@@ -71,6 +71,14 @@ Commandes (réponses en JSON, une ligne par message) :
   avis-supprimer <id> <note>    supprime son avis
   signalements <id>             signalements d'un jeu, tous joueurs (`null` : gestionnaire trop ancien)
   mes-demandes                  demandes de jeux du joueur
+  amis                          amis et leur présence (`null` : gestionnaire sans la présence)
+  presence                      signale NieRDeck ouvert (en ligne, ou en jeu) ; à rappeler chaque minute
+  presence-quitter              hors ligne tout de suite (mise en veille)
+  hors-ligne oui|non            « Apparaître hors ligne »
+  avatar <id>                   avatar RomM d'un joueur, téléchargé : { path }
+  stats [<id>]                  statistiques d'un joueur (les siennes sans id), noms des jeux compris
+  classement                    classement général du temps de jeu
+  stats-masquees oui|non        « Masquer mes statistiques »
   langue <id> [fr|en]         langue du jeu (Black Ops III, recomps qui proposent l'anglais)
   historique <id>               versions précédentes de la sauvegarde
   restaurer <id> <version>      remet une version (l'actuelle est gardée dans l'historique)
@@ -365,6 +373,65 @@ async fn run(args: Vec<String>) -> AppResult<Value> {
         }
         "fiche" => sheet(&open_state(), rom_id(rest.first())?, rest.get(1).cloned().unwrap_or_default()).await,
         "succes" => achievements(&open_state(), rom_id(rest.first())?).await,
+        "amis" => {
+            let state = open_state();
+            Ok(crate::presence::friends(&state).await?.map(|f| serde_json::to_value(f).unwrap_or(Value::Null)).unwrap_or(Value::Null))
+        }
+        // NieRDeck ouvert : « en ligne » (ou « en jeu » si une partie tourne), comme le launcher
+        // ouvert. À rappeler toutes les minutes (le gestionnaire oublie un compte après 3 min).
+        "presence" => {
+            let state = open_state();
+            if !state.settings().presence_hidden {
+                if let Ok(client) = crate::presence::manager(&state) {
+                    let game = running_games(&state).into_iter().map(|(id, _)| id).min().map(|id| crate::presence::game_ref(&state, id));
+                    crate::presence::post(&client, &crate::presence::body(game)).await;
+                }
+            }
+            Ok(json!({ "hidden": state.settings().presence_hidden }))
+        }
+        "presence-quitter" => {
+            crate::presence::leave(&open_state()).await;
+            Ok(Value::Null)
+        }
+        "hors-ligne" => {
+            let hidden = match rest.first().map(String::as_str) {
+                Some("oui") => true,
+                Some("non") => false,
+                _ => return Err(AppError::Internal),
+            };
+            crate::presence::set_hidden(&open_state(), hidden).await?;
+            Ok(json!({ "hidden": hidden }))
+        }
+        "avatar" => {
+            let state = open_state();
+            let id: i64 = rest.first().and_then(|v| v.parse().ok()).ok_or(AppError::Internal)?;
+            let client = crate::presence::manager(&state)?;
+            // Une version par jour, comme le launcher (friend_avatar).
+            let day = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() / 86_400).unwrap_or(0);
+            let path = crate::cache::cached_download(&client, &state.cache_dir.join("images"), &format!("ami-{id}-{day}"), &format!("api/presence/avatar/{id}"), Some("png")).await?;
+            Ok(json!({ "path": path }))
+        }
+        "stats" => {
+            let state = open_state();
+            let id = rest.first().and_then(|v| v.parse().ok());
+            match crate::stats::profile(&state, id).await? {
+                Some(mut p) => {
+                    name_stats_games(&state, &mut p).await;
+                    Ok(p)
+                }
+                None => Ok(Value::Null),
+            }
+        }
+        "classement" => Ok(crate::stats::ranking(&open_state()).await?.unwrap_or(Value::Null)),
+        "stats-masquees" => {
+            let hidden = match rest.first().map(String::as_str) {
+                Some("oui") => true,
+                Some("non") => false,
+                _ => return Err(AppError::Internal),
+            };
+            crate::stats::set_hidden(&open_state(), hidden).await?;
+            Ok(json!({ "hidden": hidden }))
+        }
         "rapport-fichiers" => Ok(json!({ "files": crate::community::report_files(&open_state(), rom_id(rest.first())?)? })),
         "signaler" => {
             let id = rom_id(rest.first())?;
@@ -811,6 +878,33 @@ async fn achievements(state: &AppState, id: i64) -> AppResult<Value> {
     let mut out = serde_json::to_value(&game).map_err(|_| AppError::Internal)?;
     out["friends"] = friends.unwrap_or(Value::Null);
     Ok(out)
+}
+
+/// Nom des jeux d'un profil de statistiques (`top`, `recent` n'ont que l'identifiant RomM) :
+/// lus au serveur, sinon ceux des jeux installés.
+async fn name_stats_games(state: &AppState, profile: &mut Value) {
+    let mut ids: Vec<i64> = ["top", "recent"]
+        .iter()
+        .flat_map(|k| profile[*k].as_array().cloned().unwrap_or_default())
+        .filter_map(|g| g["romId"].as_i64())
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let mut names: std::collections::HashMap<i64, String> = std::collections::HashMap::new();
+    if let Ok(client) = state.client() {
+        for g in library::list_games_by_ids(&client, &ids, target()).await {
+            names.insert(g.id, g.name);
+        }
+    }
+    for k in ["top", "recent"] {
+        if let Some(list) = profile[k].as_array_mut() {
+            for g in list {
+                let Some(id) = g["romId"].as_i64() else { continue };
+                let name = names.get(&id).cloned().or_else(|| state::find(&state.config_dir, id).map(|st| st.name));
+                g["name"] = json!(name);
+            }
+        }
+    }
 }
 
 /// Livret PDF n° `index` d'un jeu, téléchargé dans le cache : son chemin, et combien le jeu en a.
