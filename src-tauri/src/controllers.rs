@@ -314,8 +314,11 @@ mod dolphin {
     }
 
     pub fn apply(ports: &[Option<PadInfo>], keyboard: &[bool], binds: &[Option<crate::controls::PlayerBinds>], all: &[PadInfo], exe_dir: &Path) -> Result<(), String> {
-        // Dolphin portable (portable.txt, aussi dans le .app sur Mac) : User/ à côté.
-        let dir = if exe_dir.join("portable.txt").is_file() {
+        // Dolphin portable (portable.txt, aussi dans le .app sur Mac) : User/ à côté. Pas sous
+        // Linux : l'AppImage ignore portable.txt (son exécutable est dans l'image) et lit
+        // ~/.config/dolphin-emu, comme le dit la fiche. Écrire dans User/ y laissait Dolphin
+        // avec sa configuration par défaut, au clavier (manette sans effet sur le Deck).
+        let dir = if exe_dir.join("portable.txt").is_file() && !cfg!(target_os = "linux") {
             exe_dir.join("User").join("Config")
         } else {
             path_for("{exedir}/User/Config", "{config}/dolphin-emu", exe_dir)?
