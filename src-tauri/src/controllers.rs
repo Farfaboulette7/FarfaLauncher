@@ -370,6 +370,12 @@ mod dolphin {
                 }
             }
         }
+        // Steam Deck (moteur sans interface) : sous gamescope, Dolphin ne voit pas toujours sa
+        // fenêtre comme active et ignore alors la manette ; le jeu est seul à l'écran.
+        #[cfg(not(feature = "gui"))]
+        {
+            main_text = set_ini(&main_text, "Input.BackgroundInput", "True");
+        }
         write(&gc_path, &gc_before, &gc_text)?;
         write(&wii_path, &wii_before, &wii_text)?;
         write(&main_path, &main_before, &main_text)

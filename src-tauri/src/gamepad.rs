@@ -191,9 +191,6 @@ pub fn snapshot() -> Vec<PadInfo> {
     unsafe {
         // Pas d'accès exclusif aux manettes (HIDAPI) : le jeu doit les lire ensuite.
         SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI, c"0".as_ptr());
-        // Manettes virtuelles de Steam Input comprises : ce sont elles que voit un jeu lancé
-        // par Steam (voir `games_view`).
-        SDL_SetHint(c"SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD".as_ptr(), c"1".as_ptr());
         if !SDL_InitSubSystem(SDL_INIT_GAMEPAD) {
             tracing::warn!("manettes indisponibles: {:?}", text(sdl3_sys::error::SDL_GetError()));
             return pads;
@@ -211,23 +208,7 @@ pub fn snapshot() -> Vec<PadInfo> {
         }
         SDL_QuitSubSystem(SDL_INIT_GAMEPAD);
     }
-    games_view(pads)
-}
-
-/// Fabricant et produit des manettes virtuelles de Steam Input (« Steam Virtual Gamepad »).
-#[cfg(not(feature = "gui"))]
-const STEAM_VIRTUAL: (u16, u16) = (0x28de, 0x11ff);
-
-/// Manettes telles que les voit un jeu lancé par Steam (mode Jeu du Deck) : Steam Input cache
-/// les vraies manettes qu'il gère et présente à leur place ses manettes virtuelles. Quand il y
-/// en a, seules elles comptent : écrire le nom de la vraie (« Steam Deck Controller ») dans la
-/// configuration d'un émulateur ne correspondrait à aucune manette dans le jeu.
-#[cfg(not(feature = "gui"))]
-fn games_view(pads: Vec<PadInfo>) -> Vec<PadInfo> {
-    if !pads.iter().any(|p| (p.vendor, p.product) == STEAM_VIRTUAL) {
-        return pads;
-    }
-    pads.into_iter().filter(|p| (p.vendor, p.product) == STEAM_VIRTUAL).collect()
+    pads
 }
 
 /// Famille de la manette, d'après le fabricant puis le nom.
