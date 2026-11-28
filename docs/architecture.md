@@ -320,6 +320,10 @@ chaque release.
   Les textes du joueur arrivent par l'entrée standard. Le rapport du Deck joint les journaux du
   moteur, nettoyés comme ceux du launcher (`report::anonymize`). Le résultat de fin de partie
   (`resultat`) donne le plantage et `askReport` : NieRDeck propose alors le rapport.
+- Amis et statistiques : `amis`, `hors-ligne`, `avatar`, `stats` (noms des jeux ajoutés),
+  `classement`, `stats-masquees` (mêmes fonctions que `presence.rs` et `stats.rs`). `presence`,
+  appelée chaque minute par NieRDeck ouvert, signale « en ligne » (ou « en jeu » si une partie
+  tourne), comme le launcher ouvert ; `presence-quitter` à la mise en veille.
 
 Conséquence : toucher à `play.rs`, `save_sync.rs`, `install/` ou `pc/`, c'est aussi toucher
 au Deck. La CI compile le moteur à chaque push (`ci.yml`, job `deck`). Le smoke test utilise
