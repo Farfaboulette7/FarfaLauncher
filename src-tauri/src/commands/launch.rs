@@ -37,22 +37,12 @@ struct GameStopped {
     ask_report: bool,
 }
 
-/// Faut-il ouvrir la proposition de rapport après un plantage de ce jeu ?
-fn ask_report(crash: Option<&crate::launch::Crash>, prompt_off: &[i64], rom_id: i64) -> bool {
-    crash.is_some() && !prompt_off.contains(&rom_id)
-}
+use crate::community::ask_report;
 
 /// « Ne plus demander pour ce jeu » (`ask = false`) ou réactive la question après un plantage.
 #[tauri::command]
 pub fn set_crash_prompt(state: State<'_, AppState>, rom_id: i64, ask: bool) -> AppResult<()> {
-    state.update_settings(|s| {
-        s.crash_prompt_off.retain(|id| *id != rom_id);
-        if !ask {
-            s.crash_prompt_off.push(rom_id);
-        }
-    })?;
-    tracing::info!("rapport proposé après un plantage du jeu {rom_id} : {}", if ask { "oui" } else { "non" });
-    Ok(())
+    crate::community::set_crash_prompt(&state, rom_id, ask)
 }
 
 #[tauri::command]
@@ -157,19 +147,4 @@ pub async fn flush_play_sessions(state: State<'_, AppState>) -> AppResult<usize>
         return Ok(0);
     }
     playtime::flush(&state.client()?, &state.config_dir).await
-}
-
-#[cfg(test)]
-mod tests {
-    use super::ask_report;
-    use crate::launch::Crash;
-
-    #[test]
-    fn asks_after_a_crash_unless_muted_for_this_game() {
-        let crash = Crash { seconds: 3, error: None };
-        assert!(ask_report(Some(&crash), &[], 7));
-        assert!(ask_report(Some(&crash), &[8], 7));
-        assert!(!ask_report(Some(&crash), &[7], 7));
-        assert!(!ask_report(None, &[], 7));
-    }
 }

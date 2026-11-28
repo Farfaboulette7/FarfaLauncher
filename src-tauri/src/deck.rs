@@ -57,6 +57,20 @@ Commandes (réponses en JSON, une ligne par message) :
   compte-ra                     compte RetroAchievements lié dans RomM (pseudo, page du profil RomM)
   livret <id> [<n>]             livret PDF n° n (0 par défaut) téléchargé : { path, count }
   commandes <id>                page Contrôles du launcher (jeu installé) : joueurs, boutons de la console
+  rapport-fichiers <id>         fichiers joints à un rapport de bug (montrés avant l'envoi)
+  signaler <id> [--apres-plantage]
+                                envoie un rapport de bug ; la description est lue sur l'entrée standard
+  plantage <id> oui|non         proposer (ou plus) un rapport après un plantage de ce jeu
+  mes-rapports                  signalements du joueur, avec les réponses, et ceux déjà lus (`seen`)
+  rapports-vus                  retient des signalements lus (JSON { id: updatedAt } sur l'entrée standard)
+  repondre-rapport <id>         répond au support dans un signalement (texte sur l'entrée standard)
+  support                       le support est-il en ligne ?
+  avis <id>                     avis des joueurs sur un jeu (notes RomM)
+  avis-publier <id> <note|-> <note /10|-> <difficulté|-> <terminé %|->
+                                publie ou met à jour son avis (texte sur l'entrée standard)
+  avis-supprimer <id> <note>    supprime son avis
+  signalements <id>             signalements d'un jeu, tous joueurs (`null` : gestionnaire trop ancien)
+  mes-demandes                  demandes de jeux du joueur
   langue <id> [fr|en]         langue du jeu (Black Ops III, recomps qui proposent l'anglais)
   historique <id>               versions précédentes de la sauvegarde
   restaurer <id> <version>      remet une version (l'actuelle est gardée dans l'historique)
@@ -351,6 +365,55 @@ async fn run(args: Vec<String>) -> AppResult<Value> {
         }
         "fiche" => sheet(&open_state(), rom_id(rest.first())?, rest.get(1).cloned().unwrap_or_default()).await,
         "succes" => achievements(&open_state(), rom_id(rest.first())?).await,
+        "rapport-fichiers" => Ok(json!({ "files": crate::community::report_files(&open_state(), rom_id(rest.first())?)? })),
+        "signaler" => {
+            let id = rom_id(rest.first())?;
+            let text = read_text()?;
+            let report = crate::community::send_report(&open_state(), id, &text, flag(rest, "--apres-plantage")).await?;
+            Ok(json!({ "id": report }))
+        }
+        "plantage" => {
+            let id = rom_id(rest.first())?;
+            let ask = match rest.get(1).map(String::as_str) {
+                Some("oui") => true,
+                Some("non") => false,
+                _ => return Err(AppError::Internal),
+            };
+            crate::community::set_crash_prompt(&open_state(), id, ask)?;
+            Ok(json!({ "romId": id, "ask": ask }))
+        }
+        "mes-rapports" => {
+            let state = open_state();
+            let reports = crate::community::my_reports(&state).await?;
+            Ok(json!({ "reports": reports, "seen": state.settings().reports_seen }))
+        }
+        "rapports-vus" => {
+            let state = open_state();
+            let seen: std::collections::BTreeMap<String, u64> = serde_json::from_str(&read_text()?).map_err(|_| AppError::Internal)?;
+            state.update_settings(|s| s.reports_seen.extend(seen))?;
+            Ok(Value::Null)
+        }
+        "repondre-rapport" => {
+            let id = rest.first().ok_or(AppError::Internal)?;
+            crate::community::reply_report(&open_state(), id, &read_text()?).await
+        }
+        "support" => crate::community::support_status(&open_state()).await,
+        "avis" => crate::community::game_reviews(&open_state(), rom_id(rest.first())?).await,
+        "avis-publier" => {
+            // avis-publier <id> <note|-> <note /10|-> <difficulté|-> <terminé %|->, texte sur l'entrée standard.
+            let id = rom_id(rest.first())?;
+            let num = |i: usize| rest.get(i).and_then(|v| v.parse::<i64>().ok());
+            let text = read_text()?;
+            crate::community::save_game_review(&open_state(), id, num(1), &text, num(2), num(3), num(4)).await
+        }
+        "avis-supprimer" => {
+            let id = rom_id(rest.first())?;
+            let note = rest.get(1).and_then(|v| v.parse().ok()).ok_or(AppError::Internal)?;
+            crate::community::delete_game_review(&open_state(), id, note).await?;
+            Ok(Value::Null)
+        }
+        "signalements" => Ok(crate::community::game_reports(&open_state(), rom_id(rest.first())?).await?.unwrap_or(Value::Null)),
+        "mes-demandes" => crate::community::my_game_requests(&open_state()).await,
         "compte-ra" => {
             let account = crate::achievements::account(&open_state()).await?;
             serde_json::to_value(account).map_err(|_| AppError::Internal)
@@ -416,6 +479,15 @@ async fn run(args: Vec<String>) -> AppResult<Value> {
             Err(AppError::Internal)
         }
     }
+}
+
+/// Texte saisi par le joueur, lu sur l'entrée standard (jamais en argument : accents, guillemets,
+/// longueur). 64 Ko au plus.
+fn read_text() -> AppResult<String> {
+    use std::io::Read;
+    let mut text = String::new();
+    std::io::stdin().take(64 * 1024).read_to_string(&mut text).map_err(|_| AppError::Internal)?;
+    Ok(text)
 }
 
 /// Le Deck : SteamOS (builds Linux acceptées).
@@ -960,9 +1032,18 @@ fn save_result_file(state: &AppState, id: i64) -> PathBuf {
 
 /// `moment` : `fin` (fin de partie) ou `veille`.
 fn write_save_result(state: &AppState, id: i64, moment: &str, save: &crate::save_sync::SaveUpload, error: Option<&AppError>) {
+    write_end_result(state, id, moment, save, error, None);
+}
+
+/// `write_save_result`, avec le plantage de la partie qui vient de finir : NieRDeck propose alors
+/// un rapport (`askReport`), sauf si le joueur l'a coupé pour ce jeu.
+fn write_end_result(state: &AppState, id: i64, moment: &str, save: &crate::save_sync::SaveUpload, error: Option<&AppError>, crash: Option<&crate::launch::Crash>) {
     let st = state::find(&state.config_dir, id);
     let no_dir = st.as_ref().is_some_and(|st| st.saves.dir.is_none());
+    let ask_report = crate::community::ask_report(crash, &state.settings().crash_prompt_off, id);
     let body = json!({
+        "crash": crash,
+        "askReport": ask_report,
         "romId": id,
         "name": st.as_ref().map(|s| s.name.clone()),
         "at": state::now(),
@@ -1111,7 +1192,7 @@ async fn play(state: &AppState, id: i64) -> AppResult<Value> {
         wait_for_server(state, 3).await;
     }
     let finished = crate::play::finish(state, id, started, learned, shader_job).await;
-    write_save_result(state, id, "fin", &finished.save, finished.save_error.as_ref());
+    write_end_result(state, id, "fin", &finished.save, finished.save_error.as_ref(), crash.as_ref());
     let _ = std::fs::remove_file(&running_marker);
     // Statistiques entre amis : la session part aussi au gestionnaire (sans retenir plus de 10 s).
     let _ = tokio::time::timeout(std::time::Duration::from_secs(10), crate::stats::sync(state)).await;

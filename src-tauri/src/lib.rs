@@ -4,6 +4,7 @@
 mod achievements;
 mod assets;
 mod cache;
+mod community;
 #[cfg(feature = "gui")]
 mod commands;
 mod controllers;
