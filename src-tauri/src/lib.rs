@@ -44,6 +44,7 @@ mod settings;
 mod shaders;
 mod stats;
 mod steam;
+mod support;
 mod state;
 mod switch_content;
 mod switch_saves;

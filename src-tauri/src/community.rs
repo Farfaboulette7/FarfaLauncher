@@ -202,6 +202,19 @@ pub async fn game_reports(state: &AppState, rom_id: i64) -> AppResult<Option<Val
     }
 }
 
+/// Envoie une demande de jeu (nom, console, lien et message facultatifs).
+pub async fn send_game_request(state: &AppState, name: &str, console: &str, link: &str, message: &str) -> AppResult<Value> {
+    if name.trim().is_empty() || console.trim().is_empty() {
+        return Err(AppError::Internal);
+    }
+    let base = crate::manager::base_url(&state.settings()).ok_or(AppError::NotAvailable)?;
+    let client = state.online_client()?.with_base(&base);
+    let body = json!({ "name": name.trim(), "console": console.trim(), "link": link.trim(), "message": message.trim() });
+    let created: Value = parse_json(client.send(client.post("api/requests", &body)).await?).await?;
+    tracing::info!("demande de jeu envoyée : {} ({})", name.trim(), created["id"].as_str().unwrap_or("?"));
+    Ok(created)
+}
+
 /// Demandes de jeux du joueur.
 pub async fn my_game_requests(state: &AppState) -> AppResult<Value> {
     let base = crate::manager::base_url(&state.settings()).ok_or(AppError::NotAvailable)?;

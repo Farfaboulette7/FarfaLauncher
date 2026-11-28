@@ -71,6 +71,10 @@ Commandes (réponses en JSON, une ligne par message) :
   avis-supprimer <id> <note>    supprime son avis
   signalements <id>             signalements d'un jeu, tous joueurs (`null` : gestionnaire trop ancien)
   mes-demandes                  demandes de jeux du joueur
+  soutien                       section « Soutenir le projet » (soutien.json du gestionnaire), `null` : cachée
+  demander                      demande un jeu (JSON { name, console, link, message } sur l'entrée standard)
+  limite <Mo/s>                 limite de débit des téléchargements (0 : aucune) ; SIGUSR1 la fait relire
+                                à un `installer` en cours, SIGUSR2 le met en pause (téléchargement gardé)
   amis                          amis et leur présence (`null` : gestionnaire sans la présence)
   presence                      signale NieRDeck ouvert (en ligne, ou en jeu) ; à rappeler chaque minute
   presence-quitter              hors ligne tout de suite (mise en veille)
@@ -105,6 +109,10 @@ static GAME_STOP: std::sync::OnceLock<Arc<std::sync::atomic::AtomicBool>> = std:
 /// Annulation de l'installation en cours (`installer`), levée par le signal d'arrêt que
 /// NieRDeck envoie quand le joueur annule : le téléchargement s'arrête proprement.
 static INSTALL_CANCEL: std::sync::OnceLock<CancellationToken> = std::sync::OnceLock::new();
+
+/// Pause de l'installation en cours (SIGUSR2 de NieRDeck) : elle s'arrête comme une annulation,
+/// mais ce qui est déjà téléchargé reste (`.part`), repris au prochain `installer`.
+static INSTALL_PAUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Mise en veille annoncée par NieRDeck (`veille` → SIGUSR1 au `jouer` en cours).
 static SUSPEND: std::sync::OnceLock<Arc<tokio::sync::Notify>> = std::sync::OnceLock::new();
@@ -144,6 +152,30 @@ pub fn main() {
         if args.first().is_some_and(|c| c == "installer") {
             // Prêt dès le début : une annulation avant le premier téléchargement compte aussi.
             let _ = INSTALL_CANCEL.set(CancellationToken::new());
+            // Limite de débit des réglages ; SIGUSR1 la relit (changée pendant l'installation),
+            // SIGUSR2 met l'installation en pause.
+            crate::install::download::set_limit_mb(open_state().settings().download_limit_mb);
+            use tokio::signal::unix::{signal, SignalKind};
+            if let Ok(mut s) = signal(SignalKind::user_defined1()) {
+                tokio::spawn(async move {
+                    while s.recv().await.is_some() {
+                        let mb = open_state().settings().download_limit_mb;
+                        crate::install::download::set_limit_mb(mb);
+                        tracing::info!("limite de débit relue : {mb} Mo/s (0 = aucune)");
+                    }
+                });
+            }
+            if let Ok(mut s) = signal(SignalKind::user_defined2()) {
+                tokio::spawn(async move {
+                    while s.recv().await.is_some() {
+                        tracing::info!("installation mise en pause");
+                        INSTALL_PAUSED.store(true, std::sync::atomic::Ordering::Relaxed);
+                        if let Some(cancel) = INSTALL_CANCEL.get() {
+                            cancel.cancel();
+                        }
+                    }
+                });
+            }
         }
         #[cfg(unix)]
         if args.first().is_some_and(|c| c == "jouer" || c == "installer") {
@@ -373,6 +405,20 @@ async fn run(args: Vec<String>) -> AppResult<Value> {
         }
         "fiche" => sheet(&open_state(), rom_id(rest.first())?, rest.get(1).cloned().unwrap_or_default()).await,
         "succes" => achievements(&open_state(), rom_id(rest.first())?).await,
+        "soutien" => Ok(crate::support::fetch(&open_state()).await.map(|i| serde_json::to_value(i).unwrap_or(Value::Null)).unwrap_or(Value::Null)),
+        "demander" => {
+            // JSON { name, console, link, message } sur l'entrée standard.
+            let req: Value = serde_json::from_str(&read_text()?).map_err(|_| AppError::Internal)?;
+            let field = |k: &str| req[k].as_str().unwrap_or("").to_string();
+            crate::community::send_game_request(&open_state(), &field("name"), &field("console"), &field("link"), &field("message")).await
+        }
+        "limite" => {
+            let mb: u32 = rest.first().and_then(|v| v.parse().ok()).ok_or(AppError::Internal)?;
+            let state = open_state();
+            state.update_settings(|s| s.download_limit_mb = mb)?;
+            tracing::info!("limite de débit des téléchargements : {mb} Mo/s (0 = aucune)");
+            Ok(json!({ "downloadLimitMb": mb }))
+        }
         "amis" => {
             let state = open_state();
             Ok(crate::presence::friends(&state).await?.map(|f| serde_json::to_value(f).unwrap_or(Value::Null)).unwrap_or(Value::Null))
@@ -582,6 +628,7 @@ async fn info(state: &AppState) -> AppResult<Value> {
         "username": username,
         "installed": state::list_installed(&state.config_dir).len(),
         "pendingSessions": crate::romm::playtime::pending_count(&state.config_dir),
+        "downloadLimitMb": settings.download_limit_mb,
     }))
 }
 
@@ -858,6 +905,10 @@ async fn install_game(state: &AppState, id: i64, emulator: Option<String>, force
     let root = state.install_root();
     let before: HashSet<PathBuf> = std::fs::read_dir(&root).map(|rd| rd.filter_map(Result::ok).map(|e| e.path()).collect()).unwrap_or_default();
     let result = job.run(id).await;
+    if matches!(result, Err(AppError::Cancelled)) && INSTALL_PAUSED.load(std::sync::atomic::Ordering::Relaxed) {
+        // En pause : le téléchargement commencé reste pour la reprise.
+        return Ok(json!({ "status": "paused", "romId": id }));
+    }
     if matches!(result, Err(AppError::Cancelled)) && state::find(&state.config_dir, id).is_none() {
         remove_cancelled_download(&root, &before);
     }
