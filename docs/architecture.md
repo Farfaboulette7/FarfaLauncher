@@ -324,6 +324,12 @@ chaque release.
   `classement`, `stats-masquees` (mêmes fonctions que `presence.rs` et `stats.rs`). `presence`,
   appelée chaque minute par NieRDeck ouvert, signale « en ligne » (ou « en jeu » si une partie
   tourne), comme le launcher ouvert ; `presence-quitter` à la mise en veille.
+- Lot E : `soutien` (`support.rs`, partagé avec `commands/support.rs`), `demander` (demande de
+  jeu, JSON sur l'entrée standard), `limite <Mo/s>` (réglage `download_limit_mb`, lu par chaque
+  `installer`). Un `installer` relit la limite sur SIGUSR1 et se met en pause sur SIGUSR2 : il
+  s'arrête comme une annulation mais garde le téléchargement commencé (`.part`, repris par
+  `Range`) et rend `{ "status": "paused" }`. La file (un jeu à la fois, pause, reprise, en
+  premier) est tenue par NieRDeck (`catalogue.py`), gardée sur le disque.
 
 Conséquence : toucher à `play.rs`, `save_sync.rs`, `install/` ou `pc/`, c'est aussi toucher
 au Deck. La CI compile le moteur à chaque push (`ci.yml`, job `deck`). Le smoke test utilise
